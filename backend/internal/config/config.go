@@ -12,6 +12,7 @@ type Config struct {
 	Datasource DatasourceConfig
 	Birdeye    BirdeyeConfig
 	Bitquery   BitqueryConfig
+	Redis      RedisConfig
 }
 
 type ServerConfig struct {
@@ -43,6 +44,14 @@ type BitqueryConfig struct {
 	APIKey  string
 }
 
+type RedisConfig struct {
+	Addr     string
+	Password string
+	DB       int
+	Channel  string
+	Enabled  bool
+}
+
 func Load() (Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -61,6 +70,9 @@ func Load() (Config, error) {
 	v.SetDefault("birdeye.cache_db_path", "./data/birdeye-cache.sqlite")
 	v.SetDefault("birdeye.trade_max_pages", 1)
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
+	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
+	v.SetDefault("redis.db", 0)
+	v.SetDefault("redis.enabled", false)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -92,6 +104,13 @@ func Load() (Config, error) {
 		Bitquery: BitqueryConfig{
 			BaseURL: v.GetString("bitquery.base_url"),
 			APIKey:  v.GetString("bitquery.api_key"),
+		},
+		Redis: RedisConfig{
+			Addr:     v.GetString("redis.addr"),
+			Password: v.GetString("redis.password"),
+			DB:       v.GetInt("redis.db"),
+			Channel:  v.GetString("redis.channel"),
+			Enabled:  v.GetBool("redis.enabled"),
 		},
 	}, nil
 }

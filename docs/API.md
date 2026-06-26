@@ -233,6 +233,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - 若 `currentKline.openTime` 与历史最后一根相同，则用它覆盖最后一根。
 - 若 `currentKline.openTime` 更晚，则把它追加为最新一根实时 K 线。
 - 不传 `currentKline` 时，后端使用本次查到的最后一根 K 线做判断。
+- 如果命中信号，后端除 HTTP 返回外，还会把同样的信号 JSON 发布到 Redis Pub/Sub channel，供独立消费程序订阅。
 
 返回：
 

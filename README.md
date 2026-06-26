@@ -30,6 +30,7 @@
 │       ├── db/               # SQLite 初始化
 │       ├── model/            # 领域模型
 │       ├── repository/       # 业务库持久化
+│       ├── signal/           # 信号模块：结构识别、实时信号、Redis 发布
 │       └── response/         # 统一响应结构
 ├── frontend/                 # Vue 前端
 │   ├── src/api/              # API 请求封装
@@ -44,6 +45,21 @@
 ```
 
 ## 核心能力
+
+### 模块解耦
+
+当前后端已经按职责拆成三块：
+
+- `signal` 模块
+  - 负责压力位结构识别
+  - 负责实时突破信号判定
+  - 负责把命中的信号发布到 Redis
+- `backtest` 模块
+  - 负责历史回测、收益、回撤、单持仓控制
+  - 不负责对外发信号
+- `api` 模块
+  - 只负责给前端和外部系统提供 HTTP JSON 接口
+  - 不直接写业务规则
 
 ### 1. Birdeye K 线缓存
 
@@ -116,6 +132,11 @@
 当前接口：
 
 - `POST /api/market/birdeye/realtime-breakout-signals`
+
+当前发送方式：
+
+- 通过 HTTP 接口同步返回信号结果
+- 如果命中信号，同时把信号 JSON 发布到 Redis Pub/Sub channel
 
 这个能力适用于多种 K 线周期：
 
@@ -216,6 +237,9 @@ npm run build
 - `birdeye.cache_db_path`：Birdeye K 线缓存库
 - `datasource.kline_query`：SQL K 线查询模板
 - `datasource.token_search_query`：token 搜索 SQL
+- `redis.enabled`：是否启用 Redis 信号发布
+- `redis.addr`：Redis 地址
+- `redis.channel`：实时信号发布 channel
 
 ## 部署
 

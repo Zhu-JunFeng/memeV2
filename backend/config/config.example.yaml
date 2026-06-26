@@ -22,3 +22,10 @@ birdeye:
 bitquery:
   base_url: "https://streaming.bitquery.io/graphql"
   api_key: "" # 对应环境变量 BACKTEST_BITQUERY_API_KEY
+
+redis:
+  enabled: false
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  channel: "solana:meme:signals:pressure_breakout"

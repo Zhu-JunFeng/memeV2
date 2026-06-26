@@ -60,15 +60,6 @@ type KlineLevelsResult struct {
 	WindowStep int                 `json:"windowStep"`
 }
 
-type RealtimeSignalRequest struct {
-	TokenAddress string
-	Interval     string
-	StartTime    time.Time
-	EndTime      time.Time
-	LevelOptions LevelOptions
-	CurrentKline *model.Kline
-}
-
 type WindowLevelResult struct {
 	WindowIndex int                `json:"windowIndex"`
 	StartTime   time.Time          `json:"startTime"`
@@ -184,58 +175,6 @@ func (s *Service) GetKlineLevels(ctx context.Context, source string, req datasou
 		WindowSize: windowSize,
 		WindowStep: windowStep,
 	}, nil
-}
-
-// GetRealtimeScenarioSignals 统一复用历史 K 线窗口和场景识别逻辑，
-// 只把最新一根实时 K 线作为“触发器”附加进来做信号判定。
-func (s *Service) GetRealtimeScenarioSignals(ctx context.Context, source string, req RealtimeSignalRequest) (RealtimeSignalResult, error) {
-	klines, err := s.GetKlines(ctx, source, datasource.KlineQuery{
-		TokenAddress: req.TokenAddress,
-		Interval:     req.Interval,
-		StartTime:    req.StartTime,
-		EndTime:      req.EndTime,
-	})
-	if err != nil {
-		return RealtimeSignalResult{}, err
-	}
-	if len(klines) == 0 {
-		return RealtimeSignalResult{}, ErrNoKlines
-	}
-	current := klines[len(klines)-1]
-	history := klines
-	if req.CurrentKline != nil {
-		current = *req.CurrentKline
-		history = mergeHistoryWithRealtimeKline(klines, current)
-		if len(history) == 0 {
-			return RealtimeSignalResult{}, ErrNoKlines
-		}
-		// 实时信号要求“历史窗口”不包含当前这根实时 K 线本身。
-		history = history[:len(history)-1]
-	}
-	windowSize := req.LevelOptions.WindowSize
-	if windowSize <= 0 || windowSize > len(history) {
-		windowSize = len(history)
-	}
-	windowStep := req.LevelOptions.WindowStep
-	if windowStep <= 0 {
-		windowStep = 1
-	}
-	return CalculateRealtimeScenarioSignalsByWindows(history, current, req.LevelOptions, windowSize, windowStep, pressureBreakoutDetector()), nil
-}
-
-func mergeHistoryWithRealtimeKline(history []model.Kline, current model.Kline) []model.Kline {
-	if len(history) == 0 {
-		return []model.Kline{current}
-	}
-	merged := append([]model.Kline{}, history...)
-	last := merged[len(merged)-1]
-	switch {
-	case current.OpenTime.Equal(last.OpenTime):
-		merged[len(merged)-1] = current
-	case current.OpenTime.After(last.OpenTime):
-		merged = append(merged, current)
-	}
-	return merged
 }
 
 func (s *Service) tradePointSource(name string) datasource.TradePointDataSource {

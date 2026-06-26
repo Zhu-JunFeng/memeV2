@@ -13,6 +13,7 @@ import (
 	"solana-meme-backtest/backend/internal/db"
 	"solana-meme-backtest/backend/internal/logger"
 	"solana-meme-backtest/backend/internal/repository"
+	"solana-meme-backtest/backend/internal/signal"
 )
 
 func main() {
@@ -38,8 +39,13 @@ func main() {
 	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages)
 	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey)
 	repo := repository.NewBacktestRepository(database)
-	service := backtest.NewService(source, dbBarSource, birdeyeSource, tradePointSource, bitqueryTradePointSource, dbTradePointSource, source, repo)
-	router := api.NewRouter(service)
+	backtestService := backtest.NewService(source, dbBarSource, birdeyeSource, tradePointSource, bitqueryTradePointSource, dbTradePointSource, source, repo)
+	var publisher signal.Publisher
+	if cfg.Redis.Enabled && cfg.Redis.Addr != "" {
+		publisher = signal.NewRedisPublisher(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.Channel)
+	}
+	signalService := signal.NewService(birdeyeSource, publisher)
+	router := api.NewRouter(backtestService, signalService)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

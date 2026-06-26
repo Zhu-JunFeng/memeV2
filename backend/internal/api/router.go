@@ -15,16 +15,18 @@ import (
 	"solana-meme-backtest/backend/internal/datasource"
 	"solana-meme-backtest/backend/internal/model"
 	"solana-meme-backtest/backend/internal/response"
+	"solana-meme-backtest/backend/internal/signal"
 )
 
 type Handler struct {
-	service *backtest.Service
+	backtestService *backtest.Service
+	signalService   *signal.Service
 }
 
-func NewRouter(service *backtest.Service) *gin.Engine {
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{service: service}
+	h := &Handler{backtestService: backtestService, signalService: signalService}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -47,7 +49,7 @@ func (h *Handler) health(c *gin.Context) {
 
 func (h *Handler) searchTokens(c *gin.Context) {
 	keyword := c.Query("keyword")
-	items, err := h.service.SearchTokens(c.Request.Context(), keyword, 20)
+	items, err := h.backtestService.SearchTokens(c.Request.Context(), keyword, 20)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -66,7 +68,7 @@ func (h *Handler) getKlines(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "endTime 格式错误")
 		return
 	}
-	items, err := h.service.GetKlines(c.Request.Context(), c.Query("source"), datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end})
+	items, err := h.backtestService.GetKlines(c.Request.Context(), c.Query("source"), datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end})
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -143,7 +145,7 @@ func (h *Handler) getBirdeyeSupportResistance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.GetKlineLevels(c.Request.Context(), "birdeye", datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
+	result, err := h.signalService.GetKlineLevels(c.Request.Context(), datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -159,7 +161,7 @@ func (h *Handler) getBirdeyeRealtimeSignals(c *gin.Context) {
 	}
 	options := backtest.DefaultLevelOptions()
 	applyLevelOptionsBody(&options, req.LevelOptions)
-	result, err := h.service.GetRealtimeScenarioSignals(c.Request.Context(), "birdeye", backtest.RealtimeSignalRequest{
+	result, err := h.signalService.DetectRealtimeSignals(c.Request.Context(), signal.RealtimeRequest{
 		TokenAddress: req.TokenAddress,
 		Interval:     req.Interval,
 		StartTime:    req.StartTime,
@@ -199,7 +201,7 @@ func (h *Handler) getDBSupportResistance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	levels, err := h.service.GetSupportResistance(c.Request.Context(), "db", datasource.KlineQuery{TokenAddress: pairID, Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
+	levels, err := h.backtestService.GetSupportResistance(c.Request.Context(), "db", datasource.KlineQuery{TokenAddress: pairID, Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -208,7 +210,7 @@ func (h *Handler) getDBSupportResistance(c *gin.Context) {
 }
 
 func (h *Handler) listStrategyMethods(c *gin.Context) {
-	response.OK(c, gin.H{"items": h.service.StrategyMethods()})
+	response.OK(c, gin.H{"items": h.backtestService.StrategyMethods()})
 }
 
 func (h *Handler) runStrategyBacktest(c *gin.Context) {
@@ -219,7 +221,7 @@ func (h *Handler) runStrategyBacktest(c *gin.Context) {
 	}
 	options := backtest.DefaultLevelOptions()
 	applyLevelOptionsBody(&options, req.LevelOptions)
-	result, err := h.service.RunStrategyBacktest(c.Request.Context(), "birdeye", backtest.StrategyBacktestRequest{
+	result, err := h.backtestService.RunStrategyBacktest(c.Request.Context(), "birdeye", backtest.StrategyBacktestRequest{
 		MethodCode:   req.MethodCode,
 		MethodConfig: req.MethodConfig,
 		TokenAddress: req.TokenAddress,
@@ -373,7 +375,7 @@ func (h *Handler) createBacktest(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
 		return
 	}
-	result, err := h.service.AnalyzeAndSave(c.Request.Context(), backtest.AnalyzeRequest{SessionID: uuid.NewString(), DataSource: req.DataSource, TokenAddress: req.TokenAddress, TokenSymbol: req.TokenSymbol, Interval: req.Interval, StartTime: req.StartTime, EndTime: req.EndTime, TradePoints: req.TradePoints})
+	result, err := h.backtestService.AnalyzeAndSave(c.Request.Context(), backtest.AnalyzeRequest{SessionID: uuid.NewString(), DataSource: req.DataSource, TokenAddress: req.TokenAddress, TokenSymbol: req.TokenSymbol, Interval: req.Interval, StartTime: req.StartTime, EndTime: req.EndTime, TradePoints: req.TradePoints})
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -382,7 +384,7 @@ func (h *Handler) createBacktest(c *gin.Context) {
 }
 
 func (h *Handler) listBacktests(c *gin.Context) {
-	items, err := h.service.ListAnalyses(c.Request.Context(), 50)
+	items, err := h.backtestService.ListAnalyses(c.Request.Context(), 50)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -391,7 +393,7 @@ func (h *Handler) listBacktests(c *gin.Context) {
 }
 
 func (h *Handler) getBacktest(c *gin.Context) {
-	item, err := h.service.GetAnalysis(c.Request.Context(), c.Param("id"))
+	item, err := h.backtestService.GetAnalysis(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		h.handleError(c, err)
 		return

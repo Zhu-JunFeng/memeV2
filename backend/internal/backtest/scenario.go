@@ -43,6 +43,10 @@ func pressureBreakoutDetector() ScenarioDetector {
 	return pressureBreakoutScenarioDetector{}
 }
 
+func PressureBreakoutDetector() ScenarioDetector {
+	return pressureBreakoutDetector()
+}
+
 type pressureBreakoutScenarioDetector struct{}
 
 func (pressureBreakoutScenarioDetector) Code() string {
