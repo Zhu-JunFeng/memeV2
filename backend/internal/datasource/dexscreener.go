@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"solana-meme-backtest/backend/internal/httpclient"
 )
 
 type TokenPriceProvider interface {
@@ -31,7 +33,7 @@ func NewDexScreenerPriceSource(baseURL string) *DexScreenerPriceSource {
 		trimmed = "https://api.dexscreener.com"
 	}
 	return &DexScreenerPriceSource{
-		client:  &http.Client{Timeout: 15 * time.Second},
+		client:  httpclient.NewFixedProxyClient(15*time.Second, 15*time.Second),
 		baseURL: strings.TrimRight(trimmed, "/"),
 	}
 }

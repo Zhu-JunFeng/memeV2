@@ -98,6 +98,7 @@
 ```
 
 说明：当前交易模块已支持真实 Jupiter 下单链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按实时 SOL/USD 价格把 `trade.buy_amount_usd` 折算成 SOL 数量后下单。
+另外，DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
 
 ## 本地开发
 
@@ -181,6 +182,7 @@ npm run build
 - `trade.dexscreener.base_url`：持仓估值接口
 - `trade.jupiter.base_url`：Jupiter Ultra API 入口
 - `trade.jupiter.api_key`：Jupiter API Key
+- DexScreener 与 Jupiter HTTP 客户端固定通过服务器本机 clash 代理 `http://127.0.0.1:7890` 出网
 
 ## 部署
 

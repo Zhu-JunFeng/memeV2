@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"solana-meme-backtest/backend/internal/config"
 	"solana-meme-backtest/backend/internal/datasource"
+	"solana-meme-backtest/backend/internal/httpclient"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -40,8 +40,8 @@ type jupiterOrderResponse struct {
 	OutputMint                string `json:"outputMint"`
 	InAmount                  string `json:"inAmount"`
 	OutAmount                 string `json:"outAmount"`
-	InUsdValue                string `json:"inUsdValue"`
-	OutUsdValue               string `json:"outUsdValue"`
+	InUsdValue                any    `json:"inUsdValue"`
+	OutUsdValue               any    `json:"outUsdValue"`
 	ErrorCode                 any    `json:"errorCode"`
 	ErrorMessage              string `json:"errorMessage"`
 	PrioritizationFeeLamports int64  `json:"prioritizationFeeLamports"`
@@ -97,13 +97,7 @@ func NewJupiterExecutor(cfg config.TradeConfig, priceProvider datasource.TokenPr
 		priceProvider: priceProvider,
 		privateKey:    privateKey,
 		walletAddress: walletAddress,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				DialContext:       (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
-				ForceAttemptHTTP2: true,
-			},
-		},
+		client:        httpclient.NewFixedProxyClient(30*time.Second, 15*time.Second),
 	}, nil
 }
 
