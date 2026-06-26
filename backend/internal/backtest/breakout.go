@@ -12,6 +12,12 @@ type indexedTouch struct {
 	point model.LevelAnchorPoint
 }
 
+type breakoutTouchGroup struct {
+	touches        []indexedTouch
+	lastTouchIndex int
+	consolidation  *model.ConsolidationZone
+}
+
 func annotateBreakoutSetups(levels []model.PriceLevel, window []model.Kline, future []model.Kline, options LevelOptions) {
 	if len(window) == 0 {
 		return
@@ -29,29 +35,16 @@ func annotateBreakoutSetups(levels []model.PriceLevel, window []model.Kline, fut
 }
 
 func findBreakoutSetup(level model.PriceLevel, window []model.Kline, future []model.Kline, options LevelOptions) *model.BreakoutSetup {
-	minTouches := options.MinTouches
-	if minTouches <= 0 {
-		minTouches = 3
-	}
 	windowTouches := collectBullishRetestTouches(window, level, options)
-	if len(windowTouches) < minTouches {
+	breakoutIndex, touchGroup := findBreakoutAfterTouches(window, future, level, windowTouches, options)
+	if breakoutIndex < 0 || len(touchGroup.touches) == 0 {
 		return nil
 	}
-
-	breakoutIndex, failedTouchIndexes := findBreakoutAfterTouches(window, future, level, windowTouches, minTouches, options)
-	if breakoutIndex < 0 || len(failedTouchIndexes) < minTouches {
-		return nil
-	}
-
-	failedTouches := make([]model.LevelAnchorPoint, 0, len(failedTouchIndexes))
-	for _, touch := range failedTouchIndexes {
-		failedTouches = append(failedTouches, touch.point)
-	}
-	consolidation := collectConsolidationZone(window, level, failedTouches)
+	failedTouches := anchorPointsFromTouchGroup(touchGroup.touches)
 	setup := &model.BreakoutSetup{
 		Triggered:       true,
 		FailedTouches:   failedTouches,
-		Consolidation:   consolidation,
+		Consolidation:   touchGroup.consolidation,
 		AttemptStrategy: "n_bullish_high_touches_then_breakout_within_next_n_bars",
 	}
 
@@ -88,23 +81,77 @@ func findBreakoutSetup(level model.PriceLevel, window []model.Kline, future []mo
 	return setup
 }
 
-func findBreakoutAfterTouches(window []model.Kline, future []model.Kline, level model.PriceLevel, touches []indexedTouch, minTouches int, options LevelOptions) (int, []indexedTouch) {
+func findBreakoutAfterTouches(window []model.Kline, future []model.Kline, level model.PriceLevel, touches []indexedTouch, options LevelOptions) (int, breakoutTouchGroup) {
 	series := append(append([]model.Kline{}, window...), future...)
 	if len(series) == 0 {
-		return -1, nil
+		return -1, breakoutTouchGroup{}
 	}
-	for endTouch := minTouches - 1; endTouch < len(touches); endTouch++ {
-		touchGroup := append([]indexedTouch{}, touches[endTouch-minTouches+1:endTouch+1]...)
-		lastTouchIndex := touchGroup[len(touchGroup)-1].index
-		breakoutIndex := findBreakoutIndexInRange(series, level, lastTouchIndex+1, lastTouchIndex+1+minTouches, options)
-		if breakoutIndex >= 0 && !hasLimitedUpperBandPierces(series, level, lastTouchIndex+1, breakoutIndex) {
+	for _, touchGroup := range buildQualifiedTouchGroups(window, level, touches, options) {
+		breakoutIndex := findBreakoutIndexInRange(series, level, touchGroup.lastTouchIndex+1, touchGroup.lastTouchIndex+1+options.MinTouches, options)
+		if breakoutIndex >= 0 && !hasLimitedUpperBandPierces(series, level, touchGroup.lastTouchIndex+1, breakoutIndex) {
 			continue
 		}
 		if breakoutIndex >= 0 {
 			return breakoutIndex, touchGroup
 		}
 	}
-	return -1, nil
+	return -1, breakoutTouchGroup{}
+}
+
+func buildQualifiedTouchGroups(window []model.Kline, level model.PriceLevel, touches []indexedTouch, options LevelOptions) []breakoutTouchGroup {
+	minTouches := options.MinTouches
+	if minTouches <= 0 {
+		minTouches = 3
+	}
+	if len(touches) < minTouches {
+		return nil
+	}
+	groups := make([]breakoutTouchGroup, 0)
+	for endTouch := minTouches - 1; endTouch < len(touches); endTouch++ {
+		group := append([]indexedTouch{}, touches[endTouch-minTouches+1:endTouch+1]...)
+		if hasTooManyClosesAboveUpper(window, level, group, 3) {
+			continue
+		}
+		consolidation := collectConsolidationZone(window, level, anchorPointsFromTouchGroup(group))
+		groups = append(groups, breakoutTouchGroup{
+			touches:        group,
+			lastTouchIndex: group[len(group)-1].index,
+			consolidation:  consolidation,
+		})
+	}
+	return groups
+}
+
+func anchorPointsFromTouchGroup(touches []indexedTouch) []model.LevelAnchorPoint {
+	points := make([]model.LevelAnchorPoint, 0, len(touches))
+	for _, touch := range touches {
+		points = append(points, touch.point)
+	}
+	return points
+}
+
+func hasTooManyClosesAboveUpper(window []model.Kline, level model.PriceLevel, touchGroup []indexedTouch, maxAllowed int) bool {
+	if len(touchGroup) == 0 {
+		return false
+	}
+	start := touchGroup[0].index
+	end := touchGroup[len(touchGroup)-1].index
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(window) {
+		end = len(window) - 1
+	}
+	count := 0
+	for i := start; i <= end; i++ {
+		if marketClose(window[i]) > level.Upper {
+			count++
+			if count > maxAllowed {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasLimitedUpperBandPierces(klines []model.Kline, level model.PriceLevel, start int, breakoutIndex int) bool {
@@ -159,6 +206,58 @@ func touchVolumeConfirmed(klines []model.Kline, index int, options LevelOptions)
 	// 试压阳线要求比普通突破更高一些的相对量能，降低弱触碰被纳入场景的概率。
 	requiredMultiplier := math.Max(options.VolumeMultiplier, 1.35)
 	return klines[index].Volume >= baselineVolume*requiredMultiplier
+}
+
+func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, current model.Kline, options LevelOptions) *RealtimeScenarioSignal {
+	if level.Calculation.ResistanceVotes == 0 || len(window) == 0 {
+		return nil
+	}
+	touches := collectBullishRetestTouches(window, level, options)
+	groups := buildQualifiedTouchGroups(window, level, touches, options)
+	if len(groups) == 0 {
+		return nil
+	}
+	latestGroup := groups[len(groups)-1]
+	minTouches := options.MinTouches
+	if minTouches <= 0 {
+		minTouches = 3
+	}
+	// 实时信号只接受“试压刚形成后不久就突破”的结构，避免旧结构在很久以后被误判成新信号。
+	if len(window) > latestGroup.lastTouchIndex+minTouches {
+		return nil
+	}
+	series := append(append([]model.Kline{}, window...), current)
+	currentIndex := len(series) - 1
+	if !hasLimitedUpperBandPierces(series, level, latestGroup.lastTouchIndex+1, currentIndex) {
+		return nil
+	}
+	if !isBreakoutConfirmedAtIndex(series, level, currentIndex, options) {
+		return nil
+	}
+	breakoutPrice := breakoutThreshold(level, options.BreakTolerance)
+	breakoutPoint := anchorFromKline(current, breakoutPrice)
+	setup := &model.BreakoutSetup{
+		Triggered:       true,
+		FailedTouches:   anchorPointsFromTouchGroup(latestGroup.touches),
+		Consolidation:   latestGroup.consolidation,
+		BreakoutPoint:   &breakoutPoint,
+		BuyPoint:        &breakoutPoint,
+		AttemptStrategy: "n_bullish_high_touches_then_realtime_breakout_signal",
+		BreakoutReason:  breakoutReason(level, current, options),
+	}
+	level.Breakout = setup
+	return &RealtimeScenarioSignal{
+		LevelType:           level.Type,
+		LevelMarketCap:      level.Price,
+		LevelLowerMarketCap: level.Lower,
+		LevelUpperMarketCap: level.Upper,
+		SignalTime:          current.OpenTime,
+		SignalMarketCap:     breakoutPrice,
+		BreakoutThreshold:   breakoutPrice,
+		Reason:              setup.BreakoutReason,
+		Calculation:         level.Calculation,
+		Breakout:            setup,
+	}
 }
 
 func rollingAverageVolumeBefore(klines []model.Kline, index int, window int) float64 {
@@ -230,7 +329,6 @@ func findBreakoutIndex(future []model.Kline, level model.PriceLevel, options Lev
 }
 
 func findBreakoutIndexInRange(klines []model.Kline, level model.PriceLevel, start int, end int, options LevelOptions) int {
-	threshold := breakoutThreshold(level, options.BreakTolerance)
 	confirmBars := options.ConfirmBars
 	if confirmBars <= 0 {
 		confirmBars = 1
@@ -242,22 +340,33 @@ func findBreakoutIndexInRange(klines []model.Kline, level model.PriceLevel, star
 		end = len(klines)
 	}
 	for i := start; i+confirmBars <= end; i++ {
-		confirmed := true
-		for j := 0; j < confirmBars; j++ {
-			if marketClose(klines[i+j]) <= threshold {
-				confirmed = false
-				break
-			}
+		breakoutIndex := i + confirmBars - 1
+		if isBreakoutConfirmedAtIndex(klines, level, breakoutIndex, options) {
+			return breakoutIndex
 		}
-		if !confirmed {
-			continue
-		}
-		if !volumeBreakoutConfirmed(klines, i, options) {
-			continue
-		}
-		return i
 	}
 	return -1
+}
+
+func isBreakoutConfirmedAtIndex(klines []model.Kline, level model.PriceLevel, breakoutIndex int, options LevelOptions) bool {
+	if breakoutIndex < 0 || breakoutIndex >= len(klines) {
+		return false
+	}
+	threshold := breakoutThreshold(level, options.BreakTolerance)
+	confirmBars := options.ConfirmBars
+	if confirmBars <= 0 {
+		confirmBars = 1
+	}
+	start := breakoutIndex - confirmBars + 1
+	if start < 0 {
+		return false
+	}
+	for i := start; i <= breakoutIndex; i++ {
+		if marketClose(klines[i]) <= threshold {
+			return false
+		}
+	}
+	return volumeBreakoutConfirmed(klines, breakoutIndex, options)
 }
 
 func volumeBreakoutConfirmed(klines []model.Kline, index int, options LevelOptions) bool {

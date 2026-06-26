@@ -31,6 +31,7 @@ func NewRouter(service *backtest.Service) *gin.Engine {
 	api.GET("/market/klines", h.getKlines)
 	api.GET("/market/birdeye/klines", h.getBirdeyeKlines)
 	api.GET("/market/birdeye/support-resistance", h.getBirdeyeSupportResistance)
+	api.POST("/market/birdeye/realtime-breakout-signals", h.getBirdeyeRealtimeSignals)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
 	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
 	api.POST("/strategy-backtests/run", h.runStrategyBacktest)
@@ -110,6 +111,15 @@ type levelOptionsBody struct {
 	TakeProfitRR     float64 `json:"takeProfitRR"`
 }
 
+type realtimeSignalRequest struct {
+	TokenAddress string           `json:"tokenAddress" binding:"required"`
+	Interval     string           `json:"interval" binding:"required"`
+	StartTime    time.Time        `json:"startTime" binding:"required"`
+	EndTime      time.Time        `json:"endTime" binding:"required"`
+	LevelOptions levelOptionsBody `json:"levelOptions"`
+	CurrentKline *model.Kline     `json:"currentKline,omitempty"`
+}
+
 func (h *Handler) getBirdeyeKlines(c *gin.Context) {
 	c.Request.URL.RawQuery = c.Request.URL.Query().Encode()
 	query := c.Request.URL.Query()
@@ -134,6 +144,29 @@ func (h *Handler) getBirdeyeSupportResistance(c *gin.Context) {
 		return
 	}
 	result, err := h.service.GetKlineLevels(c.Request.Context(), "birdeye", datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
+func (h *Handler) getBirdeyeRealtimeSignals(c *gin.Context) {
+	var req realtimeSignalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	options := backtest.DefaultLevelOptions()
+	applyLevelOptionsBody(&options, req.LevelOptions)
+	result, err := h.service.GetRealtimeScenarioSignals(c.Request.Context(), "birdeye", backtest.RealtimeSignalRequest{
+		TokenAddress: req.TokenAddress,
+		Interval:     req.Interval,
+		StartTime:    req.StartTime,
+		EndTime:      req.EndTime,
+		LevelOptions: options,
+		CurrentKline: req.CurrentKline,
+	})
 	if err != nil {
 		h.handleError(c, err)
 		return

@@ -79,6 +79,12 @@ func DefaultLevelOptions() LevelOptions {
 }
 
 func CalculateSupportResistanceByWindows(klines []model.Kline, options LevelOptions, windowSize int, windowStep int) []WindowLevelResult {
+	return CalculateLevelScenariosByWindows(klines, options, windowSize, windowStep, pressureBreakoutDetector())
+}
+
+// CalculateLevelScenariosByWindows 把“窗口切分”和“场景识别”解耦：
+// 先统一算出各个时间窗口的价位，再交给不同场景识别器决定如何标注和筛选。
+func CalculateLevelScenariosByWindows(klines []model.Kline, options LevelOptions, windowSize int, windowStep int, detector ScenarioDetector) []WindowLevelResult {
 	options = normalizeLevelOptions(options, len(klines))
 	items := normalizedKlines(klines, options)
 	if len(items) == 0 {
@@ -108,6 +114,7 @@ func CalculateSupportResistanceByWindows(klines []model.Kline, options LevelOpti
 	levelWindows := buildIndexedWindows(items, levelWindowSize, levelWindowStep)
 	levelSets := make([][]model.PriceLevel, 0, len(levelWindows))
 	for _, levelWindow := range levelWindows {
+		// 压力/支撑位先在独立的“压力带窗口”内计算，后面再和检测窗口做交集验证。
 		levelSets = append(levelSets, calculateSupportResistanceAll(levelWindow.items, options))
 	}
 	results := make([]WindowLevelResult, 0)
@@ -123,7 +130,8 @@ func CalculateSupportResistanceByWindows(klines []model.Kline, options LevelOpti
 				continue
 			}
 			candidates := clonePriceLevels(levelSets[levelIndex])
-			annotateBreakoutSetups(candidates, intersection, items[end:], options)
+			// 不同场景只关心自己的结构识别，窗口切分和价位计算保持通用。
+			detector.AnnotateHistorical(candidates, intersection, items[end:], options)
 			for _, level := range candidates {
 				if level.Breakout != nil && level.Breakout.Consolidation != nil && level.Breakout.BreakoutPoint != nil {
 					levels = append(levels, level)
@@ -144,6 +152,90 @@ func CalculateSupportResistanceByWindows(klines []model.Kline, options LevelOpti
 	}
 	dedupeBreakoutsByKlineSignature(results)
 	return pruneWindowsWithoutBreakouts(results)
+}
+
+// CalculateRealtimeScenarioSignalsByWindows 基于“历史窗口 + 当前实时 K 线”做实时信号判定。
+// 这里不会要求当前 K 线已经写入历史窗口，适合外部行情推送到来时即时判断是否触发信号。
+func CalculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current model.Kline, options LevelOptions, windowSize int, windowStep int, detector ScenarioDetector) RealtimeSignalResult {
+	options = normalizeLevelOptions(options, len(klines))
+	items := normalizedKlines(klines, options)
+	if len(items) == 0 {
+		return RealtimeSignalResult{}
+	}
+	if windowSize <= 0 || windowSize > len(items) {
+		windowSize = len(items)
+	}
+	if windowStep <= 0 {
+		windowStep = 1
+	}
+	levelWindowSize := options.LevelWindowSize
+	if levelWindowSize <= 0 || levelWindowSize > len(items) {
+		levelWindowSize = windowSize
+	}
+	if levelWindowSize <= 0 || levelWindowSize > len(items) {
+		levelWindowSize = len(items)
+	}
+	levelWindowStep := options.LevelWindowStep
+	if levelWindowStep <= 0 {
+		levelWindowStep = windowStep
+	}
+	if levelWindowStep <= 0 {
+		levelWindowStep = 1
+	}
+	klineWindows := buildIndexedWindows(items, windowSize, windowStep)
+	levelWindows := buildIndexedWindows(items, levelWindowSize, levelWindowStep)
+	levelSets := make([][]model.PriceLevel, 0, len(levelWindows))
+	for _, levelWindow := range levelWindows {
+		levelSets = append(levelSets, calculateSupportResistanceAll(levelWindow.items, options))
+	}
+	windows := make([]WindowLevelResult, 0)
+	signals := make([]RealtimeScenarioSignal, 0)
+	for _, klineWindow := range klineWindows {
+		windowSignals := make([]RealtimeScenarioSignal, 0)
+		windowLevels := make([]model.PriceLevel, 0)
+		for levelIndex, levelWindow := range levelWindows {
+			start, end := intersectIndexes(klineWindow, levelWindow)
+			if start >= end {
+				continue
+			}
+			intersection := items[start:end]
+			if len(intersection) == 0 {
+				continue
+			}
+			candidates := clonePriceLevels(levelSets[levelIndex])
+			detected := detector.DetectRealtimeSignals(candidates, intersection, current, options)
+			for _, signal := range detected {
+				level := candidates[signal.LevelIndex-1]
+				if level.Breakout != nil || (signal.Breakout != nil && signal.Breakout.Consolidation != nil) {
+					windowLevels = append(windowLevels, level)
+				}
+				windowSignals = append(windowSignals, signal)
+			}
+		}
+		if len(windowSignals) == 0 {
+			continue
+		}
+		windowLevels = selectTopLevelsKeepingBreakout(windowLevels, options.MaxLevels)
+		windowResult := WindowLevelResult{
+			WindowIndex: len(windows) + 1,
+			StartTime:   klineWindow.items[0].OpenTime,
+			EndTime:     current.CloseTime,
+			KlineCount:  len(klineWindow.items) + 1,
+			Levels:      windowLevels,
+		}
+		for i := range windowSignals {
+			windowSignals[i].WindowIndex = windowResult.WindowIndex
+		}
+		windows = append(windows, windowResult)
+		signals = append(signals, windowSignals...)
+	}
+	return RealtimeSignalResult{
+		Klines:     append(append([]model.Kline{}, items...), current),
+		Windows:    windows,
+		Signals:    signals,
+		WindowSize: windowSize,
+		WindowStep: windowStep,
+	}
 }
 
 func CalculateSupportResistance(klines []model.Kline, options LevelOptions) []model.PriceLevel {

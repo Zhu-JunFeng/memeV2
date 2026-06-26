@@ -104,6 +104,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `windows[].levels`：该窗口下的支撑/压力位数组，字段包含 `marketCap`、`lowerMarketCap`、`upperMarketCap`。
 - `windows[].levels[].calculation`：该市值位的计算依据，包含 pivot 数量、支撑/压力票数、价格容忍度、当前市值、类型判定原因、状态判定原因、强度分拆解、形成市值位的局部高低点和触碰样本。
 - `windows[].levels[].breakout`：压力位突破回测结果；会返回试压点 `failedTouches`、突破点 `breakoutPoint`、买入点 `buyPoint`、止损止盈价格、退出点、收益率，以及最终是先止损、先止盈还是超时平仓。当前场景还要求：试压组与突破点之间，最多只允许 `1` 根 K 线的最高价刺穿压力带上沿，超过则不算有效场景。
+- 在试压组内部，从第一根试压阳线到最后一根试压阳线之间，若收盘价高于压力带上沿的 K 线超过 `3` 根，该场景直接过滤，不进入回测。
 
 说明：未配置 Birdeye API Key 时直接返回中文错误，不改用 SQL、DB 或其他数据源。接口内部会先查 sqlite cache；同一个 token + interval 只要已经缓存过，后续都直接复用该项目缓存，不再请求 Birdeye 最新 K 线。只有首次没有任何缓存时才会调用 Birdeye，并把成功返回的 K 线写入 sqlite。
 
@@ -186,6 +187,62 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - 如果样本结束前未触发止盈或止损，则按最后一根 K 线收盘价卖出。
 
 说明：该接口内部按项目级 cache 复用 Birdeye K 线；某个 token + interval 首次缓存后，后续回测直接走本地 sqlite，不再请求 Birdeye 最新 K 线。
+
+### POST /api/market/birdeye/realtime-breakout-signals
+
+基于“历史 K 线 + 当前实时 K 线”动态判断是否触发压力带突破信号。
+
+这个接口的目标不是重新做整段回测，而是：
+
+- 先用历史窗口识别出已经形成的试压结构
+- 再用当前实时 K 线判断是否真正突破
+- 一旦满足突破条件，就立即返回信号
+
+请求体：
+
+```json
+{
+  "tokenAddress": "token address",
+  "interval": "1m",
+  "startTime": "2026-06-25T08:00:00+08:00",
+  "endTime": "2026-06-30T08:00:00+08:00",
+  "levelOptions": {
+    "windowSize": 120,
+    "levelWindowSize": 120,
+    "levelWindowStep": 20,
+    "priceTolerance": 0.005,
+    "minTouches": 3,
+    "confirmBars": 1
+  },
+  "currentKline": {
+    "interval": "1m",
+    "openTime": "2026-06-30T08:00:00+08:00",
+    "closeTime": "2026-06-30T08:01:00+08:00",
+    "marketCapOpen": 101000,
+    "marketCapHigh": 105000,
+    "marketCapLow": 100500,
+    "marketCapClose": 104200,
+    "volume": 182000
+  }
+}
+```
+
+说明：
+
+- `currentKline` 可选；如果传入，后端会把它当作最新实时 K 线参与信号判断。
+- 若 `currentKline.openTime` 与历史最后一根相同，则用它覆盖最后一根。
+- 若 `currentKline.openTime` 更晚，则把它追加为最新一根实时 K 线。
+- 不传 `currentKline` 时，后端使用本次查到的最后一根 K 线做判断。
+
+返回：
+
+- `signals[]`：实时信号列表。
+- `signals[].scenarioCode`：当前内置为 `pressure_breakout`。
+- `signals[].windowIndex/levelIndex`：对应哪个场景窗口、哪个压力带。
+- `signals[].signalTime/signalMarketCap`：信号触发时间与触发市值。
+- `signals[].breakoutThreshold`：本次用于判断突破的实际阈值。
+- `signals[].reason`：信号说明。
+- `signals[].breakout`：用于回放的试压点、整理区和突破点详情。
 
 
 ### GET /api/market/db/support-resistance

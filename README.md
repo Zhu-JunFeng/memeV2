@@ -73,6 +73,23 @@
   - 与 `volumeMultiplier` 取较高值
 - `n` 根试压阳线之后，后续 `n` 根 K 线内必须出现有效突破
 - 试压组与突破点之间，最多只允许 `1` 根 K 线的最高点刺穿压力带上沿；超过则场景失效
+- 从第一根试压到最后一根试压这段区间内，收盘价站上压力带上沿的 K 线超过 `3` 根，场景直接过滤
+
+### 3.1 场景识别抽象
+
+当前代码已经把“窗口切分 / 压力位计算”和“场景识别”拆开：
+
+- 通用窗口与价位计算：`CalculateLevelScenariosByWindows`
+- 当前内置场景识别器：`pressureBreakoutDetector`
+- 实时信号判断：`CalculateRealtimeScenarioSignalsByWindows`
+
+这样后续新增别的场景时，可以继续复用：
+
+- 同一套 1m / 5m / 15m / 1h K 线
+- 同一套滑动窗口
+- 同一套压力位/支撑位结果
+
+只需要新增新的 `ScenarioDetector` 实现，不必重写整个框架。
 
 ### 4. 回测规则
 
@@ -87,6 +104,27 @@
 - 单个 token 同时最多只保留 `1` 笔持仓：
   - 前一笔未卖出时，后续买点跳过
   - 必须等前一笔卖出后才允许再次买入
+
+### 5. 实时信号
+
+系统已经支持根据实时 K 线动态计算“压力带突破信号”：
+
+- 先用历史 K 线窗口识别出已经成立的试压结构
+- 再用当前实时 K 线判断是否已经站上突破阈值
+- 满足条件时立即返回信号
+
+当前接口：
+
+- `POST /api/market/birdeye/realtime-breakout-signals`
+
+这个能力适用于多种 K 线周期：
+
+- `1m`
+- `5m`
+- `15m`
+- `1h`
+
+只要传入对应周期的 K 线与实时最新一根 K 线，就能复用同一套信号逻辑。
 
 ## 本地开发
 
@@ -204,6 +242,7 @@ npm run build
 - `GET /api/health`
 - `GET /api/market/birdeye/klines`
 - `GET /api/market/birdeye/support-resistance`
+- `POST /api/market/birdeye/realtime-breakout-signals`
 - `GET /api/strategy-backtests/methods`
 - `POST /api/strategy-backtests/run`
 

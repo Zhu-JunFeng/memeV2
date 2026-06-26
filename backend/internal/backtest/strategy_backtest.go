@@ -299,10 +299,11 @@ func resolveTakeProfitRates(config BreakoutBandFollowConfig) ([]float64, error) 
 
 func runBandFollowTrades(windows []WindowLevelResult, klines []model.Kline, timeIndex map[string]int, config BreakoutBandFollowConfig) []StrategyBacktestTrade {
 	type candidateTrade struct {
-		trade     StrategyBacktestTrade
+		trade      StrategyBacktestTrade
 		entryIndex int
 		exitIndex  int
 	}
+	// 先把所有候选买卖点算出来，后面再统一做“单持仓”过滤。
 	candidates := make([]candidateTrade, 0)
 	for windowIndex, window := range windows {
 		for levelIndex, level := range window.Levels {
@@ -327,31 +328,31 @@ func runBandFollowTrades(windows []WindowLevelResult, klines []model.Kline, time
 				entryIndex: entryIndex,
 				exitIndex:  exitIndex,
 				trade: StrategyBacktestTrade{
-				WindowIndex:           windowIndex + 1,
-				LevelIndex:            levelIndex + 1,
-				LevelType:             level.Type,
-				LevelMarketCap:        level.Price,
-				LevelLowerMarketCap:   level.Lower,
-				LevelUpperMarketCap:   level.Upper,
-				BuyPoint:              *level.Breakout.BuyPoint,
-				SellPoint:             *exitPoint,
-				ProfitRate:            netProfitRate,
-				ProfitUSD:             config.PositionSizeUSD*grossProfitRate - feeUSD,
-				GrossProfitRate:       grossProfitRate,
-				GrossProfitUSD:        config.PositionSizeUSD * grossProfitRate,
-				FeeRate:               config.FeeRate,
-				FeeUSD:                feeUSD,
-				PositionSizeUSD:       config.PositionSizeUSD,
-				Outcome:               outcome,
-				ExitReason:            exitReason,
-				TakeProfitRate:        config.TakeProfitRate,
-				StopLossMarketCap:     initialStopLoss,
-				TakeProfitMarketCap:   level.Breakout.BuyPoint.Price * (1 + config.TakeProfitRate),
-				TrailingArmed:         trailingArmed,
-				TrailingStopMarketCap: trailingStop,
-				HoldingBars:           holdingBars,
-				Calculation:           level.Calculation,
-				Breakout:              level.Breakout,
+					WindowIndex:           windowIndex + 1,
+					LevelIndex:            levelIndex + 1,
+					LevelType:             level.Type,
+					LevelMarketCap:        level.Price,
+					LevelLowerMarketCap:   level.Lower,
+					LevelUpperMarketCap:   level.Upper,
+					BuyPoint:              *level.Breakout.BuyPoint,
+					SellPoint:             *exitPoint,
+					ProfitRate:            netProfitRate,
+					ProfitUSD:             config.PositionSizeUSD*grossProfitRate - feeUSD,
+					GrossProfitRate:       grossProfitRate,
+					GrossProfitUSD:        config.PositionSizeUSD * grossProfitRate,
+					FeeRate:               config.FeeRate,
+					FeeUSD:                feeUSD,
+					PositionSizeUSD:       config.PositionSizeUSD,
+					Outcome:               outcome,
+					ExitReason:            exitReason,
+					TakeProfitRate:        config.TakeProfitRate,
+					StopLossMarketCap:     initialStopLoss,
+					TakeProfitMarketCap:   level.Breakout.BuyPoint.Price * (1 + config.TakeProfitRate),
+					TrailingArmed:         trailingArmed,
+					TrailingStopMarketCap: trailingStop,
+					HoldingBars:           holdingBars,
+					Calculation:           level.Calculation,
+					Breakout:              level.Breakout,
 				},
 			})
 		}
@@ -368,6 +369,7 @@ func runBandFollowTrades(windows []WindowLevelResult, klines []model.Kline, time
 	trades := make([]StrategyBacktestTrade, 0, len(candidates))
 	activeExitIndex := -1
 	for _, candidate := range candidates {
+		// 同一时间最多只允许持有一笔；前一笔未平仓时，后续信号全部跳过。
 		if candidate.entryIndex <= activeExitIndex {
 			continue
 		}
