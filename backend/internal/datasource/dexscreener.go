@@ -23,6 +23,13 @@ type DexScreenerPriceSource struct {
 
 type dexScreenerResponse struct {
 	Pairs []struct {
+		ChainID   string `json:"chainId"`
+		BaseToken struct {
+			Address string `json:"address"`
+		} `json:"baseToken"`
+		QuoteToken struct {
+			Address string `json:"address"`
+		} `json:"quoteToken"`
 		PriceUSD string `json:"priceUsd"`
 	} `json:"pairs"`
 }
@@ -56,7 +63,15 @@ func (s *DexScreenerPriceSource) GetTokenPrice(ctx context.Context, tokenAddress
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return 0, err
 	}
+	normalizedToken := strings.TrimSpace(tokenAddress)
+	// DexScreener 同一个地址可能返回多条跨链/同名包装资产记录，这里只认 Solana 且 base token 精确匹配。
 	for _, pair := range body.Pairs {
+		if !strings.EqualFold(strings.TrimSpace(pair.ChainID), "solana") {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(pair.BaseToken.Address), normalizedToken) {
+			continue
+		}
 		value := strings.TrimSpace(pair.PriceUSD)
 		if value == "" {
 			continue
