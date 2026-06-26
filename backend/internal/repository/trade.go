@@ -233,7 +233,7 @@ func (r *TradeRepository) SaveFilledBuy(ctx context.Context, order model.TradeOr
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO trade_positions (id, account_id, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, updated_at)
 		VALUES ($1, $2, $3, 'open', $4, '', $5, $6, $7, $8, $9, 0, 0, 0, 0, $10, $11)`,
-		uuid.NewString(), order.AccountID, order.TokenAddress, order.ID, fill.FilledTokenAmount, fill.FilledQuoteAmount, fill.AvgPrice, fill.AvgPrice, fill.FilledQuoteAmount, fill.ExecutedAt.UTC(), now,
+		uuid.NewString(), order.AccountID, order.TokenAddress, order.ID, fill.FilledTokenAmount, fill.FilledQuoteAmount+fill.FeeAmount, fill.AvgPrice, fill.AvgPrice, fill.FilledQuoteAmount, fill.ExecutedAt.UTC(), now,
 	); err != nil {
 		return err
 	}

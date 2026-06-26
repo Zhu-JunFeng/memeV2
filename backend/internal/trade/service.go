@@ -188,14 +188,7 @@ func (s *Service) RetryOrder(ctx context.Context, orderID string) (model.TradeOr
 	if err != nil {
 		return model.TradeOrder{}, err
 	}
-	if order.Side == model.TradeSignalTypeBuy {
-		return order, s.executeBuy(ctx, signal)
-	}
-	position, err := s.repo.GetOpenPosition(ctx, order.AccountID, order.TokenAddress)
-	if err != nil {
-		return model.TradeOrder{}, err
-	}
-	return order, s.executeSell(ctx, signal, position)
+	return order, s.handleSignal(ctx, signal)
 }
 
 func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.TradePosition, error) {
@@ -216,6 +209,11 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 		Reason:           "手动平仓",
 		ConsumeStatus:    "manual",
 	}
+	storedSignal, _, err := s.repo.InsertSignalIfAbsent(ctx, signal)
+	if err != nil {
+		return model.TradePosition{}, err
+	}
+	signal = storedSignal
 	return position, s.executeSell(ctx, signal, position)
 }
 

@@ -13,11 +13,16 @@ import (
 )
 
 type fakeRepo struct {
-	account       model.TradeAccount
-	signals       []model.TradeSignal
-	orders        []model.TradeOrder
-	positions     map[string]model.TradePosition
-	updatedSignal map[string]string
+	account          model.TradeAccount
+	signals          []model.TradeSignal
+	orders           []model.TradeOrder
+	positions        map[string]model.TradePosition
+	updatedSignal    map[string]string
+	positionByID     map[string]model.TradePosition
+	nextOrderID      int
+	lastBuyFill      *model.TradeFill
+	lastSellFill     *model.TradeFill
+	manualSignalSeen bool
 }
 
 func newFakeRepo() *fakeRepo {
@@ -25,6 +30,8 @@ func newFakeRepo() *fakeRepo {
 		account:       model.TradeAccount{ID: "acc-1", Name: "default", BuyAmountUSD: 10, SlippageBPS: 500},
 		positions:     map[string]model.TradePosition{},
 		updatedSignal: map[string]string{},
+		positionByID:  map[string]model.TradePosition{},
+		nextOrderID:   1,
 	}
 }
 
@@ -38,7 +45,15 @@ func (r *fakeRepo) ListAccounts(context.Context) ([]model.TradeAccount, error) {
 	return []model.TradeAccount{r.account}, nil
 }
 func (r *fakeRepo) InsertSignalIfAbsent(_ context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error) {
+	for _, item := range r.signals {
+		if item.SignalID == signal.SignalID {
+			return item, false, nil
+		}
+	}
 	r.signals = append(r.signals, signal)
+	if signal.StrategyCode == "manual_close" {
+		r.manualSignalSeen = true
+	}
 	return signal, true, nil
 }
 func (r *fakeRepo) UpdateSignalStatus(_ context.Context, signalID string, status string) error {
@@ -64,7 +79,8 @@ func (r *fakeRepo) GetOpenPosition(_ context.Context, accountID string, tokenAdd
 	return item, nil
 }
 func (r *fakeRepo) CreateOrder(_ context.Context, order model.TradeOrder) (model.TradeOrder, error) {
-	order.ID = "order-1"
+	order.ID = "order-" + string(rune('0'+r.nextOrderID))
+	r.nextOrderID++
 	r.orders = append(r.orders, order)
 	return order, nil
 }
@@ -73,15 +89,37 @@ func (r *fakeRepo) UpdateOrderExecution(context.Context, string, model.TradeOrde
 }
 func (r *fakeRepo) AddOrderEvent(context.Context, string, string, any) error { return nil }
 func (r *fakeRepo) SaveFilledBuy(_ context.Context, order model.TradeOrder, fill model.TradeFill) error {
-	r.positions[r.account.ID+":"+order.TokenAddress] = model.TradePosition{ID: "pos-1", AccountID: r.account.ID, TokenAddress: order.TokenAddress, Status: model.TradePositionStatusOpen, Quantity: fill.FilledTokenAmount, CostAmount: fill.FilledQuoteAmount, AvgCostPrice: fill.AvgPrice}
+	storedFill := fill
+	r.lastBuyFill = &storedFill
+	position := model.TradePosition{
+		ID:           "pos-1",
+		AccountID:    r.account.ID,
+		TokenAddress: order.TokenAddress,
+		Status:       model.TradePositionStatusOpen,
+		Quantity:     fill.FilledTokenAmount,
+		CostAmount:   fill.FilledQuoteAmount + fill.FeeAmount,
+		AvgCostPrice: fill.AvgPrice,
+		LastPrice:    fill.AvgPrice,
+		MarketValue:  fill.FilledQuoteAmount,
+	}
+	r.positions[r.account.ID+":"+order.TokenAddress] = position
+	r.positionByID[position.ID] = position
 	return nil
 }
 func (r *fakeRepo) SaveFilledSell(_ context.Context, position model.TradePosition, order model.TradeOrder, fill model.TradeFill) error {
+	storedFill := fill
+	r.lastSellFill = &storedFill
 	delete(r.positions, position.AccountID+":"+position.TokenAddress)
+	delete(r.positionByID, position.ID)
 	return nil
 }
 func (r *fakeRepo) ListOrders(context.Context, int) ([]model.TradeOrder, error) { return r.orders, nil }
-func (r *fakeRepo) GetOrder(context.Context, string) (model.TradeOrder, error) {
+func (r *fakeRepo) GetOrder(_ context.Context, id string) (model.TradeOrder, error) {
+	for _, item := range r.orders {
+		if item.ID == id {
+			return item, nil
+		}
+	}
 	return model.TradeOrder{}, errors.New("not implemented")
 }
 func (r *fakeRepo) ListPositions(context.Context, string, int) ([]model.TradePosition, error) {
@@ -91,8 +129,12 @@ func (r *fakeRepo) ListPositions(context.Context, string, int) ([]model.TradePos
 	}
 	return items, nil
 }
-func (r *fakeRepo) GetPosition(context.Context, string) (model.TradePosition, error) {
-	return model.TradePosition{}, errors.New("not implemented")
+func (r *fakeRepo) GetPosition(_ context.Context, id string) (model.TradePosition, error) {
+	item, ok := r.positionByID[id]
+	if !ok {
+		return model.TradePosition{}, errors.New("not implemented")
+	}
+	return item, nil
 }
 func (r *fakeRepo) UpdatePositionMark(context.Context, string, float64, float64, float64, float64, float64) error {
 	return nil
@@ -117,14 +159,55 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected 1 order, got %d", len(repo.orders))
 	}
-	if _, ok := repo.positions[repo.account.ID+":token-a"]; !ok {
+	position, ok := repo.positions[repo.account.ID+":token-a"]
+	if !ok {
 		t.Fatalf("expected open position after buy")
+	}
+	if position.CostAmount != 10.15 {
+		t.Fatalf("expected buy fee to be included in cost amount, got %f", position.CostAmount)
 	}
 	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{SignalID: "sig-2", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a", Interval: "1m", SignalTime: signalTime.Add(time.Minute), TriggerMarketCap: 124, Reason: "buy again"}); err != nil {
 		t.Fatalf("second process signal: %v", err)
 	}
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected duplicate open-position buy to be skipped, orders=%d", len(repo.orders))
+	}
+}
+
+func TestRetryBuyOrderRespectsExistingPosition(t *testing.T) {
+	repo := newFakeRepo()
+	repo.positions[repo.account.ID+":token-a"] = model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen}
+	repo.orders = append(repo.orders, model.TradeOrder{ID: "order-1", AccountID: repo.account.ID, SignalID: "signal-db-1", TokenAddress: "token-a", Side: model.TradeSignalTypeBuy})
+	repo.signals = append(repo.signals, model.TradeSignal{ID: "signal-db-1", SignalID: "sig-1", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a"})
+	svc, err := NewService(context.Background(), config.TradeConfig{Enabled: true, AccountName: "default", BuyAmountUSD: 10, SlippageBPS: 500}, repo, fakeExecutor{}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := svc.RetryOrder(context.Background(), "order-1"); err != nil {
+		t.Fatalf("retry order: %v", err)
+	}
+	if len(repo.orders) != 1 {
+		t.Fatalf("expected retry to skip creating a second buy order when position exists, got %d", len(repo.orders))
+	}
+}
+
+func TestClosePositionPersistsManualSignal(t *testing.T) {
+	repo := newFakeRepo()
+	position := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15, LastPrice: 0.11}
+	repo.positions[repo.account.ID+":token-a"] = position
+	repo.positionByID[position.ID] = position
+	svc, err := NewService(context.Background(), config.TradeConfig{Enabled: true, AccountName: "default", BuyAmountUSD: 10, SlippageBPS: 500}, repo, fakeExecutor{}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := svc.ClosePosition(context.Background(), "pos-1"); err != nil {
+		t.Fatalf("close position: %v", err)
+	}
+	if !repo.manualSignalSeen {
+		t.Fatalf("expected manual close to persist a trade signal before creating sell order")
+	}
+	if len(repo.orders) != 1 || repo.orders[0].SignalID == "" {
+		t.Fatalf("expected sell order to be linked to persisted signal, orders=%#v", repo.orders)
 	}
 }
 
