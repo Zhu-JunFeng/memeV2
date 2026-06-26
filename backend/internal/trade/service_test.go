@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	solana "github.com/gagliardetto/solana-go"
+
 	"solana-meme-backtest/backend/internal/config"
 	"solana-meme-backtest/backend/internal/model"
 )
@@ -146,9 +148,24 @@ func (fakeExecutor) Execute(context.Context, ExecutionRequest) (ExecutionResult,
 	return ExecutionResult{TxHash: "tx-1", FilledToken: 100, FilledQuote: 10, AvgPrice: 0.1, FeeAmount: 0.15, FeeAsset: "USD", ExecutedAt: time.Now().UTC()}, nil
 }
 
+func testTradeConfig(t *testing.T) config.TradeConfig {
+	t.Helper()
+	privateKey, err := solana.NewRandomPrivateKey()
+	if err != nil {
+		t.Fatalf("new random private key: %v", err)
+	}
+	return config.TradeConfig{
+		Enabled:          true,
+		AccountName:      "default",
+		BuyAmountUSD:     10,
+		SlippageBPS:      500,
+		WalletPrivateKey: privateKey.String(),
+	}
+}
+
 func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	repo := newFakeRepo()
-	svc, err := NewService(context.Background(), config.TradeConfig{Enabled: true, AccountName: "default", BuyAmountUSD: 10, SlippageBPS: 500}, repo, fakeExecutor{}, nil)
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, fakeExecutor{}, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -179,7 +196,7 @@ func TestRetryBuyOrderRespectsExistingPosition(t *testing.T) {
 	repo.positions[repo.account.ID+":token-a"] = model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen}
 	repo.orders = append(repo.orders, model.TradeOrder{ID: "order-1", AccountID: repo.account.ID, SignalID: "signal-db-1", TokenAddress: "token-a", Side: model.TradeSignalTypeBuy})
 	repo.signals = append(repo.signals, model.TradeSignal{ID: "signal-db-1", SignalID: "sig-1", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a"})
-	svc, err := NewService(context.Background(), config.TradeConfig{Enabled: true, AccountName: "default", BuyAmountUSD: 10, SlippageBPS: 500}, repo, fakeExecutor{}, nil)
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, fakeExecutor{}, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -196,7 +213,7 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	position := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15, LastPrice: 0.11}
 	repo.positions[repo.account.ID+":token-a"] = position
 	repo.positionByID[position.ID] = position
-	svc, err := NewService(context.Background(), config.TradeConfig{Enabled: true, AccountName: "default", BuyAmountUSD: 10, SlippageBPS: 500}, repo, fakeExecutor{}, nil)
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, fakeExecutor{}, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

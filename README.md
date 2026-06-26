@@ -97,7 +97,7 @@
 }
 ```
 
-说明：当前已经完成交易模块解耦、表结构、Redis 消费、持仓估值刷新与 API；Jupiter 执行器接口已预留，但默认仍需补充实盘执行细节后再启用真实下单。
+说明：当前交易模块已支持真实 Jupiter 下单链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按实时 SOL/USD 价格把 `trade.buy_amount_usd` 折算成 SOL 数量后下单。
 
 ## 本地开发
 
@@ -176,8 +176,11 @@ npm run build
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
 - `trade.buy_amount_usd`：固定买入金额
+- `trade.wallet_private_key`：Solana 钱包私钥（base58）
+- `trade.solana_rpc_url`：用于查询 token decimals 的 Solana RPC
 - `trade.dexscreener.base_url`：持仓估值接口
-- `trade.jupiter.base_url`：Jupiter 执行器入口
+- `trade.jupiter.base_url`：Jupiter Ultra API 入口
+- `trade.jupiter.api_key`：Jupiter API Key
 
 ## 部署
 

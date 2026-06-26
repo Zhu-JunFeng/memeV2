@@ -39,7 +39,9 @@ trade:
   buy_amount_usd: 10
   slippage_bps: 500
   priority_fee: 0
+  solana_rpc_url: "https://api.mainnet-beta.solana.com"
   dexscreener:
     base_url: "https://api.dexscreener.com"
   jupiter:
     base_url: "https://lite-api.jup.ag"
+    api_key: ""

@@ -63,6 +63,7 @@ type TradeConfig struct {
 	BuyAmountUSD      float64
 	SlippageBPS       int
 	PriorityFee       int64
+	SolanaRPCURL      string
 	DexScreener       DexScreenerConfig
 	Jupiter           JupiterConfig
 }
@@ -73,6 +74,7 @@ type DexScreenerConfig struct {
 
 type JupiterConfig struct {
 	BaseURL string
+	APIKey  string
 }
 
 func Load() (Config, error) {
@@ -103,6 +105,7 @@ func Load() (Config, error) {
 	v.SetDefault("trade.buy_amount_usd", 10)
 	v.SetDefault("trade.slippage_bps", 500)
 	v.SetDefault("trade.priority_fee", 0)
+	v.SetDefault("trade.solana_rpc_url", "https://api.mainnet-beta.solana.com")
 	v.SetDefault("trade.dexscreener.base_url", "https://api.dexscreener.com")
 	v.SetDefault("trade.jupiter.base_url", "https://lite-api.jup.ag")
 
@@ -154,11 +157,13 @@ func Load() (Config, error) {
 			BuyAmountUSD:      v.GetFloat64("trade.buy_amount_usd"),
 			SlippageBPS:       v.GetInt("trade.slippage_bps"),
 			PriorityFee:       v.GetInt64("trade.priority_fee"),
+			SolanaRPCURL:      v.GetString("trade.solana_rpc_url"),
 			DexScreener: DexScreenerConfig{
 				BaseURL: v.GetString("trade.dexscreener.base_url"),
 			},
 			Jupiter: JupiterConfig{
 				BaseURL: v.GetString("trade.jupiter.base_url"),
+				APIKey:  v.GetString("trade.jupiter.api_key"),
 			},
 		},
 	}, nil

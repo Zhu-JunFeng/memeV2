@@ -336,7 +336,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 
 - `signal` 负责识别实时突破结构并向 Redis 发布统一交易信号
 - `trade` 负责消费信号、记录订单/成交/持仓，并通过 DexScreener 刷新持仓估值
-- 当前 Jupiter 执行器接口已经预留，若未完成实盘执行配置，相关操作会返回 `Jupiter 执行器尚未配置完成`
+- 当前交易模块已支持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单。
 
 ### GET /api/trade/accounts
 

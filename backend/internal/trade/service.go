@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	solana "github.com/gagliardetto/solana-go"
 	"github.com/google/uuid"
 
 	"solana-meme-backtest/backend/internal/config"
@@ -78,9 +79,13 @@ func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, ex
 	if !cfg.Enabled {
 		return svc, nil
 	}
+	walletAddress, err := resolveWalletAddress(cfg.WalletAddress, cfg.WalletPrivateKey)
+	if err != nil {
+		return nil, err
+	}
 	account, err := repo.EnsureAccount(ctx, model.TradeAccount{
 		Name:                defaultString(cfg.AccountName, "default"),
-		WalletAddress:       strings.TrimSpace(cfg.WalletAddress),
+		WalletAddress:       walletAddress,
 		Status:              "active",
 		BuyAmountUSD:        cfg.BuyAmountUSD,
 		SlippageBPS:         cfg.SlippageBPS,
@@ -328,4 +333,24 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func resolveWalletAddress(configured string, privateKey string) (string, error) {
+	configured = strings.TrimSpace(configured)
+	privateKey = strings.TrimSpace(privateKey)
+	if privateKey == "" {
+		if configured == "" {
+			return "", errors.New("交易钱包私钥未配置")
+		}
+		return configured, nil
+	}
+	key, err := solana.PrivateKeyFromBase58(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("交易钱包私钥格式错误: %w", err)
+	}
+	derived := key.PublicKey().String()
+	if configured != "" && configured != derived {
+		return "", fmt.Errorf("配置的钱包地址与私钥推导地址不一致: %s != %s", configured, derived)
+	}
+	return derived, nil
 }

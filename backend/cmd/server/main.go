@@ -48,7 +48,12 @@ func main() {
 		redisClient = redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
 	}
 	signalService := signal.NewService(birdeyeSource, publisher)
-	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, trade.NewJupiterExecutor(), datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL))
+	priceSource := datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL)
+	jupiterExecutor, err := trade.NewJupiterExecutor(cfg.Trade, priceSource)
+	if err != nil && cfg.Trade.Enabled {
+		logg.Fatal().Err(err).Msg("初始化 Jupiter 执行器失败")
+	}
+	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
 	}

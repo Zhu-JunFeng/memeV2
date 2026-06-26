@@ -377,8 +377,16 @@ type rowScanner interface {
 func scanTradeOrder(scanner rowScanner) (model.TradeOrder, error) {
 	var item model.TradeOrder
 	var confirmedAt sql.NullTime
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.SignalID, &item.TokenAddress, &item.Side, &item.IntentAmountUSD, &item.IntentTokenAmount, &item.Status, &item.JupiterRequestJSON, &item.JupiterResponseJSON, &item.SubmitTxHash, &confirmedAt, &item.FailReason, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	var requestJSON []byte
+	var responseJSON []byte
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.SignalID, &item.TokenAddress, &item.Side, &item.IntentAmountUSD, &item.IntentTokenAmount, &item.Status, &requestJSON, &responseJSON, &item.SubmitTxHash, &confirmedAt, &item.FailReason, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.TradeOrder{}, err
+	}
+	if len(requestJSON) > 0 {
+		item.JupiterRequestJSON = append(json.RawMessage(nil), requestJSON...)
+	}
+	if len(responseJSON) > 0 {
+		item.JupiterResponseJSON = append(json.RawMessage(nil), responseJSON...)
 	}
 	if confirmedAt.Valid {
 		item.ConfirmedAt = &confirmedAt.Time
