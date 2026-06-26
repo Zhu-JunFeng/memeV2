@@ -16,7 +16,7 @@
 
 - 数据源通过接口抽象，第一版不绑定固定数据表。
 - 新增 Birdeye K 线入口，显式选择 Birdeye 时只查询 Birdeye。
-- Birdeye K 线在首次调用成功后必须写入本地 sqlite cache；后续同 token + interval 统一直接复用这个项目缓存，不再为追最新 K 线重复请求 Birdeye。
+- Birdeye K 线在首次调用成功后必须写入 PostgreSQL cache；后续同 token + interval 统一直接复用这个项目缓存，不再为追最新 K 线重复请求 Birdeye。
 - 新增 CA + 钱包地址的买卖点标记入口，把该钱包在该 CA 上的 buy/sell 交易点标到 K 线上。
 - 新增 Bitquery 交易点来源：K 线来自 Birdeye，钱包交易点来自 Bitquery。
 - 新增数据库来源：K 线来自 `bar_data`，交易点来自 `trade_data`，按 `pair_id + user` 查询。

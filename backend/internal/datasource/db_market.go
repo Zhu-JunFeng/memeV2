@@ -42,10 +42,10 @@ func (s *DBBarDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]mode
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT start_ts, usd_data
 		FROM bar_data
-		WHERE pair_id = ?
-		  AND `+"`interval`"+` = ?
-		  AND start_ts >= ?
-		  AND start_ts <= ?
+		WHERE pair_id = $1
+		  AND "interval" = $2
+		  AND start_ts >= $3
+		  AND start_ts <= $4
 		ORDER BY start_ts ASC`, req.TokenAddress, req.Interval, start, end)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func (s *DBBarDataSource) resolveRange(ctx context.Context, req KlineQuery) (int
 	}
 	var start sql.NullInt64
 	var end sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT MIN(start_ts), MAX(start_ts) FROM bar_data WHERE pair_id = ? AND `+"`interval`"+` = ?`, req.TokenAddress, req.Interval).Scan(&start, &end)
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(start_ts), MAX(start_ts) FROM bar_data WHERE pair_id = $1 AND "interval" = $2`, req.TokenAddress, req.Interval).Scan(&start, &end)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -98,7 +98,7 @@ func (s *DBTradePointDataSource) GetTradePoints(ctx context.Context, req TradePo
 	if req.StartTime.IsZero() || req.EndTime.IsZero() {
 		var minTS sql.NullInt64
 		var maxTS sql.NullInt64
-		if err := s.db.QueryRowContext(ctx, `SELECT MIN(timestamp), MAX(timestamp) FROM trade_data WHERE pair_id = ? AND `+"`user`"+` = ?`, req.TokenAddress, req.WalletAddress).Scan(&minTS, &maxTS); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT MIN(timestamp), MAX(timestamp) FROM trade_data WHERE pair_id = $1 AND "user" = $2`, req.TokenAddress, req.WalletAddress).Scan(&minTS, &maxTS); err != nil {
 			return nil, err
 		}
 		start = minTS.Int64
@@ -107,10 +107,10 @@ func (s *DBTradePointDataSource) GetTradePoints(ctx context.Context, req TradePo
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT timestamp, is_buy, price_usd, signature
 		FROM trade_data
-		WHERE pair_id = ?
-		  AND `+"`user`"+` = ?
-		  AND timestamp >= ?
-		  AND timestamp <= ?
+		WHERE pair_id = $1
+		  AND "user" = $2
+		  AND timestamp >= $3
+		  AND timestamp <= $4
 		ORDER BY timestamp ASC`, req.TokenAddress, req.WalletAddress, start, end)
 	if err != nil {
 		return nil, err

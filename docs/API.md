@@ -65,9 +65,9 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `BACKTEST_BIRDEYE_API_KEYS`：可选，Birdeye API Key 池，支持逗号分隔多个 key；当某个 key 遇到 `429` 或额度耗尽时，后端会自动切换到下一个 key。
 - `BACKTEST_BIRDEYE_BASE_URL`：默认 `https://public-api.birdeye.so`。
 - `BACKTEST_BIRDEYE_CHAIN`：默认 `solana`。
-- `BACKTEST_BIRDEYE_CACHE_DB_PATH`：默认 `./data/birdeye-cache.sqlite`，用于缓存 Birdeye K 线。
+- `BACKTEST_DATABASE_DSN`：PostgreSQL 连接串；Birdeye K 线缓存、回测结果、交易模块表统一存储在同一个 PG 库。
 
-说明：未配置 API Key 时直接返回中文错误，不改用 SQL 或其他数据源。Birdeye K 线首次拉取成功后会写入本地 sqlite cache；同一个 token + interval 只要本地已经缓存过，后续请求都直接优先读取该项目缓存，不再为了追最新 K 线重复请求 Birdeye。
+说明：未配置 API Key 时直接返回中文错误，不改用 SQL 或其他数据源。Birdeye K 线首次拉取成功后会写入 PostgreSQL cache；同一个 token + interval 只要本地已经缓存过，后续都直接优先读取该项目缓存，不再为了追最新 K 线重复请求 Birdeye。
 
 
 ### GET /api/market/birdeye/support-resistance
@@ -106,7 +106,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `windows[].levels[].breakout`：压力位突破回测结果；会返回试压点 `failedTouches`、突破点 `breakoutPoint`、买入点 `buyPoint`、止损止盈价格、退出点、收益率，以及最终是先止损、先止盈还是超时平仓。当前场景还要求：试压组与突破点之间，最多只允许 `1` 根 K 线的最高价刺穿压力带上沿，超过则不算有效场景。
 - 在试压组内部，从第一根试压阳线到最后一根试压阳线之间，若收盘价高于压力带上沿的 K 线超过 `3` 根，该场景直接过滤，不进入回测。
 
-说明：未配置 Birdeye API Key 时直接返回中文错误，不改用 SQL、DB 或其他数据源。接口内部会先查 sqlite cache；同一个 token + interval 只要已经缓存过，后续都直接复用该项目缓存，不再请求 Birdeye 最新 K 线。只有首次没有任何缓存时才会调用 Birdeye，并把成功返回的 K 线写入 sqlite。
+说明：未配置 Birdeye API Key 时直接返回中文错误，不改用 SQL、DB 或其他数据源。接口内部会先查 PostgreSQL cache；同一个 token + interval 只要已经缓存过，后续都直接复用该项目缓存，不再请求 Birdeye 最新 K 线。只有首次没有任何缓存时才会调用 Birdeye，并把成功返回的 K 线写入 PG。
 
 ### GET /api/strategy-backtests/methods
 
@@ -121,7 +121,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 
 ### POST /api/strategy-backtests/run
 
-按指定 CA、区间和回测方法执行策略回测。当前固定使用 Birdeye K 线，并优先复用 sqlite cache 中已覆盖的 K 线。
+按指定 CA、区间和回测方法执行策略回测。当前固定使用 Birdeye K 线，并优先复用 PostgreSQL cache 中已覆盖的 K 线。
 
 请求体：
 
@@ -186,7 +186,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `feeRate` 表示单笔买入加卖出的总手续费比例，默认 `0.015`，统计时会从每笔收益里直接扣减。
 - 如果样本结束前未触发止盈或止损，则按最后一根 K 线收盘价卖出。
 
-说明：该接口内部按项目级 cache 复用 Birdeye K 线；某个 token + interval 首次缓存后，后续回测直接走本地 sqlite，不再请求 Birdeye 最新 K 线。
+说明：该接口内部按项目级 cache 复用 Birdeye K 线；某个 token + interval 首次缓存后，后续回测直接走 PostgreSQL，不再请求 Birdeye 最新 K 线。
 
 ### POST /api/market/birdeye/realtime-breakout-signals
 
@@ -328,3 +328,80 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 ### GET /api/backtests
 
 返回最近 50 条分析会话。
+
+
+## 交易模块接口
+
+交易模块当前与回测、信号模块解耦：
+
+- `signal` 负责识别实时突破结构并向 Redis 发布统一交易信号
+- `trade` 负责消费信号、记录订单/成交/持仓，并通过 DexScreener 刷新持仓估值
+- 当前 Jupiter 执行器接口已经预留，若未完成实盘执行配置，相关操作会返回 `Jupiter 执行器尚未配置完成`
+
+### GET /api/trade/accounts
+
+返回交易账户列表。当前默认设计为单钱包单账户。
+
+### GET /api/trade/signals
+
+参数：
+
+- `limit`：可选，默认 `100`。
+
+返回交易模块已接收的标准化信号，字段包含：
+
+- `signalId`
+- `signalType`：`buy` / `sell`
+- `strategyCode`
+- `tokenAddress`
+- `interval`
+- `signalTime`
+- `triggerPrice`
+- `triggerMarketCap`
+- `reason`
+- `consumeStatus`
+
+### GET /api/trade/orders
+
+参数：
+
+- `limit`：可选，默认 `100`。
+
+返回订单列表，字段包含：
+
+- `side`：买/卖方向
+- `intentAmountUsd` / `intentTokenAmount`：下单意图金额
+- `status`：`pending` / `submitted` / `filled` / `failed`
+- `submitTxHash`
+- `failReason`
+
+### GET /api/trade/orders/:id
+
+返回单笔订单详情。
+
+### POST /api/trade/orders/:id/retry
+
+按原订单对应的信号重新触发一次执行。
+
+### GET /api/trade/positions
+
+参数：
+
+- `status`：可选，`open` / `closed`
+- `limit`：可选，默认 `100`
+
+返回持仓列表，字段包含：
+
+- `quantity`
+- `costAmount`
+- `avgCostPrice`
+- `lastPrice`
+- `marketValue`
+- `realizedPnl`
+- `unrealizedPnl`
+- `maxProfitRate`
+- `maxDrawdownAmount`
+
+### POST /api/trade/positions/:id/close
+
+手动发起某个持仓的卖出流程。

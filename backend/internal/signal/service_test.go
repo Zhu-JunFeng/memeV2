@@ -19,10 +19,14 @@ func (f fakeKlineSource) GetKlines(context.Context, datasource.KlineQuery) ([]mo
 }
 
 type capturePublisher struct {
-	signals []backtest.RealtimeScenarioSignal
+	tokenAddress string
+	interval     string
+	signals      []backtest.RealtimeScenarioSignal
 }
 
-func (c *capturePublisher) PublishRealtimeSignals(_ context.Context, signals []backtest.RealtimeScenarioSignal) error {
+func (c *capturePublisher) PublishRealtimeSignals(_ context.Context, tokenAddress string, interval string, signals []backtest.RealtimeScenarioSignal) error {
+	c.tokenAddress = tokenAddress
+	c.interval = interval
 	c.signals = append([]backtest.RealtimeScenarioSignal{}, signals...)
 	return nil
 }
@@ -76,5 +80,8 @@ func TestSignalServicePublishesRealtimeSignals(t *testing.T) {
 	}
 	if len(pub.signals) == 0 {
 		t.Fatalf("expected publisher to receive signals, got %#v", pub.signals)
+	}
+	if pub.tokenAddress != "token" || pub.interval != "1m" {
+		t.Fatalf("unexpected publish target: %s %s", pub.tokenAddress, pub.interval)
 	}
 }

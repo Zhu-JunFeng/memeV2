@@ -10,7 +10,7 @@ import (
 )
 
 type Publisher interface {
-	PublishRealtimeSignals(ctx context.Context, signals []backtest.RealtimeScenarioSignal) error
+	PublishRealtimeSignals(ctx context.Context, tokenAddress string, interval string, signals []backtest.RealtimeScenarioSignal) error
 }
 
 type Service struct {
@@ -89,7 +89,7 @@ func (s *Service) DetectRealtimeSignals(ctx context.Context, req RealtimeRequest
 	}
 	result := backtest.CalculateRealtimeScenarioSignalsByWindows(history, current, req.LevelOptions, windowSize, windowStep, backtest.PressureBreakoutDetector())
 	if len(result.Signals) > 0 {
-		if err := s.publisher.PublishRealtimeSignals(ctx, result.Signals); err != nil {
+		if err := s.publisher.PublishRealtimeSignals(ctx, req.TokenAddress, req.Interval, result.Signals); err != nil {
 			return backtest.RealtimeSignalResult{}, err
 		}
 	}
@@ -123,6 +123,6 @@ func mergeHistoryWithRealtimeKline(history []model.Kline, current model.Kline) [
 
 type noopPublisher struct{}
 
-func (noopPublisher) PublishRealtimeSignals(context.Context, []backtest.RealtimeScenarioSignal) error {
+func (noopPublisher) PublishRealtimeSignals(context.Context, string, string, []backtest.RealtimeScenarioSignal) error {
 	return nil
 }

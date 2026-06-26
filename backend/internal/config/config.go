@@ -13,6 +13,7 @@ type Config struct {
 	Birdeye    BirdeyeConfig
 	Bitquery   BitqueryConfig
 	Redis      RedisConfig
+	Trade      TradeConfig
 }
 
 type ServerConfig struct {
@@ -35,7 +36,6 @@ type BirdeyeConfig struct {
 	APIKey        string
 	APIKeys       []string
 	Chain         string
-	CacheDBPath   string
 	TradeMaxPages int
 }
 
@@ -50,6 +50,29 @@ type RedisConfig struct {
 	DB       int
 	Channel  string
 	Enabled  bool
+}
+
+type TradeConfig struct {
+	Enabled           bool
+	SignalConsumer    bool
+	PriceSyncEnabled  bool
+	PriceSyncInterval int
+	WalletAddress     string
+	WalletPrivateKey  string
+	AccountName       string
+	BuyAmountUSD      float64
+	SlippageBPS       int
+	PriorityFee       int64
+	DexScreener       DexScreenerConfig
+	Jupiter           JupiterConfig
+}
+
+type DexScreenerConfig struct {
+	BaseURL string
+}
+
+type JupiterConfig struct {
+	BaseURL string
 }
 
 func Load() (Config, error) {
@@ -67,12 +90,21 @@ func Load() (Config, error) {
 	v.SetDefault("database.auto_migrate", false)
 	v.SetDefault("birdeye.base_url", "https://public-api.birdeye.so")
 	v.SetDefault("birdeye.chain", "solana")
-	v.SetDefault("birdeye.cache_db_path", "./data/birdeye-cache.sqlite")
 	v.SetDefault("birdeye.trade_max_pages", 1)
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
 	v.SetDefault("redis.db", 0)
 	v.SetDefault("redis.enabled", false)
+	v.SetDefault("trade.enabled", false)
+	v.SetDefault("trade.signal_consumer", false)
+	v.SetDefault("trade.price_sync_enabled", false)
+	v.SetDefault("trade.price_sync_interval", 15)
+	v.SetDefault("trade.account_name", "default")
+	v.SetDefault("trade.buy_amount_usd", 10)
+	v.SetDefault("trade.slippage_bps", 500)
+	v.SetDefault("trade.priority_fee", 0)
+	v.SetDefault("trade.dexscreener.base_url", "https://api.dexscreener.com")
+	v.SetDefault("trade.jupiter.base_url", "https://lite-api.jup.ag")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -98,7 +130,6 @@ func Load() (Config, error) {
 			APIKey:        v.GetString("birdeye.api_key"),
 			APIKeys:       normalizeAPIKeys(v.GetStringSlice("birdeye.api_keys"), v.GetString("birdeye.api_key")),
 			Chain:         v.GetString("birdeye.chain"),
-			CacheDBPath:   v.GetString("birdeye.cache_db_path"),
 			TradeMaxPages: v.GetInt("birdeye.trade_max_pages"),
 		},
 		Bitquery: BitqueryConfig{
@@ -111,6 +142,24 @@ func Load() (Config, error) {
 			DB:       v.GetInt("redis.db"),
 			Channel:  v.GetString("redis.channel"),
 			Enabled:  v.GetBool("redis.enabled"),
+		},
+		Trade: TradeConfig{
+			Enabled:           v.GetBool("trade.enabled"),
+			SignalConsumer:    v.GetBool("trade.signal_consumer"),
+			PriceSyncEnabled:  v.GetBool("trade.price_sync_enabled"),
+			PriceSyncInterval: v.GetInt("trade.price_sync_interval"),
+			WalletAddress:     v.GetString("trade.wallet_address"),
+			WalletPrivateKey:  v.GetString("trade.wallet_private_key"),
+			AccountName:       v.GetString("trade.account_name"),
+			BuyAmountUSD:      v.GetFloat64("trade.buy_amount_usd"),
+			SlippageBPS:       v.GetInt("trade.slippage_bps"),
+			PriorityFee:       v.GetInt64("trade.priority_fee"),
+			DexScreener: DexScreenerConfig{
+				BaseURL: v.GetString("trade.dexscreener.base_url"),
+			},
+			Jupiter: JupiterConfig{
+				BaseURL: v.GetString("trade.jupiter.base_url"),
+			},
 		},
 	}, nil
 }

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"solana-meme-backtest/backend/internal/api"
 	"solana-meme-backtest/backend/internal/backtest"
@@ -14,6 +17,7 @@ import (
 	"solana-meme-backtest/backend/internal/logger"
 	"solana-meme-backtest/backend/internal/repository"
 	"solana-meme-backtest/backend/internal/signal"
+	"solana-meme-backtest/backend/internal/trade"
 )
 
 func main() {
@@ -25,27 +29,40 @@ func main() {
 	gin.SetMode(cfg.Server.Mode)
 	database, err := db.Open(cfg.Database.DSN, cfg.Database.AutoMigrate)
 	if err != nil {
-		logg.Fatal().Err(err).Msg("连接数据库失败")
-	}
-	cacheDB, err := db.OpenSQLite(cfg.Birdeye.CacheDBPath)
-	if err != nil {
-		logg.Fatal().Err(err).Str("path", cfg.Birdeye.CacheDBPath).Msg("打开 Birdeye sqlite cache 失败")
+		logg.Fatal().Err(err).Msg("连接 PostgreSQL 失败")
 	}
 	source := datasource.NewSQLDataSource(database, cfg.Datasource.KlineQuery, cfg.Datasource.TokenSearchQuery)
 	dbBarSource := datasource.NewDBBarDataSource(database)
 	dbTradePointSource := datasource.NewDBTradePointDataSource(database)
 	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain)
-	birdeyeSource := datasource.NewBirdeyeCachedDataSource(cacheDB, birdeyeUpstream)
+	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)
 	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages)
 	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey)
-	repo := repository.NewBacktestRepository(database)
-	backtestService := backtest.NewService(source, dbBarSource, birdeyeSource, tradePointSource, bitqueryTradePointSource, dbTradePointSource, source, repo)
+	backtestRepo := repository.NewBacktestRepository(database)
+	tradeRepo := repository.NewTradeRepository(database)
+	backtestService := backtest.NewService(source, dbBarSource, birdeyeSource, tradePointSource, bitqueryTradePointSource, dbTradePointSource, source, backtestRepo)
 	var publisher signal.Publisher
+	var redisClient *redis.Client
 	if cfg.Redis.Enabled && cfg.Redis.Addr != "" {
 		publisher = signal.NewRedisPublisher(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.Channel)
+		redisClient = redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
 	}
 	signalService := signal.NewService(birdeyeSource, publisher)
-	router := api.NewRouter(backtestService, signalService)
+	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, trade.NewJupiterExecutor(), datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL))
+	if err != nil {
+		logg.Fatal().Err(err).Msg("初始化交易模块失败")
+	}
+	if tradeService.Enabled() {
+		worker := trade.NewWorker(tradeService, redisClient, cfg.Redis.Channel)
+		if cfg.Trade.SignalConsumer {
+			worker.StartSignalConsumer(context.Background())
+		}
+		if cfg.Trade.PriceSyncEnabled {
+			interval := time.Duration(cfg.Trade.PriceSyncInterval) * time.Second
+			worker.StartPriceSync(context.Background(), interval)
+		}
+	}
+	router := api.NewRouter(backtestService, signalService, tradeService)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

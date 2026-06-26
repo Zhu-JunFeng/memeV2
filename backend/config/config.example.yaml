@@ -3,20 +3,18 @@ server:
   mode: debug
 
 database:
-  dsn: ""
-  auto_migrate: false
+  dsn: "postgres://postgres:postgres@127.0.0.1:5432/solana_scalper_v2?sslmode=disable"
+  auto_migrate: true
 
 datasource:
   kline_query: ""
   token_search_query: ""
-
 
 birdeye:
   base_url: "https://public-api.birdeye.so"
   api_key: "" # 对应环境变量 BACKTEST_BIRDEYE_API_KEY
   api_keys: [] # 对应环境变量 BACKTEST_BIRDEYE_API_KEYS，可传逗号分隔；429/额度耗尽时自动轮换
   chain: "solana"
-  cache_db_path: "./data/birdeye-cache.sqlite" # 对应环境变量 BACKTEST_BIRDEYE_CACHE_DB_PATH
   trade_max_pages: 1
 
 bitquery:
@@ -29,3 +27,19 @@ redis:
   password: ""
   db: 0
   channel: "solana:meme:signals:pressure_breakout"
+
+trade:
+  enabled: false
+  signal_consumer: false
+  price_sync_enabled: false
+  price_sync_interval: 15
+  account_name: "default"
+  wallet_address: ""
+  wallet_private_key: ""
+  buy_amount_usd: 10
+  slippage_bps: 500
+  priority_fee: 0
+  dexscreener:
+    base_url: "https://api.dexscreener.com"
+  jupiter:
+    base_url: "https://lite-api.jup.ag"

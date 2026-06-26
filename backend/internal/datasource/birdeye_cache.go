@@ -38,8 +38,8 @@ func (s *BirdeyeCachedDataSource) loadCachedKlines(ctx context.Context, req Klin
 	rows, err := s.cache.QueryContext(ctx, `
 		SELECT open_time, close_time, market_cap_open, market_cap_high, market_cap_low, market_cap_close, volume
 		FROM birdeye_kline_cache
-		WHERE token_address = ?
-		  AND interval = ?
+		WHERE token_address = $1
+		  AND "interval" = $2
 		ORDER BY open_time ASC`,
 		req.TokenAddress, req.Interval)
 	if err != nil {
@@ -48,24 +48,14 @@ func (s *BirdeyeCachedDataSource) loadCachedKlines(ctx context.Context, req Klin
 	defer rows.Close()
 	allItems := make([]model.Kline, 0)
 	for rows.Next() {
-		var openTimeRaw string
-		var closeTimeRaw string
 		var item model.Kline
 		item.TokenAddress = req.TokenAddress
 		item.Interval = req.Interval
-		if err := rows.Scan(&openTimeRaw, &closeTimeRaw, &item.MarketCapOpen, &item.MarketCapHigh, &item.MarketCapLow, &item.MarketCapClose, &item.Volume); err != nil {
+		if err := rows.Scan(&item.OpenTime, &item.CloseTime, &item.MarketCapOpen, &item.MarketCapHigh, &item.MarketCapLow, &item.MarketCapClose, &item.Volume); err != nil {
 			return nil, false, err
 		}
-		openTime, err := parseCacheTime(openTimeRaw)
-		if err != nil {
-			return nil, false, err
-		}
-		closeTime, err := parseCacheTime(closeTimeRaw)
-		if err != nil {
-			return nil, false, err
-		}
-		item.OpenTime = openTime
-		item.CloseTime = closeTime
+		item.OpenTime = apptime.InBeijing(item.OpenTime)
+		item.CloseTime = apptime.InBeijing(item.CloseTime)
 		allItems = append(allItems, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -87,7 +77,7 @@ func (s *BirdeyeCachedDataSource) loadCachedKlines(ctx context.Context, req Klin
 	if len(filtered) > 0 {
 		return filtered, true, nil
 	}
-	// A token that has been cached once should keep using that project cache instead of refetching latest bars.
+	// 只要这个项目已经缓存过，就继续复用该项目缓存，不主动向上游追最新 K 线。
 	return allItems, true, nil
 }
 
@@ -101,15 +91,15 @@ func (s *BirdeyeCachedDataSource) saveKlines(ctx context.Context, req KlineQuery
 			_ = tx.Rollback()
 		}
 	}()
-	now := cacheTime(time.Now())
+	now := time.Now().UTC()
 	for _, item := range klines {
 		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO birdeye_kline_cache (
-				token_address, interval, open_time, close_time,
+				token_address, "interval", open_time, close_time,
 				market_cap_open, market_cap_high, market_cap_low, market_cap_close,
 				volume, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(token_address, interval, open_time) DO UPDATE SET
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT(token_address, "interval", open_time) DO UPDATE SET
 				close_time = excluded.close_time,
 				market_cap_open = excluded.market_cap_open,
 				market_cap_high = excluded.market_cap_high,
@@ -119,8 +109,8 @@ func (s *BirdeyeCachedDataSource) saveKlines(ctx context.Context, req KlineQuery
 				updated_at = excluded.updated_at`,
 			req.TokenAddress,
 			req.Interval,
-			cacheTime(item.OpenTime),
-			cacheTime(item.CloseTime),
+			item.OpenTime.UTC(),
+			item.CloseTime.UTC(),
 			item.MarketCapOpen,
 			item.MarketCapHigh,
 			item.MarketCapLow,
@@ -132,32 +122,23 @@ func (s *BirdeyeCachedDataSource) saveKlines(ctx context.Context, req KlineQuery
 			return err
 		}
 	}
+	if req.StartTime.IsZero() || req.EndTime.IsZero() {
+		return tx.Commit()
+	}
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO birdeye_kline_cache_ranges (
-			token_address, interval, range_start, range_end, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(token_address, interval, range_start, range_end) DO UPDATE SET
+			token_address, "interval", range_start, range_end, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT(token_address, "interval", range_start, range_end) DO UPDATE SET
 			updated_at = excluded.updated_at`,
 		req.TokenAddress,
 		req.Interval,
-		cacheTime(req.StartTime),
-		cacheTime(req.EndTime),
+		req.StartTime.UTC(),
+		req.EndTime.UTC(),
 		now,
 		now,
 	); err != nil {
 		return err
 	}
 	return tx.Commit()
-}
-
-func cacheTime(value time.Time) string {
-	return value.UTC().Format(time.RFC3339Nano)
-}
-
-func parseCacheTime(value string) (time.Time, error) {
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return apptime.InBeijing(parsed), nil
 }

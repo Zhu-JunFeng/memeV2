@@ -16,17 +16,19 @@ import (
 	"solana-meme-backtest/backend/internal/model"
 	"solana-meme-backtest/backend/internal/response"
 	"solana-meme-backtest/backend/internal/signal"
+	"solana-meme-backtest/backend/internal/trade"
 )
 
 type Handler struct {
 	backtestService *backtest.Service
 	signalService   *signal.Service
+	tradeService    *trade.Service
 }
 
-func NewRouter(backtestService *backtest.Service, signalService *signal.Service) *gin.Engine {
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{backtestService: backtestService, signalService: signalService}
+	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -40,6 +42,13 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service)
 	api.POST("/backtests", h.createBacktest)
 	api.GET("/backtests", h.listBacktests)
 	api.GET("/backtests/:id", h.getBacktest)
+	api.GET("/trade/accounts", h.listTradeAccounts)
+	api.GET("/trade/signals", h.listTradeSignals)
+	api.GET("/trade/orders", h.listTradeOrders)
+	api.GET("/trade/orders/:id", h.getTradeOrder)
+	api.POST("/trade/orders/:id/retry", h.retryTradeOrder)
+	api.GET("/trade/positions", h.listTradePositions)
+	api.POST("/trade/positions/:id/close", h.closeTradePosition)
 	return r
 }
 
@@ -401,6 +410,69 @@ func (h *Handler) getBacktest(c *gin.Context) {
 	response.OK(c, item)
 }
 
+func (h *Handler) listTradeAccounts(c *gin.Context) {
+	items, err := h.tradeService.ListAccounts(c.Request.Context())
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) listTradeSignals(c *gin.Context) {
+	items, err := h.tradeService.ListSignals(c.Request.Context(), parseLimit(c.Query("limit"), 100))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) listTradeOrders(c *gin.Context) {
+	items, err := h.tradeService.ListOrders(c.Request.Context(), parseLimit(c.Query("limit"), 100))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) getTradeOrder(c *gin.Context) {
+	item, err := h.tradeService.GetOrder(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, item)
+}
+
+func (h *Handler) retryTradeOrder(c *gin.Context) {
+	item, err := h.tradeService.RetryOrder(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, item)
+}
+
+func (h *Handler) listTradePositions(c *gin.Context) {
+	items, err := h.tradeService.ListPositions(c.Request.Context(), c.Query("status"), parseLimit(c.Query("limit"), 100))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) closeTradePosition(c *gin.Context) {
+	item, err := h.tradeService.ClosePosition(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, item)
+}
+
 func (h *Handler) handleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, datasource.ErrQueryNotConfigured):
@@ -417,6 +489,10 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Fail(c, http.StatusBadRequest, "指定时间范围内没有 K 线数据")
 	case errors.Is(err, backtest.ErrInvalidTradeFlow):
 		response.Fail(c, http.StatusBadRequest, "买卖点必须按买入后卖出的顺序成对出现")
+	case errors.Is(err, trade.ErrTradeDisabled):
+		response.Fail(c, http.StatusBadRequest, "交易模块未启用")
+	case errors.Is(err, trade.ErrTradeExecutionNotReady):
+		response.Fail(c, http.StatusBadRequest, "Jupiter 执行器尚未配置完成")
 	default:
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 	}
@@ -434,4 +510,15 @@ func parseTime(value string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return parsed, nil
+}
+
+func parseLimit(value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
