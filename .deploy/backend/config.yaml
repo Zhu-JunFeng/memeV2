@@ -1,0 +1,22 @@
+server:
+  port: 8890
+  mode: release
+
+database:
+  dsn: "sqlite:/data/solana-scalper-v2/data/business.sqlite"
+  auto_migrate: true
+
+datasource:
+  kline_query: ""
+  token_search_query: ""
+
+birdeye:
+  base_url: "https://public-api.birdeye.so"
+  api_key: "9e381ec1ccf0472d965d52b24b273251"
+  chain: "solana"
+  cache_db_path: "/data/solana-scalper-v2/data/birdeye-cache.sqlite"
+  trade_max_pages: 1
+
+bitquery:
+  base_url: "https://streaming.bitquery.io/graphql"
+  api_key: ""

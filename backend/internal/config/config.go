@@ -1,0 +1,120 @@
+package config
+
+import (
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+type Config struct {
+	Server     ServerConfig
+	Database   DatabaseConfig
+	Datasource DatasourceConfig
+	Birdeye    BirdeyeConfig
+	Bitquery   BitqueryConfig
+}
+
+type ServerConfig struct {
+	Port string
+	Mode string
+}
+
+type DatabaseConfig struct {
+	DSN         string
+	AutoMigrate bool
+}
+
+type DatasourceConfig struct {
+	KlineQuery       string
+	TokenSearchQuery string
+}
+
+type BirdeyeConfig struct {
+	BaseURL       string
+	APIKey        string
+	APIKeys       []string
+	Chain         string
+	CacheDBPath   string
+	TradeMaxPages int
+}
+
+type BitqueryConfig struct {
+	BaseURL string
+	APIKey  string
+}
+
+func Load() (Config, error) {
+	v := viper.New()
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath("./config")
+	v.AddConfigPath(".")
+	v.SetEnvPrefix("BACKTEST")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	v.SetDefault("server.port", "8890")
+	v.SetDefault("server.mode", "debug")
+	v.SetDefault("database.auto_migrate", false)
+	v.SetDefault("birdeye.base_url", "https://public-api.birdeye.so")
+	v.SetDefault("birdeye.chain", "solana")
+	v.SetDefault("birdeye.cache_db_path", "./data/birdeye-cache.sqlite")
+	v.SetDefault("birdeye.trade_max_pages", 1)
+	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
+
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return Config{}, err
+		}
+	}
+
+	return Config{
+		Server: ServerConfig{
+			Port: v.GetString("server.port"),
+			Mode: v.GetString("server.mode"),
+		},
+		Database: DatabaseConfig{
+			DSN:         v.GetString("database.dsn"),
+			AutoMigrate: v.GetBool("database.auto_migrate"),
+		},
+		Datasource: DatasourceConfig{
+			KlineQuery:       v.GetString("datasource.kline_query"),
+			TokenSearchQuery: v.GetString("datasource.token_search_query"),
+		},
+		Birdeye: BirdeyeConfig{
+			BaseURL:       v.GetString("birdeye.base_url"),
+			APIKey:        v.GetString("birdeye.api_key"),
+			APIKeys:       normalizeAPIKeys(v.GetStringSlice("birdeye.api_keys"), v.GetString("birdeye.api_key")),
+			Chain:         v.GetString("birdeye.chain"),
+			CacheDBPath:   v.GetString("birdeye.cache_db_path"),
+			TradeMaxPages: v.GetInt("birdeye.trade_max_pages"),
+		},
+		Bitquery: BitqueryConfig{
+			BaseURL: v.GetString("bitquery.base_url"),
+			APIKey:  v.GetString("bitquery.api_key"),
+		},
+	}, nil
+}
+
+func normalizeAPIKeys(keys []string, fallback string) []string {
+	normalized := make([]string, 0, len(keys)+1)
+	seen := make(map[string]struct{}, len(keys)+1)
+	appendKey := func(value string) {
+		for _, item := range strings.Split(value, ",") {
+			key := strings.TrimSpace(item)
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			normalized = append(normalized, key)
+		}
+	}
+	for _, value := range keys {
+		appendKey(value)
+	}
+	appendKey(fallback)
+	return normalized
+}

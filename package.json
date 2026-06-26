@@ -1,0 +1,10 @@
+{
+  "name": "solana-meme-backtest-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "backend:dev": "cd backend && go run ./cmd/server",
+    "frontend:dev": "cd frontend && npm run dev",
+    "test": "cd backend && go test ./... && cd ../frontend && npm test"
+  }
+}

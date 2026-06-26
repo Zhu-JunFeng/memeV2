@@ -1,0 +1,368 @@
+package backtest
+
+import (
+	"testing"
+	"time"
+
+	"solana-meme-backtest/backend/internal/model"
+)
+
+func TestCalculateSupportResistanceFindsLevels(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	prices := []struct{ high, low, close float64 }{
+		{10, 8, 9}, {11, 8.1, 10}, {12, 7, 11}, {11, 8.2, 10}, {10, 8, 9},
+		{13, 9, 12}, {15, 10, 14}, {13.8, 9.5, 11}, {12, 8.2, 9}, {11, 7.1, 8},
+		{12, 8, 11}, {15.2, 10, 14}, {13, 9, 12}, {11, 8, 9}, {10, 7.2, 8},
+	}
+	klines := makeKlines(base, time.Minute, "1m", prices)
+	levels := CalculateSupportResistance(klines, LevelOptions{PivotWindow: 2, PriceTolerance: 0.03, MaxLevels: 4})
+	if len(levels) == 0 {
+		t.Fatal("expected at least one level")
+	}
+	hasSupport := false
+	hasResistance := false
+	for _, level := range levels {
+		if level.Type == model.LevelTypeSupport {
+			hasSupport = true
+		}
+		if level.Type == model.LevelTypeResistance {
+			hasResistance = true
+		}
+		if level.Touches == 0 || level.Score == 0 || level.Lower >= level.Upper {
+			t.Fatalf("expected scored price band with touches, got %#v", level)
+		}
+	}
+	if !hasSupport || !hasResistance {
+		t.Fatalf("expected support and resistance levels, got %#v", levels)
+	}
+}
+
+func TestCalculateSupportResistanceWorksAcrossIntervals(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	prices := []struct{ high, low, close float64 }{
+		{10, 7, 9}, {11, 8, 10}, {12, 9, 11}, {11, 8, 10}, {10, 7.1, 9},
+		{13, 9, 12}, {16, 11, 15}, {14, 10, 13}, {12, 7.2, 9}, {11, 8, 10},
+		{13, 9, 12}, {16.2, 11, 15}, {15, 10, 14}, {13, 8, 12}, {12, 7.3, 9},
+	}
+	minuteLevels := CalculateSupportResistance(makeKlines(base, time.Minute, "1m", prices), LevelOptions{PivotWindow: 2, PriceTolerance: 0.03, MaxLevels: 4})
+	hourLevels := CalculateSupportResistance(makeKlines(base, time.Hour, "1h", prices), LevelOptions{PivotWindow: 2, PriceTolerance: 0.03, MaxLevels: 4})
+	if len(minuteLevels) == 0 || len(hourLevels) == 0 {
+		t.Fatalf("expected levels for both intervals, minute=%#v hour=%#v", minuteLevels, hourLevels)
+	}
+	if countByType(minuteLevels, model.LevelTypeSupport) == 0 || countByType(hourLevels, model.LevelTypeSupport) == 0 {
+		t.Fatalf("expected support levels across intervals, minute=%#v hour=%#v", minuteLevels, hourLevels)
+	}
+	if countByType(minuteLevels, model.LevelTypeResistance) == 0 || countByType(hourLevels, model.LevelTypeResistance) == 0 {
+		t.Fatalf("expected resistance levels across intervals, minute=%#v hour=%#v", minuteLevels, hourLevels)
+	}
+}
+
+func TestCalculateSupportResistanceFlipsBrokenResistanceToSupport(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	prices := []struct{ high, low, close float64 }{
+		{10, 8, 9}, {11, 8.5, 10}, {12, 9, 11}, {11, 8.8, 10}, {10, 8, 9},
+		{12.2, 9.2, 11}, {13, 10, 12.5}, {12.1, 9.5, 11}, {13.5, 10.5, 13},
+		{15, 12, 14.5}, {16, 13, 15.5}, {17, 14, 16.5}, {18, 15, 17.5},
+	}
+	levels := CalculateSupportResistance(makeKlines(base, time.Minute, "1m", prices), LevelOptions{PivotWindow: 2, PriceTolerance: 0.03, VolumeMultiplier: 1.0, MaxLevels: 8})
+	for _, level := range levels {
+		if level.Price >= 11.5 && level.Price <= 12.5 && level.Type == model.LevelTypeSupport {
+			return
+		}
+	}
+	t.Fatalf("expected old resistance near 12 to become support after price breaks above it, got %#v", levels)
+}
+
+func TestCalculateSupportResistanceSkipsLowVolumePressureCandles(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.3, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.8, MarketCapLow: 9.0, MarketCapClose: 10.2, Volume: 20},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 10.2, MarketCapHigh: 10.3, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 110},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.9, MarketCapLow: 9.3, MarketCapClose: 10.4, Volume: 180},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 10.4, MarketCapHigh: 10.5, MarketCapLow: 9.5, MarketCapClose: 9.6, Volume: 120},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.6, MarketCapHigh: 10.2, MarketCapLow: 9.4, MarketCapClose: 9.8, Volume: 130},
+		{Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 10.0, MarketCapLow: 9.2, MarketCapClose: 9.5, Volume: 125},
+	}
+	levels := CalculateSupportResistance(klines, LevelOptions{
+		PivotWindow:      1,
+		PriceTolerance:   0.03,
+		VolumeWindow:     3,
+		VolumeMultiplier: 1.2,
+		MaxLevels:        4,
+	})
+	for _, level := range levels {
+		if level.Type == model.LevelTypeResistance && level.Price > 10.7 && level.Price < 10.85 {
+			t.Fatalf("expected low-volume pressure candle near 10.8 to be excluded, got %#v", level)
+		}
+	}
+	foundQualifiedResistance := false
+	for _, level := range levels {
+		if level.Type == model.LevelTypeResistance && level.Price >= 10.85 {
+			foundQualifiedResistance = true
+		}
+	}
+	if !foundQualifiedResistance {
+		t.Fatalf("expected higher-volume bullish pressure candle to remain, got %#v", levels)
+	}
+}
+
+func TestCalculateSupportResistanceByWindowsAnnotatesBreakoutSetup(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 8.9, MarketCapHigh: 9.2, MarketCapLow: 8.6, MarketCapClose: 9.0, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.8, MarketCapLow: 8.9, MarketCapClose: 9.4, Volume: 110},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.5, MarketCapLow: 9.0, MarketCapClose: 9.8, Volume: 210},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.1, MarketCapClose: 9.4, Volume: 130},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.4, MarketCapLow: 9.0, MarketCapClose: 9.7, Volume: 240},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.7, MarketCapHigh: 9.8, MarketCapLow: 9.0, MarketCapClose: 9.3, Volume: 150},
+		{Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.2, MarketCapHigh: 10.45, MarketCapLow: 9.1, MarketCapClose: 9.8, Volume: 280},
+		{Interval: "1m", OpenTime: base.Add(7 * time.Minute), CloseTime: base.Add(8 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.95, MarketCapLow: 9.1, MarketCapClose: 9.4, Volume: 170},
+		{Interval: "1m", OpenTime: base.Add(8 * time.Minute), CloseTime: base.Add(9 * time.Minute), MarketCapOpen: 9.7, MarketCapHigh: 11.4, MarketCapLow: 9.7, MarketCapClose: 11.2, Volume: 320},
+		{Interval: "1m", OpenTime: base.Add(9 * time.Minute), CloseTime: base.Add(10 * time.Minute), MarketCapOpen: 11.2, MarketCapHigh: 11.6, MarketCapLow: 10.9, MarketCapClose: 11.4, Volume: 220},
+		{Interval: "1m", OpenTime: base.Add(10 * time.Minute), CloseTime: base.Add(11 * time.Minute), MarketCapOpen: 11.4, MarketCapHigh: 11.8, MarketCapLow: 11.1, MarketCapClose: 11.6, Volume: 230},
+		{Interval: "1m", OpenTime: base.Add(11 * time.Minute), CloseTime: base.Add(12 * time.Minute), MarketCapOpen: 11.6, MarketCapHigh: 12.0, MarketCapLow: 11.3, MarketCapClose: 11.8, Volume: 240},
+	}
+	results := CalculateSupportResistanceByWindows(
+		klines,
+		LevelOptions{
+			PivotWindow:      1,
+			PriceTolerance:   0.02,
+			BreakTolerance:   0.01,
+			ConfirmBars:      1,
+			VolumeWindow:     1,
+			VolumeMultiplier: 0.5,
+			MaxLevels:        4,
+			WindowSize:       8,
+			WindowStep:       1,
+			MinTouches:       3,
+			EntryOffsetBars:  1,
+			TakeProfitRR:     1.5,
+			MaxHoldBars:      3,
+		},
+		8,
+		1,
+	)
+	if len(results) == 0 {
+		t.Fatal("expected at least one window result")
+	}
+	for _, result := range results {
+		for _, level := range result.Levels {
+			if level.Calculation.ResistanceVotes == 0 || level.Breakout == nil || !level.Breakout.Triggered {
+				continue
+			}
+			if level.Breakout.Consolidation == nil {
+				t.Fatalf("expected consolidation zone, got %#v", level.Breakout)
+			}
+			if level.Breakout.Consolidation.BarCount == 0 || level.Breakout.Consolidation.TouchCount < 3 {
+				t.Fatalf("expected meaningful consolidation zone, got %#v", level.Breakout.Consolidation)
+			}
+			if level.Breakout.BreakoutPoint == nil {
+				t.Fatalf("expected breakout point, got %#v", level.Breakout)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected breakout setup in any deduped window, got %#v", results)
+}
+
+func TestCalculateSupportResistanceByWindowsSkipsLowVolumeRetestTouches(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.3, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.45, MarketCapLow: 9.0, MarketCapClose: 9.9, Volume: 105},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 10.40, MarketCapLow: 9.3, MarketCapClose: 10.0, Volume: 110},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 10.0, MarketCapHigh: 10.48, MarketCapLow: 9.5, MarketCapClose: 10.1, Volume: 115},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 10.1, MarketCapHigh: 11.3, MarketCapLow: 10.0, MarketCapClose: 11.0, Volume: 220},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 11.0, MarketCapHigh: 11.5, MarketCapLow: 10.9, MarketCapClose: 11.2, Volume: 230},
+	}
+	results := CalculateSupportResistanceByWindows(
+		klines,
+		LevelOptions{
+			PivotWindow:      1,
+			PriceTolerance:   0.02,
+			BreakTolerance:   0.01,
+			ConfirmBars:      1,
+			VolumeWindow:     3,
+			VolumeMultiplier: 1.2,
+			MaxLevels:        4,
+			WindowSize:       6,
+			WindowStep:       1,
+			MinTouches:       3,
+			EntryOffsetBars:  1,
+			TakeProfitRR:     1.5,
+			MaxHoldBars:      3,
+		},
+		6,
+		1,
+	)
+	for _, result := range results {
+		for _, level := range result.Levels {
+			if level.Breakout != nil {
+				t.Fatalf("expected low-volume retest touches to block breakout setup, got %#v", level.Breakout)
+			}
+		}
+	}
+}
+
+func TestCalculateSupportResistanceByWindowsSkipsScenarioWithMultipleUpperPierces(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.4, MarketCapLow: 9.0, MarketCapClose: 9.8, Volume: 200},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 10.9, MarketCapLow: 9.4, MarketCapClose: 9.7, Volume: 180},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.7, MarketCapHigh: 10.5, MarketCapLow: 9.5, MarketCapClose: 9.9, Volume: 280},
+		{Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 10.95, MarketCapLow: 9.8, MarketCapClose: 9.95, Volume: 190},
+		{Interval: "1m", OpenTime: base.Add(7 * time.Minute), CloseTime: base.Add(8 * time.Minute), MarketCapOpen: 9.95, MarketCapHigh: 11.2, MarketCapLow: 9.9, MarketCapClose: 10.95, Volume: 320},
+	}
+	results := CalculateSupportResistanceByWindows(
+		klines,
+		LevelOptions{
+			PivotWindow:      1,
+			PriceTolerance:   0.02,
+			BreakTolerance:   0.01,
+			ConfirmBars:      1,
+			VolumeWindow:     3,
+			VolumeMultiplier: 1.2,
+			MaxLevels:        4,
+			WindowSize:       8,
+			WindowStep:       1,
+			MinTouches:       3,
+			EntryOffsetBars:  1,
+			TakeProfitRR:     1.5,
+			MaxHoldBars:      3,
+		},
+		8,
+		1,
+	)
+	for _, result := range results {
+		for _, level := range result.Levels {
+			if level.Breakout != nil {
+				t.Fatalf("expected scenario with two upper-band pierces to be skipped, got %#v", level.Breakout)
+			}
+		}
+	}
+}
+
+func TestCalculateSupportResistanceByWindowsFindsBreakoutInsideWindow(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.4, MarketCapLow: 9.0, MarketCapClose: 9.8, Volume: 200},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+		{Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 11.2, MarketCapLow: 9.8, MarketCapClose: 10.95, Volume: 320},
+		{Interval: "1m", OpenTime: base.Add(7 * time.Minute), CloseTime: base.Add(8 * time.Minute), MarketCapOpen: 10.95, MarketCapHigh: 11.3, MarketCapLow: 10.8, MarketCapClose: 11.1, Volume: 220},
+	}
+	results := CalculateSupportResistanceByWindows(
+		klines,
+		LevelOptions{
+			PivotWindow:      1,
+			PriceTolerance:   0.02,
+			BreakTolerance:   0.01,
+			ConfirmBars:      1,
+			VolumeWindow:     1,
+			VolumeMultiplier: 0.5,
+			MaxLevels:        4,
+			WindowSize:       8,
+			WindowStep:       1,
+			MinTouches:       3,
+			EntryOffsetBars:  1,
+			TakeProfitRR:     1.5,
+			MaxHoldBars:      3,
+		},
+		8,
+		1,
+	)
+	if len(results) == 0 {
+		t.Fatal("expected window results")
+	}
+	for _, level := range results[0].Levels {
+		if level.Breakout == nil {
+			continue
+		}
+		if level.Breakout.BreakoutPoint == nil {
+			continue
+		}
+		if !level.Breakout.BreakoutPoint.Time.Equal(base.Add(6 * time.Minute)) {
+			t.Fatalf("expected breakout inside window at minute 6, got %#v", level.Breakout.BreakoutPoint)
+		}
+		if level.Breakout.BuyPoint == nil || !level.Breakout.BuyPoint.Time.Equal(level.Breakout.BreakoutPoint.Time) {
+			t.Fatalf("expected buy point to equal breakout point, breakout=%#v buy=%#v", level.Breakout.BreakoutPoint, level.Breakout.BuyPoint)
+		}
+		expectedBreakoutPrice := breakoutThreshold(level, 0.01)
+		if !levelsAlmostEqual(level.Breakout.BuyPoint.Price, expectedBreakoutPrice) {
+			t.Fatalf("expected buy point price %.4f, got %#v", expectedBreakoutPrice, level.Breakout.BuyPoint)
+		}
+		return
+	}
+	t.Fatalf("expected in-window breakout setup, got %#v", results[0].Levels)
+}
+
+func TestDedupeBreakoutsByKlineSignatureKeepsHighestScore(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	duplicateBreakout := &model.BreakoutSetup{
+		Triggered: true,
+		FailedTouches: []model.LevelAnchorPoint{
+			{Time: base.Add(1 * time.Minute), Price: 10},
+			{Time: base.Add(2 * time.Minute), Price: 10.1},
+			{Time: base.Add(3 * time.Minute), Price: 10.2},
+		},
+		BreakoutPoint: &model.LevelAnchorPoint{Time: base.Add(4 * time.Minute), Price: 11},
+	}
+	windows := []WindowLevelResult{
+		{WindowIndex: 1, Levels: []model.PriceLevel{{Type: model.LevelTypeResistance, Price: 10, Score: 4, Breakout: duplicateBreakout}}},
+		{WindowIndex: 2, Levels: []model.PriceLevel{{Type: model.LevelTypeResistance, Price: 10.2, Score: 8, Breakout: duplicateBreakout}}},
+	}
+	dedupeBreakoutsByKlineSignature(windows)
+	if windows[0].Levels[0].Breakout != nil {
+		t.Fatalf("expected lower-score duplicate breakout to be removed, got %#v", windows[0].Levels[0].Breakout)
+	}
+	if windows[1].Levels[0].Breakout == nil {
+		t.Fatal("expected highest-score breakout to be kept")
+	}
+}
+
+func makeKlines(base time.Time, step time.Duration, interval string, prices []struct{ high, low, close float64 }) []model.Kline {
+	klines := make([]model.Kline, 0, len(prices))
+	for i, price := range prices {
+		openTime := base.Add(time.Duration(i) * step)
+		openValue := price.close - 0.4
+		if openValue <= 0 {
+			openValue = price.low
+		}
+		klines = append(klines, model.Kline{
+			Interval:       interval,
+			OpenTime:       openTime,
+			CloseTime:      openTime.Add(step),
+			MarketCapOpen:  openValue,
+			MarketCapHigh:  price.high,
+			MarketCapLow:   price.low,
+			MarketCapClose: price.close,
+			Volume:         float64(100 + i*10),
+		})
+	}
+	return klines
+}
+
+func countByType(levels []model.PriceLevel, levelType model.LevelType) int {
+	count := 0
+	for _, level := range levels {
+		if level.Type == levelType {
+			count++
+		}
+	}
+	return count
+}
+
+func levelsAlmostEqual(left float64, right float64) bool {
+	diff := left - right
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff < 0.0001
+}

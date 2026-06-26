@@ -1,0 +1,24 @@
+server:
+  port: 8890
+  mode: debug
+
+database:
+  dsn: ""
+  auto_migrate: false
+
+datasource:
+  kline_query: ""
+  token_search_query: ""
+
+
+birdeye:
+  base_url: "https://public-api.birdeye.so"
+  api_key: "" # 对应环境变量 BACKTEST_BIRDEYE_API_KEY
+  api_keys: [] # 对应环境变量 BACKTEST_BIRDEYE_API_KEYS，可传逗号分隔；429/额度耗尽时自动轮换
+  chain: "solana"
+  cache_db_path: "./data/birdeye-cache.sqlite" # 对应环境变量 BACKTEST_BIRDEYE_CACHE_DB_PATH
+  trade_max_pages: 1
+
+bitquery:
+  base_url: "https://streaming.bitquery.io/graphql"
+  api_key: "" # 对应环境变量 BACKTEST_BITQUERY_API_KEY

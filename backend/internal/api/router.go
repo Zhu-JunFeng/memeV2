@@ -1,0 +1,402 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"solana-meme-backtest/backend/internal/apptime"
+	"solana-meme-backtest/backend/internal/backtest"
+	"solana-meme-backtest/backend/internal/datasource"
+	"solana-meme-backtest/backend/internal/model"
+	"solana-meme-backtest/backend/internal/response"
+)
+
+type Handler struct {
+	service *backtest.Service
+}
+
+func NewRouter(service *backtest.Service) *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
+	h := &Handler{service: service}
+	api := r.Group("/api")
+	api.GET("/health", h.health)
+	api.GET("/tokens/search", h.searchTokens)
+	api.GET("/market/klines", h.getKlines)
+	api.GET("/market/birdeye/klines", h.getBirdeyeKlines)
+	api.GET("/market/birdeye/support-resistance", h.getBirdeyeSupportResistance)
+	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
+	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
+	api.POST("/strategy-backtests/run", h.runStrategyBacktest)
+	api.POST("/backtests", h.createBacktest)
+	api.GET("/backtests", h.listBacktests)
+	api.GET("/backtests/:id", h.getBacktest)
+	return r
+}
+
+func (h *Handler) health(c *gin.Context) {
+	response.OK(c, gin.H{"status": "ok"})
+}
+
+func (h *Handler) searchTokens(c *gin.Context) {
+	keyword := c.Query("keyword")
+	items, err := h.service.SearchTokens(c.Request.Context(), keyword, 20)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) getKlines(c *gin.Context) {
+	start, err := parseTime(c.Query("startTime"))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "startTime 格式错误")
+		return
+	}
+	end, err := parseTime(c.Query("endTime"))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "endTime 格式错误")
+		return
+	}
+	items, err := h.service.GetKlines(c.Request.Context(), c.Query("source"), datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+type createBacktestRequest struct {
+	DataSource   string             `json:"dataSource"`
+	TokenAddress string             `json:"tokenAddress" binding:"required"`
+	TokenSymbol  string             `json:"tokenSymbol"`
+	Interval     string             `json:"interval" binding:"required"`
+	StartTime    time.Time          `json:"startTime" binding:"required"`
+	EndTime      time.Time          `json:"endTime" binding:"required"`
+	TradePoints  []model.TradePoint `json:"tradePoints" binding:"required"`
+}
+
+type strategyBacktestRunRequest struct {
+	MethodCode   string           `json:"methodCode" binding:"required"`
+	MethodConfig json.RawMessage  `json:"methodConfig"`
+	TokenAddress string           `json:"tokenAddress" binding:"required"`
+	Interval     string           `json:"interval" binding:"required"`
+	StartTime    time.Time        `json:"startTime" binding:"required"`
+	EndTime      time.Time        `json:"endTime" binding:"required"`
+	LevelOptions levelOptionsBody `json:"levelOptions"`
+}
+
+type levelOptionsBody struct {
+	PivotWindow      int     `json:"pivotWindow"`
+	PriceTolerance   float64 `json:"priceTolerance"`
+	BreakTolerance   float64 `json:"breakTolerance"`
+	ConfirmBars      int     `json:"confirmBars"`
+	VolumeWindow     int     `json:"volumeWindow"`
+	VolumeMultiplier float64 `json:"volumeMultiplier"`
+	MaxLevels        int     `json:"maxLevels"`
+	WindowSize       int     `json:"windowSize"`
+	LevelWindowSize  int     `json:"levelWindowSize"`
+	LevelWindowStep  int     `json:"levelWindowStep"`
+	MinTouches       int     `json:"minTouches"`
+	EntryOffsetBars  int     `json:"entryOffsetBars"`
+	MaxHoldBars      int     `json:"maxHoldBars"`
+	TakeProfitRR     float64 `json:"takeProfitRR"`
+}
+
+func (h *Handler) getBirdeyeKlines(c *gin.Context) {
+	c.Request.URL.RawQuery = c.Request.URL.Query().Encode()
+	query := c.Request.URL.Query()
+	query.Set("source", "birdeye")
+	c.Request.URL.RawQuery = query.Encode()
+	h.getKlines(c)
+}
+
+func (h *Handler) getBirdeyeSupportResistance(c *gin.Context) {
+	start, err := parseTime(c.Query("startTime"))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "startTime 格式错误")
+		return
+	}
+	end, err := parseTime(c.Query("endTime"))
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "endTime 格式错误")
+		return
+	}
+	options, ok := h.parseLevelOptions(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetKlineLevels(c.Request.Context(), "birdeye", datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
+func (h *Handler) getDBSupportResistance(c *gin.Context) {
+	var start time.Time
+	var end time.Time
+	if c.Query("range") != "all" {
+		parsedStart, err := parseTime(c.Query("startTime"))
+		if err != nil {
+			response.Fail(c, http.StatusBadRequest, "startTime 格式错误")
+			return
+		}
+		parsedEnd, err := parseTime(c.Query("endTime"))
+		if err != nil {
+			response.Fail(c, http.StatusBadRequest, "endTime 格式错误")
+			return
+		}
+		start = parsedStart
+		end = parsedEnd
+	}
+	pairID := c.Query("pairId")
+	if pairID == "" {
+		pairID = c.Query("tokenAddress")
+	}
+	options, ok := h.parseLevelOptions(c)
+	if !ok {
+		return
+	}
+	levels, err := h.service.GetSupportResistance(c.Request.Context(), "db", datasource.KlineQuery{TokenAddress: pairID, Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"levels": levels})
+}
+
+func (h *Handler) listStrategyMethods(c *gin.Context) {
+	response.OK(c, gin.H{"items": h.service.StrategyMethods()})
+}
+
+func (h *Handler) runStrategyBacktest(c *gin.Context) {
+	var req strategyBacktestRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	options := backtest.DefaultLevelOptions()
+	applyLevelOptionsBody(&options, req.LevelOptions)
+	result, err := h.service.RunStrategyBacktest(c.Request.Context(), "birdeye", backtest.StrategyBacktestRequest{
+		MethodCode:   req.MethodCode,
+		MethodConfig: req.MethodConfig,
+		TokenAddress: req.TokenAddress,
+		Interval:     req.Interval,
+		StartTime:    req.StartTime,
+		EndTime:      req.EndTime,
+		LevelOptions: options,
+	})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
+func (h *Handler) parseLevelOptions(c *gin.Context) (backtest.LevelOptions, bool) {
+	options := backtest.DefaultLevelOptions()
+	var ok bool
+	if options.PivotWindow, ok = parseOptionalInt(c, "pivotWindow", options.PivotWindow); !ok {
+		return options, false
+	}
+	if options.ConfirmBars, ok = parseOptionalInt(c, "confirmBars", options.ConfirmBars); !ok {
+		return options, false
+	}
+	if options.VolumeWindow, ok = parseOptionalInt(c, "volumeWindow", options.VolumeWindow); !ok {
+		return options, false
+	}
+	if options.MaxLevels, ok = parseOptionalInt(c, "maxLevels", options.MaxLevels); !ok {
+		return options, false
+	}
+	if options.WindowSize, ok = parseOptionalInt(c, "windowSize", options.WindowSize); !ok {
+		return options, false
+	}
+	if options.LevelWindowSize, ok = parseOptionalInt(c, "levelWindowSize", options.LevelWindowSize); !ok {
+		return options, false
+	}
+	if options.LevelWindowStep, ok = parseOptionalInt(c, "levelWindowStep", options.LevelWindowStep); !ok {
+		return options, false
+	}
+	if options.MinTouches, ok = parseOptionalInt(c, "minTouches", options.MinTouches); !ok {
+		return options, false
+	}
+	if options.EntryOffsetBars, ok = parseOptionalNonNegativeInt(c, "entryOffsetBars", options.EntryOffsetBars); !ok {
+		return options, false
+	}
+	if options.MaxHoldBars, ok = parseOptionalInt(c, "maxHoldBars", options.MaxHoldBars); !ok {
+		return options, false
+	}
+	if options.PriceTolerance, ok = parseOptionalFloat(c, "priceTolerance", options.PriceTolerance); !ok {
+		return options, false
+	}
+	if options.BreakTolerance, ok = parseOptionalFloat(c, "breakTolerance", options.BreakTolerance); !ok {
+		return options, false
+	}
+	if options.VolumeMultiplier, ok = parseOptionalFloat(c, "volumeMultiplier", options.VolumeMultiplier); !ok {
+		return options, false
+	}
+	if options.TakeProfitRR, ok = parseOptionalFloat(c, "takeProfitRR", options.TakeProfitRR); !ok {
+		return options, false
+	}
+	return options, true
+}
+
+func parseOptionalInt(c *gin.Context, key string, fallback int) (int, bool) {
+	value := c.Query(key)
+	if value == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		response.Fail(c, http.StatusBadRequest, key+" 格式错误")
+		return fallback, false
+	}
+	return parsed, true
+}
+
+func parseOptionalNonNegativeInt(c *gin.Context, key string, fallback int) (int, bool) {
+	value := c.Query(key)
+	if value == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		response.Fail(c, http.StatusBadRequest, key+" 格式错误")
+		return fallback, false
+	}
+	return parsed, true
+}
+
+func parseOptionalFloat(c *gin.Context, key string, fallback float64) (float64, bool) {
+	value := c.Query(key)
+	if value == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed <= 0 {
+		response.Fail(c, http.StatusBadRequest, key+" 格式错误")
+		return fallback, false
+	}
+	return parsed, true
+}
+
+func applyLevelOptionsBody(options *backtest.LevelOptions, body levelOptionsBody) {
+	if body.PivotWindow > 0 {
+		options.PivotWindow = body.PivotWindow
+	}
+	if body.PriceTolerance > 0 {
+		options.PriceTolerance = body.PriceTolerance
+	}
+	if body.BreakTolerance > 0 {
+		options.BreakTolerance = body.BreakTolerance
+	}
+	if body.ConfirmBars > 0 {
+		options.ConfirmBars = body.ConfirmBars
+	}
+	if body.VolumeWindow > 0 {
+		options.VolumeWindow = body.VolumeWindow
+	}
+	if body.VolumeMultiplier > 0 {
+		options.VolumeMultiplier = body.VolumeMultiplier
+	}
+	if body.MaxLevels > 0 {
+		options.MaxLevels = body.MaxLevels
+	}
+	if body.WindowSize > 0 {
+		options.WindowSize = body.WindowSize
+	}
+	if body.LevelWindowSize > 0 {
+		options.LevelWindowSize = body.LevelWindowSize
+	}
+	if body.LevelWindowStep > 0 {
+		options.LevelWindowStep = body.LevelWindowStep
+	}
+	if body.MinTouches > 0 {
+		options.MinTouches = body.MinTouches
+	}
+	if body.EntryOffsetBars >= 0 {
+		options.EntryOffsetBars = body.EntryOffsetBars
+	}
+	if body.MaxHoldBars > 0 {
+		options.MaxHoldBars = body.MaxHoldBars
+	}
+	if body.TakeProfitRR > 0 {
+		options.TakeProfitRR = body.TakeProfitRR
+	}
+}
+
+func (h *Handler) createBacktest(c *gin.Context) {
+	var req createBacktestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	result, err := h.service.AnalyzeAndSave(c.Request.Context(), backtest.AnalyzeRequest{SessionID: uuid.NewString(), DataSource: req.DataSource, TokenAddress: req.TokenAddress, TokenSymbol: req.TokenSymbol, Interval: req.Interval, StartTime: req.StartTime, EndTime: req.EndTime, TradePoints: req.TradePoints})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
+func (h *Handler) listBacktests(c *gin.Context) {
+	items, err := h.service.ListAnalyses(c.Request.Context(), 50)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) getBacktest(c *gin.Context) {
+	item, err := h.service.GetAnalysis(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, item)
+}
+
+func (h *Handler) handleError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, datasource.ErrQueryNotConfigured):
+		response.Fail(c, http.StatusBadRequest, "数据源查询 SQL 未配置")
+	case errors.Is(err, datasource.ErrBirdeyeNotConfigured):
+		response.Fail(c, http.StatusBadRequest, "Birdeye API Key 未配置")
+	case errors.Is(err, datasource.ErrBitqueryNotConfigured):
+		response.Fail(c, http.StatusBadRequest, "Bitquery API Token 未配置")
+	case errors.Is(err, backtest.ErrStrategyMethodNotFound):
+		response.Fail(c, http.StatusBadRequest, "回测方法不存在")
+	case errors.Is(err, backtest.ErrInvalidTimeRange):
+		response.Fail(c, http.StatusBadRequest, "开始时间必须早于结束时间")
+	case errors.Is(err, backtest.ErrNoKlines):
+		response.Fail(c, http.StatusBadRequest, "指定时间范围内没有 K 线数据")
+	case errors.Is(err, backtest.ErrInvalidTradeFlow):
+		response.Fail(c, http.StatusBadRequest, "买卖点必须按买入后卖出的顺序成对出现")
+	default:
+		response.Fail(c, http.StatusInternalServerError, err.Error())
+	}
+}
+
+func parseTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, errors.New("时间不能为空")
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return apptime.InBeijing(parsed), nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02T15:04:05", value, apptime.Beijing)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed, nil
+}
