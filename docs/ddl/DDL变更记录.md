@@ -211,3 +211,36 @@ CREATE TABLE trade_order_events (
 CREATE INDEX idx_trade_order_events_order_time
   ON trade_order_events (order_id, event_time DESC);
 ```
+
+## 004-交易模式运行时配置与字段扩展（PostgreSQL）
+
+```sql
+CREATE TABLE system_runtime_settings (
+  setting_key varchar(64) PRIMARY KEY,
+  setting_value text NOT NULL,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+
+ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS trade_mode varchar(16);
+UPDATE trade_signals SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = '';
+ALTER TABLE trade_signals ALTER COLUMN trade_mode SET NOT NULL;
+
+ALTER TABLE trade_orders ADD COLUMN IF NOT EXISTS trade_mode varchar(16);
+ALTER TABLE trade_orders ADD COLUMN IF NOT EXISTS execution_channel varchar(32);
+UPDATE trade_orders SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = '';
+UPDATE trade_orders SET execution_channel = 'jupiter_live' WHERE COALESCE(execution_channel, '') = '';
+ALTER TABLE trade_orders ALTER COLUMN trade_mode SET NOT NULL;
+ALTER TABLE trade_orders ALTER COLUMN execution_channel SET NOT NULL;
+
+ALTER TABLE trade_fills ADD COLUMN IF NOT EXISTS trade_mode varchar(16);
+ALTER TABLE trade_fills ADD COLUMN IF NOT EXISTS is_simulated boolean;
+UPDATE trade_fills SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = '';
+UPDATE trade_fills SET is_simulated = false WHERE is_simulated IS NULL;
+ALTER TABLE trade_fills ALTER COLUMN trade_mode SET NOT NULL;
+ALTER TABLE trade_fills ALTER COLUMN is_simulated SET NOT NULL;
+
+ALTER TABLE trade_positions ADD COLUMN IF NOT EXISTS trade_mode varchar(16);
+UPDATE trade_positions SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = '';
+ALTER TABLE trade_positions ALTER COLUMN trade_mode SET NOT NULL;
+```

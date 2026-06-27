@@ -15,16 +15,18 @@ import (
 )
 
 type fakeRepo struct {
-	account          model.TradeAccount
-	signals          []model.TradeSignal
-	orders           []model.TradeOrder
-	positions        map[string]model.TradePosition
-	updatedSignal    map[string]string
-	positionByID     map[string]model.TradePosition
-	nextOrderID      int
-	lastBuyFill      *model.TradeFill
-	lastSellFill     *model.TradeFill
-	manualSignalSeen bool
+	account           model.TradeAccount
+	tradeMode         model.TradeMode
+	signals           []model.TradeSignal
+	orders            []model.TradeOrder
+	positions         map[string]model.TradePosition
+	updatedSignal     map[string]string
+	positionByID      map[string]model.TradePosition
+	nextOrderID       int
+	lastBuyFill       *model.TradeFill
+	lastSellFill      *model.TradeFill
+	manualSignalSeen  bool
+	setTradeModeCalls int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -45,6 +47,14 @@ func (r *fakeRepo) GetAccountByName(context.Context, string) (model.TradeAccount
 }
 func (r *fakeRepo) ListAccounts(context.Context) ([]model.TradeAccount, error) {
 	return []model.TradeAccount{r.account}, nil
+}
+func (r *fakeRepo) GetTradeMode(context.Context) (model.TradeMode, error) {
+	return r.tradeMode, nil
+}
+func (r *fakeRepo) SetTradeMode(_ context.Context, mode model.TradeMode) error {
+	r.tradeMode = mode
+	r.setTradeModeCalls++
+	return nil
 }
 func (r *fakeRepo) InsertSignalIfAbsent(_ context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error) {
 	for _, item := range r.signals {
@@ -70,7 +80,7 @@ func (r *fakeRepo) GetSignalByID(_ context.Context, id string) (model.TradeSigna
 	}
 	return model.TradeSignal{}, sql.ErrNoRows
 }
-func (r *fakeRepo) ListSignals(context.Context, int) ([]model.TradeSignal, error) {
+func (r *fakeRepo) ListSignals(context.Context, model.TradeMode, int) ([]model.TradeSignal, error) {
 	return r.signals, nil
 }
 func (r *fakeRepo) GetOpenPosition(_ context.Context, accountID string, tokenAddress string) (model.TradePosition, error) {
@@ -96,6 +106,7 @@ func (r *fakeRepo) SaveFilledBuy(_ context.Context, order model.TradeOrder, fill
 	position := model.TradePosition{
 		ID:           "pos-1",
 		AccountID:    r.account.ID,
+		TradeMode:    order.TradeMode,
 		TokenAddress: order.TokenAddress,
 		Status:       model.TradePositionStatusOpen,
 		Quantity:     fill.FilledTokenAmount,
@@ -115,7 +126,9 @@ func (r *fakeRepo) SaveFilledSell(_ context.Context, position model.TradePositio
 	delete(r.positionByID, position.ID)
 	return nil
 }
-func (r *fakeRepo) ListOrders(context.Context, int) ([]model.TradeOrder, error) { return r.orders, nil }
+func (r *fakeRepo) ListOrders(context.Context, model.TradeMode, int) ([]model.TradeOrder, error) {
+	return r.orders, nil
+}
 func (r *fakeRepo) GetOrder(_ context.Context, id string) (model.TradeOrder, error) {
 	for _, item := range r.orders {
 		if item.ID == id {
@@ -124,7 +137,7 @@ func (r *fakeRepo) GetOrder(_ context.Context, id string) (model.TradeOrder, err
 	}
 	return model.TradeOrder{}, errors.New("not implemented")
 }
-func (r *fakeRepo) ListPositions(context.Context, string, int) ([]model.TradePosition, error) {
+func (r *fakeRepo) ListPositions(context.Context, string, model.TradeMode, int) ([]model.TradePosition, error) {
 	items := make([]model.TradePosition, 0, len(r.positions))
 	for _, item := range r.positions {
 		items = append(items, item)
@@ -142,10 +155,28 @@ func (r *fakeRepo) UpdatePositionMark(context.Context, string, float64, float64,
 	return nil
 }
 
-type fakeExecutor struct{}
+type fakeExecutor struct {
+	lastRequest ExecutionRequest
+}
 
-func (fakeExecutor) Execute(context.Context, ExecutionRequest) (ExecutionResult, error) {
-	return ExecutionResult{TxHash: "tx-1", FilledToken: 100, FilledQuote: 10, AvgPrice: 0.1, FeeAmount: 0.15, FeeAsset: "USD", ExecutedAt: time.Now().UTC()}, nil
+func (f *fakeExecutor) Execute(_ context.Context, req ExecutionRequest) (ExecutionResult, error) {
+	f.lastRequest = req
+	result := ExecutionResult{
+		TxHash:           "tx-1",
+		FilledToken:      100,
+		FilledQuote:      10,
+		AvgPrice:         0.1,
+		FeeAmount:        0.15,
+		FeeAsset:         "USD",
+		ExecutedAt:       time.Now().UTC(),
+		ExecutionChannel: string(model.TradeExecutionChannelJupiterLive),
+	}
+	if req.Mode == model.TradeModePaper {
+		result.TxHash = "paper_tx-1"
+		result.Simulated = true
+		result.ExecutionChannel = string(model.TradeExecutionChannelJupiterPaper)
+	}
+	return result, nil
 }
 
 func testTradeConfig(t *testing.T) config.TradeConfig {
@@ -163,9 +194,44 @@ func testTradeConfig(t *testing.T) config.TradeConfig {
 	}
 }
 
+func TestNewServiceDefaultsTradeModeToPaper(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if svc.GetTradeMode() != model.TradeModePaper {
+		t.Fatalf("expected default paper mode, got %s", svc.GetTradeMode())
+	}
+	if repo.tradeMode != model.TradeModePaper || repo.setTradeModeCalls != 1 {
+		t.Fatalf("expected repo trade mode to be persisted once, got mode=%s calls=%d", repo.tradeMode, repo.setTradeModeCalls)
+	}
+}
+
+func TestUpdateTradeModePersistsState(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	mode, err := svc.UpdateTradeMode(context.Background(), model.TradeModeLive)
+	if err != nil {
+		t.Fatalf("update trade mode: %v", err)
+	}
+	if mode != model.TradeModeLive || svc.GetTradeMode() != model.TradeModeLive {
+		t.Fatalf("expected live mode, got return=%s current=%s", mode, svc.GetTradeMode())
+	}
+	if repo.tradeMode != model.TradeModeLive {
+		t.Fatalf("expected repo to persist live mode, got %s", repo.tradeMode)
+	}
+}
+
 func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	repo := newFakeRepo()
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, fakeExecutor{}, nil)
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -175,6 +241,12 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	}
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected 1 order, got %d", len(repo.orders))
+	}
+	if repo.orders[0].TradeMode != model.TradeModePaper {
+		t.Fatalf("expected paper order, got %s", repo.orders[0].TradeMode)
+	}
+	if repo.lastBuyFill == nil || !repo.lastBuyFill.IsSimulated {
+		t.Fatalf("expected paper fill to be simulated")
 	}
 	position, ok := repo.positions[repo.account.ID+":token-a"]
 	if !ok {
@@ -194,9 +266,10 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 func TestRetryBuyOrderRespectsExistingPosition(t *testing.T) {
 	repo := newFakeRepo()
 	repo.positions[repo.account.ID+":token-a"] = model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen}
-	repo.orders = append(repo.orders, model.TradeOrder{ID: "order-1", AccountID: repo.account.ID, SignalID: "signal-db-1", TokenAddress: "token-a", Side: model.TradeSignalTypeBuy})
-	repo.signals = append(repo.signals, model.TradeSignal{ID: "signal-db-1", SignalID: "sig-1", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a"})
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, fakeExecutor{}, nil)
+	repo.orders = append(repo.orders, model.TradeOrder{ID: "order-1", AccountID: repo.account.ID, SignalID: "signal-db-1", TokenAddress: "token-a", Side: model.TradeSignalTypeBuy, TradeMode: model.TradeModePaper})
+	repo.signals = append(repo.signals, model.TradeSignal{ID: "signal-db-1", SignalID: "sig-1", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a", TradeMode: model.TradeModePaper})
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -213,7 +286,8 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	position := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15, LastPrice: 0.11}
 	repo.positions[repo.account.ID+":token-a"] = position
 	repo.positionByID[position.ID] = position
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, fakeExecutor{}, nil)
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -228,9 +302,30 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	}
 }
 
+func TestProcessSignalUsesCurrentTradeMode(t *testing.T) {
+	repo := newFakeRepo()
+	repo.tradeMode = model.TradeModeLive
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = svc.ProcessSignal(context.Background(), model.TradeSignalMessage{SignalID: "sig-live", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-live", Interval: "1m", SignalTime: time.Now().UTC(), Reason: "buy"})
+	if err != nil {
+		t.Fatalf("process signal: %v", err)
+	}
+	if executor.lastRequest.Mode != model.TradeModeLive {
+		t.Fatalf("expected executor to receive live mode, got %s", executor.lastRequest.Mode)
+	}
+	if repo.orders[0].ExecutionChannel != string(model.TradeExecutionChannelJupiterLive) {
+		t.Fatalf("expected live execution channel, got %s", repo.orders[0].ExecutionChannel)
+	}
+}
+
 func TestDisabledServiceRejectsSignal(t *testing.T) {
 	repo := newFakeRepo()
-	svc, err := NewService(context.Background(), config.TradeConfig{}, repo, fakeExecutor{}, nil)
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), config.TradeConfig{}, repo, executor, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

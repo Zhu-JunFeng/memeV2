@@ -11,6 +11,10 @@ type TradeOrderStatus string
 
 type TradePositionStatus string
 
+type TradeMode string
+
+type TradeExecutionChannel string
+
 const (
 	TradeSignalTypeBuy  TradeSignalType = "buy"
 	TradeSignalTypeSell TradeSignalType = "sell"
@@ -22,6 +26,12 @@ const (
 
 	TradePositionStatusOpen   TradePositionStatus = "open"
 	TradePositionStatusClosed TradePositionStatus = "closed"
+
+	TradeModePaper TradeMode = "paper"
+	TradeModeLive  TradeMode = "live"
+
+	TradeExecutionChannelJupiterLive  TradeExecutionChannel = "jupiter_live"
+	TradeExecutionChannelJupiterPaper TradeExecutionChannel = "jupiter_paper"
 )
 
 type TradeAccount struct {
@@ -39,6 +49,7 @@ type TradeAccount struct {
 type TradeSignal struct {
 	ID               string          `json:"id"`
 	SignalID         string          `json:"signalId"`
+	TradeMode        TradeMode       `json:"tradeMode"`
 	SignalType       TradeSignalType `json:"signalType"`
 	StrategyCode     string          `json:"strategyCode"`
 	TokenAddress     string          `json:"tokenAddress"`
@@ -56,6 +67,8 @@ type TradeOrder struct {
 	ID                  string           `json:"id"`
 	AccountID           string           `json:"accountId"`
 	SignalID            string           `json:"signalId"`
+	TradeMode           TradeMode        `json:"tradeMode"`
+	ExecutionChannel    string           `json:"executionChannel"`
 	TokenAddress        string           `json:"tokenAddress"`
 	Side                TradeSignalType  `json:"side"`
 	IntentAmountUSD     float64          `json:"intentAmountUsd"`
@@ -73,6 +86,8 @@ type TradeOrder struct {
 type TradeFill struct {
 	ID                string          `json:"id"`
 	OrderID           string          `json:"orderId"`
+	TradeMode         TradeMode       `json:"tradeMode"`
+	IsSimulated       bool            `json:"isSimulated"`
 	TxHash            string          `json:"txHash"`
 	Side              TradeSignalType `json:"side"`
 	TokenAddress      string          `json:"tokenAddress"`
@@ -88,6 +103,7 @@ type TradeFill struct {
 type TradePosition struct {
 	ID                string              `json:"id"`
 	AccountID         string              `json:"accountId"`
+	TradeMode         TradeMode           `json:"tradeMode"`
 	TokenAddress      string              `json:"tokenAddress"`
 	Status            TradePositionStatus `json:"status"`
 	OpenOrderID       string              `json:"openOrderId"`

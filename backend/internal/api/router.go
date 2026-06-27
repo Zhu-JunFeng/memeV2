@@ -43,6 +43,8 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/backtests", h.listBacktests)
 	api.GET("/backtests/:id", h.getBacktest)
 	api.GET("/trade/accounts", h.listTradeAccounts)
+	api.GET("/trade/runtime", h.getTradeRuntime)
+	api.PUT("/trade/runtime", h.updateTradeRuntime)
 	api.GET("/trade/signals", h.listTradeSignals)
 	api.GET("/trade/orders", h.listTradeOrders)
 	api.GET("/trade/orders/:id", h.getTradeOrder)
@@ -419,8 +421,40 @@ func (h *Handler) listTradeAccounts(c *gin.Context) {
 	response.OK(c, gin.H{"items": items})
 }
 
+func (h *Handler) getTradeRuntime(c *gin.Context) {
+	response.OK(c, gin.H{
+		"tradeMode": h.tradeService.GetTradeMode(),
+		"options": []gin.H{
+			{"label": "模拟盘", "value": model.TradeModePaper},
+			{"label": "实盘", "value": model.TradeModeLive},
+		},
+	})
+}
+
+type updateTradeRuntimeRequest struct {
+	TradeMode model.TradeMode `json:"tradeMode" binding:"required"`
+}
+
+func (h *Handler) updateTradeRuntime(c *gin.Context) {
+	var req updateTradeRuntimeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	mode, err := h.tradeService.UpdateTradeMode(c.Request.Context(), req.TradeMode)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"tradeMode": mode})
+}
+
 func (h *Handler) listTradeSignals(c *gin.Context) {
-	items, err := h.tradeService.ListSignals(c.Request.Context(), parseLimit(c.Query("limit"), 100))
+	mode, ok := parseTradeModeFilter(c)
+	if !ok {
+		return
+	}
+	items, err := h.tradeService.ListSignals(c.Request.Context(), mode, parseLimit(c.Query("limit"), 100))
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -429,7 +463,11 @@ func (h *Handler) listTradeSignals(c *gin.Context) {
 }
 
 func (h *Handler) listTradeOrders(c *gin.Context) {
-	items, err := h.tradeService.ListOrders(c.Request.Context(), parseLimit(c.Query("limit"), 100))
+	mode, ok := parseTradeModeFilter(c)
+	if !ok {
+		return
+	}
+	items, err := h.tradeService.ListOrders(c.Request.Context(), mode, parseLimit(c.Query("limit"), 100))
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -456,7 +494,11 @@ func (h *Handler) retryTradeOrder(c *gin.Context) {
 }
 
 func (h *Handler) listTradePositions(c *gin.Context) {
-	items, err := h.tradeService.ListPositions(c.Request.Context(), c.Query("status"), parseLimit(c.Query("limit"), 100))
+	mode, ok := parseTradeModeFilter(c)
+	if !ok {
+		return
+	}
+	items, err := h.tradeService.ListPositions(c.Request.Context(), c.Query("status"), mode, parseLimit(c.Query("limit"), 100))
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -493,6 +535,8 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Fail(c, http.StatusBadRequest, "交易模块未启用")
 	case errors.Is(err, trade.ErrTradeExecutionNotReady):
 		response.Fail(c, http.StatusBadRequest, "Jupiter 执行器尚未配置完成")
+	case errors.Is(err, trade.ErrInvalidTradeMode):
+		response.Fail(c, http.StatusBadRequest, err.Error())
 	default:
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 	}
@@ -521,4 +565,19 @@ func parseLimit(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func parseTradeModeFilter(c *gin.Context) (model.TradeMode, bool) {
+	value := c.Query("tradeMode")
+	switch value {
+	case "", "all":
+		return "", true
+	case string(model.TradeModePaper):
+		return model.TradeModePaper, true
+	case string(model.TradeModeLive):
+		return model.TradeModeLive, true
+	default:
+		response.Fail(c, http.StatusBadRequest, "tradeMode 仅支持 all/paper/live")
+		return "", false
+	}
 }

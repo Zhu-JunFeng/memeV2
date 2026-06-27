@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,8 @@ import (
 
 var ErrTradeOrderNotFound = errors.New("交易订单不存在")
 var ErrTradePositionNotFound = errors.New("交易持仓不存在")
+
+const tradeModeSettingKey = "trade.mode"
 
 type TradeRepository struct {
 	db *sql.DB
@@ -76,16 +79,41 @@ func (r *TradeRepository) ListAccounts(ctx context.Context) ([]model.TradeAccoun
 	return items, rows.Err()
 }
 
+func (r *TradeRepository) GetTradeMode(ctx context.Context) (model.TradeMode, error) {
+	var value string
+	err := r.db.QueryRowContext(ctx, `SELECT setting_value FROM system_runtime_settings WHERE setting_key = $1`, tradeModeSettingKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return model.TradeMode(strings.TrimSpace(value)), nil
+}
+
+func (r *TradeRepository) SetTradeMode(ctx context.Context, mode model.TradeMode) error {
+	now := time.Now().UTC()
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO system_runtime_settings (setting_key, setting_value, created_at, updated_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (setting_key) DO UPDATE SET
+			setting_value = excluded.setting_value,
+			updated_at = excluded.updated_at`,
+		tradeModeSettingKey, string(mode), now, now,
+	)
+	return err
+}
+
 func (r *TradeRepository) InsertSignalIfAbsent(ctx context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error) {
 	now := time.Now().UTC()
 	if signal.ID == "" {
 		signal.ID = uuid.NewString()
 	}
 	result, err := r.db.ExecContext(ctx, `
-		INSERT INTO trade_signals (id, signal_id, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		INSERT INTO trade_signals (id, signal_id, trade_mode, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (signal_id) DO NOTHING`,
-		signal.ID, signal.SignalID, signal.SignalType, signal.StrategyCode, signal.TokenAddress, signal.Interval, signal.SignalTime.UTC(), signal.TriggerPrice, signal.TriggerMarketCap, signal.Reason, json.RawMessage(signal.RawPayloadJSON), signal.ConsumeStatus, now,
+		signal.ID, signal.SignalID, signal.TradeMode, signal.SignalType, signal.StrategyCode, signal.TokenAddress, signal.Interval, signal.SignalTime.UTC(), signal.TriggerPrice, signal.TriggerMarketCap, signal.Reason, json.RawMessage(signal.RawPayloadJSON), signal.ConsumeStatus, now,
 	)
 	if err != nil {
 		return model.TradeSignal{}, false, err
@@ -117,21 +145,29 @@ func (r *TradeRepository) GetSignalByID(ctx context.Context, id string) (model.T
 func (r *TradeRepository) getSignal(ctx context.Context, where string, arg any) (model.TradeSignal, error) {
 	var item model.TradeSignal
 	if err := r.db.QueryRowContext(ctx, `
-		SELECT id, signal_id, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at
+		SELECT id, signal_id, trade_mode, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at
 		FROM trade_signals `+where, arg,
-	).Scan(&item.ID, &item.SignalID, &item.SignalType, &item.StrategyCode, &item.TokenAddress, &item.Interval, &item.SignalTime, &item.TriggerPrice, &item.TriggerMarketCap, &item.Reason, &item.RawPayloadJSON, &item.ConsumeStatus, &item.CreatedAt); err != nil {
+	).Scan(&item.ID, &item.SignalID, &item.TradeMode, &item.SignalType, &item.StrategyCode, &item.TokenAddress, &item.Interval, &item.SignalTime, &item.TriggerPrice, &item.TriggerMarketCap, &item.Reason, &item.RawPayloadJSON, &item.ConsumeStatus, &item.CreatedAt); err != nil {
 		return model.TradeSignal{}, err
 	}
 	return item, nil
 }
 
-func (r *TradeRepository) ListSignals(ctx context.Context, limit int) ([]model.TradeSignal, error) {
+func (r *TradeRepository) ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, signal_id, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at
-		FROM trade_signals ORDER BY signal_time DESC LIMIT $1`, limit)
+	query := `
+		SELECT id, signal_id, trade_mode, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at
+		FROM trade_signals`
+	args := []any{}
+	if tradeMode != "" {
+		query += ` WHERE trade_mode = $1`
+		args = append(args, tradeMode)
+	}
+	query += ` ORDER BY signal_time DESC LIMIT $` + itoa(len(args)+1)
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +175,7 @@ func (r *TradeRepository) ListSignals(ctx context.Context, limit int) ([]model.T
 	items := make([]model.TradeSignal, 0)
 	for rows.Next() {
 		var item model.TradeSignal
-		if err := rows.Scan(&item.ID, &item.SignalID, &item.SignalType, &item.StrategyCode, &item.TokenAddress, &item.Interval, &item.SignalTime, &item.TriggerPrice, &item.TriggerMarketCap, &item.Reason, &item.RawPayloadJSON, &item.ConsumeStatus, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.SignalID, &item.TradeMode, &item.SignalType, &item.StrategyCode, &item.TokenAddress, &item.Interval, &item.SignalTime, &item.TriggerPrice, &item.TriggerMarketCap, &item.Reason, &item.RawPayloadJSON, &item.ConsumeStatus, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -148,20 +184,12 @@ func (r *TradeRepository) ListSignals(ctx context.Context, limit int) ([]model.T
 }
 
 func (r *TradeRepository) GetOpenPosition(ctx context.Context, accountID string, tokenAddress string) (model.TradePosition, error) {
-	var item model.TradePosition
-	var closedAt sql.NullTime
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT id, account_id, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
 		FROM trade_positions
 		WHERE account_id = $1 AND token_address = $2 AND status = 'open'
-		LIMIT 1`, accountID, tokenAddress,
-	).Scan(&item.ID, &item.AccountID, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt); err != nil {
-		return model.TradePosition{}, err
-	}
-	if closedAt.Valid {
-		item.ClosedAt = &closedAt.Time
-	}
-	return item, nil
+		LIMIT 1`, accountID, tokenAddress)
+	return scanTradePosition(row)
 }
 
 func (r *TradeRepository) CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error) {
@@ -172,9 +200,9 @@ func (r *TradeRepository) CreateOrder(ctx context.Context, order model.TradeOrde
 	order.CreatedAt = now
 	order.UpdatedAt = now
 	if _, err := r.db.ExecContext(ctx, `
-		INSERT INTO trade_orders (id, account_id, signal_id, token_address, side, intent_amount_usd, intent_token_amount, status, jupiter_request_json, jupiter_response_json, submit_tx_hash, confirmed_at, fail_reason, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-		order.ID, order.AccountID, order.SignalID, order.TokenAddress, order.Side, order.IntentAmountUSD, order.IntentTokenAmount, order.Status, json.RawMessage(order.JupiterRequestJSON), json.RawMessage(order.JupiterResponseJSON), order.SubmitTxHash, order.ConfirmedAt, order.FailReason, now, now,
+		INSERT INTO trade_orders (id, account_id, signal_id, trade_mode, execution_channel, token_address, side, intent_amount_usd, intent_token_amount, status, jupiter_request_json, jupiter_response_json, submit_tx_hash, confirmed_at, fail_reason, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		order.ID, order.AccountID, order.SignalID, order.TradeMode, order.ExecutionChannel, order.TokenAddress, order.Side, order.IntentAmountUSD, order.IntentTokenAmount, order.Status, json.RawMessage(order.JupiterRequestJSON), json.RawMessage(order.JupiterResponseJSON), order.SubmitTxHash, order.ConfirmedAt, order.FailReason, now, now,
 	); err != nil {
 		return model.TradeOrder{}, err
 	}
@@ -217,9 +245,9 @@ func (r *TradeRepository) SaveFilledBuy(ctx context.Context, order model.TradeOr
 		fill.ID = uuid.NewString()
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO trade_fills (id, order_id, tx_hash, side, token_address, filled_token_amount, filled_quote_amount, avg_price, fee_amount, fee_asset, executed_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		fill.ID, fill.OrderID, fill.TxHash, fill.Side, fill.TokenAddress, fill.FilledTokenAmount, fill.FilledQuoteAmount, fill.AvgPrice, fill.FeeAmount, fill.FeeAsset, fill.ExecutedAt.UTC(), now,
+		INSERT INTO trade_fills (id, order_id, trade_mode, is_simulated, tx_hash, side, token_address, filled_token_amount, filled_quote_amount, avg_price, fee_amount, fee_asset, executed_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		fill.ID, fill.OrderID, fill.TradeMode, fill.IsSimulated, fill.TxHash, fill.Side, fill.TokenAddress, fill.FilledTokenAmount, fill.FilledQuoteAmount, fill.AvgPrice, fill.FeeAmount, fill.FeeAsset, fill.ExecutedAt.UTC(), now,
 	); err != nil {
 		return err
 	}
@@ -231,9 +259,9 @@ func (r *TradeRepository) SaveFilledBuy(ctx context.Context, order model.TradeOr
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO trade_positions (id, account_id, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, updated_at)
-		VALUES ($1, $2, $3, 'open', $4, '', $5, $6, $7, $8, $9, 0, 0, 0, 0, $10, $11)`,
-		uuid.NewString(), order.AccountID, order.TokenAddress, order.ID, fill.FilledTokenAmount, fill.FilledQuoteAmount+fill.FeeAmount, fill.AvgPrice, fill.AvgPrice, fill.FilledQuoteAmount, fill.ExecutedAt.UTC(), now,
+		INSERT INTO trade_positions (id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, updated_at)
+		VALUES ($1, $2, $3, $4, 'open', $5, '', $6, $7, $8, $9, $10, 0, 0, 0, 0, $11, $12)`,
+		uuid.NewString(), order.AccountID, order.TradeMode, order.TokenAddress, order.ID, fill.FilledTokenAmount, fill.FilledQuoteAmount+fill.FeeAmount, fill.AvgPrice, fill.AvgPrice, fill.FilledQuoteAmount, fill.ExecutedAt.UTC(), now,
 	); err != nil {
 		return err
 	}
@@ -251,9 +279,9 @@ func (r *TradeRepository) SaveFilledSell(ctx context.Context, position model.Tra
 		fill.ID = uuid.NewString()
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO trade_fills (id, order_id, tx_hash, side, token_address, filled_token_amount, filled_quote_amount, avg_price, fee_amount, fee_asset, executed_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		fill.ID, fill.OrderID, fill.TxHash, fill.Side, fill.TokenAddress, fill.FilledTokenAmount, fill.FilledQuoteAmount, fill.AvgPrice, fill.FeeAmount, fill.FeeAsset, fill.ExecutedAt.UTC(), now,
+		INSERT INTO trade_fills (id, order_id, trade_mode, is_simulated, tx_hash, side, token_address, filled_token_amount, filled_quote_amount, avg_price, fee_amount, fee_asset, executed_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		fill.ID, fill.OrderID, fill.TradeMode, fill.IsSimulated, fill.TxHash, fill.Side, fill.TokenAddress, fill.FilledTokenAmount, fill.FilledQuoteAmount, fill.AvgPrice, fill.FeeAmount, fill.FeeAsset, fill.ExecutedAt.UTC(), now,
 	); err != nil {
 		return err
 	}
@@ -275,13 +303,21 @@ func (r *TradeRepository) SaveFilledSell(ctx context.Context, position model.Tra
 	return tx.Commit()
 }
 
-func (r *TradeRepository) ListOrders(ctx context.Context, limit int) ([]model.TradeOrder, error) {
+func (r *TradeRepository) ListOrders(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeOrder, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, account_id, signal_id, token_address, side, intent_amount_usd, intent_token_amount, status, jupiter_request_json, jupiter_response_json, submit_tx_hash, confirmed_at, fail_reason, created_at, updated_at
-		FROM trade_orders ORDER BY created_at DESC LIMIT $1`, limit)
+	query := `
+		SELECT id, account_id, signal_id, trade_mode, execution_channel, token_address, side, intent_amount_usd, intent_token_amount, status, jupiter_request_json, jupiter_response_json, submit_tx_hash, confirmed_at, fail_reason, created_at, updated_at
+		FROM trade_orders`
+	args := []any{}
+	if tradeMode != "" {
+		query += ` WHERE trade_mode = $1`
+		args = append(args, tradeMode)
+	}
+	query += ` ORDER BY created_at DESC LIMIT $` + itoa(len(args)+1)
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +335,7 @@ func (r *TradeRepository) ListOrders(ctx context.Context, limit int) ([]model.Tr
 
 func (r *TradeRepository) GetOrder(ctx context.Context, id string) (model.TradeOrder, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, account_id, signal_id, token_address, side, intent_amount_usd, intent_token_amount, status, jupiter_request_json, jupiter_response_json, submit_tx_hash, confirmed_at, fail_reason, created_at, updated_at
+		SELECT id, account_id, signal_id, trade_mode, execution_channel, token_address, side, intent_amount_usd, intent_token_amount, status, jupiter_request_json, jupiter_response_json, submit_tx_hash, confirmed_at, fail_reason, created_at, updated_at
 		FROM trade_orders WHERE id = $1`, id)
 	item, err := scanTradeOrder(row)
 	if err != nil {
@@ -311,17 +347,25 @@ func (r *TradeRepository) GetOrder(ctx context.Context, id string) (model.TradeO
 	return item, nil
 }
 
-func (r *TradeRepository) ListPositions(ctx context.Context, status string, limit int) ([]model.TradePosition, error) {
+func (r *TradeRepository) ListPositions(ctx context.Context, status string, tradeMode model.TradeMode, limit int) ([]model.TradePosition, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	query := `
-		SELECT id, account_id, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
+		SELECT id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
 		FROM trade_positions`
-	args := []any{}
-	if status != "" {
-		query += ` WHERE status = $1`
+	args := make([]any, 0, 3)
+	clauses := make([]string, 0, 2)
+	if strings.TrimSpace(status) != "" {
 		args = append(args, status)
+		clauses = append(clauses, `status = $`+itoa(len(args)))
+	}
+	if tradeMode != "" {
+		args = append(args, tradeMode)
+		clauses = append(clauses, `trade_mode = $`+itoa(len(args)))
+	}
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, ` AND `)
 	}
 	query += ` ORDER BY updated_at DESC LIMIT $` + itoa(len(args)+1)
 	args = append(args, limit)
@@ -343,7 +387,7 @@ func (r *TradeRepository) ListPositions(ctx context.Context, status string, limi
 
 func (r *TradeRepository) GetPosition(ctx context.Context, id string) (model.TradePosition, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, account_id, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
+		SELECT id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
 		FROM trade_positions WHERE id = $1`, id)
 	item, err := scanTradePosition(row)
 	if err != nil {
@@ -379,7 +423,7 @@ func scanTradeOrder(scanner rowScanner) (model.TradeOrder, error) {
 	var confirmedAt sql.NullTime
 	var requestJSON []byte
 	var responseJSON []byte
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.SignalID, &item.TokenAddress, &item.Side, &item.IntentAmountUSD, &item.IntentTokenAmount, &item.Status, &requestJSON, &responseJSON, &item.SubmitTxHash, &confirmedAt, &item.FailReason, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.SignalID, &item.TradeMode, &item.ExecutionChannel, &item.TokenAddress, &item.Side, &item.IntentAmountUSD, &item.IntentTokenAmount, &item.Status, &requestJSON, &responseJSON, &item.SubmitTxHash, &confirmedAt, &item.FailReason, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.TradeOrder{}, err
 	}
 	if len(requestJSON) > 0 {
@@ -397,7 +441,7 @@ func scanTradeOrder(scanner rowScanner) (model.TradeOrder, error) {
 func scanTradePosition(scanner rowScanner) (model.TradePosition, error) {
 	var item model.TradePosition
 	var closedAt sql.NullTime
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt); err != nil {
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt); err != nil {
 		return model.TradePosition{}, err
 	}
 	if closedAt.Valid {

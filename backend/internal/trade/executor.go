@@ -15,6 +15,7 @@ import (
 
 	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
+	"github.com/google/uuid"
 
 	"solana-meme-backtest/backend/internal/config"
 	"solana-meme-backtest/backend/internal/datasource"
@@ -111,6 +112,9 @@ func (e *JupiterExecutor) Execute(ctx context.Context, req ExecutionRequest) (Ex
 	if strings.TrimSpace(orderResp.Transaction) == "" {
 		return ExecutionResult{}, fmt.Errorf("Jupiter 下单未返回交易数据: %s", defaultString(orderResp.ErrorMessage, "unknown error"))
 	}
+	if req.Mode == model.TradeModePaper {
+		return e.buildPaperExecutionResult(ctx, req, orderResp)
+	}
 	signedTransaction, err := e.signTransaction(orderResp.Transaction)
 	if err != nil {
 		return ExecutionResult{}, err
@@ -125,6 +129,83 @@ func (e *JupiterExecutor) Execute(ctx context.Context, req ExecutionRequest) (Ex
 	result, err := e.buildExecutionResult(ctx, req, orderResp, execResp)
 	if err != nil {
 		return ExecutionResult{}, err
+	}
+	return result, nil
+}
+
+func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req ExecutionRequest, orderResp jupiterOrderResponse) (ExecutionResult, error) {
+	solPriceUSD, err := e.priceProvider.GetTokenPrice(ctx, wrappedSOLMint)
+	if err != nil {
+		return ExecutionResult{}, fmt.Errorf("获取 SOL 美元价格失败: %w", err)
+	}
+	requestPayload, err := json.Marshal(map[string]any{
+		"walletAddress": e.walletAddress,
+		"requestId":     orderResp.RequestID,
+		"side":          req.Order.Side,
+		"mode":          req.Mode,
+	})
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	responsePayload, err := json.Marshal(map[string]any{
+		"order": orderResp,
+		"paper": map[string]any{
+			"simulated": true,
+			"reason":    "paper mode skips Jupiter execute",
+		},
+	})
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	result := ExecutionResult{
+		RequestPayload:   requestPayload,
+		ResponsePayload:  responsePayload,
+		TxHash:           "paper_" + uuid.NewString(),
+		FeeAmount:        e.feeUSD(solPriceUSD, orderResp),
+		FeeAsset:         "USD",
+		ExecutedAt:       time.Now().UTC(),
+		Simulated:        true,
+		ExecutionChannel: string(model.TradeExecutionChannelJupiterPaper),
+	}
+	switch req.Order.Side {
+	case model.TradeSignalTypeBuy:
+		decimals, err := e.fetchMintDecimals(ctx, req.Signal.TokenAddress)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		filledToken, err := rawAmountToDecimal(orderResp.OutAmount, decimals)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		spentSOL, err := rawAmountToDecimal(orderResp.InAmount, 9)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		result.FilledToken = filledToken
+		result.FilledQuote = spentSOL * solPriceUSD
+		if result.FilledToken > 0 {
+			result.AvgPrice = result.FilledQuote / result.FilledToken
+		}
+	case model.TradeSignalTypeSell:
+		decimals, err := e.fetchMintDecimals(ctx, req.Signal.TokenAddress)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		soldToken, err := rawAmountToDecimal(orderResp.InAmount, decimals)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		receivedSOL, err := rawAmountToDecimal(orderResp.OutAmount, 9)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		result.FilledToken = soldToken
+		result.FilledQuote = receivedSOL * solPriceUSD
+		if result.FilledToken > 0 {
+			result.AvgPrice = result.FilledQuote / result.FilledToken
+		}
+	default:
+		return ExecutionResult{}, fmt.Errorf("不支持的交易方向: %s", req.Order.Side)
 	}
 	return result, nil
 }
@@ -272,12 +353,13 @@ func (e *JupiterExecutor) buildExecutionResult(ctx context.Context, req Executio
 		return ExecutionResult{}, err
 	}
 	result := ExecutionResult{
-		RequestPayload:  requestPayload,
-		ResponsePayload: responsePayload,
-		TxHash:          execResp.Signature,
-		FeeAmount:       feeUSD,
-		FeeAsset:        "USD",
-		ExecutedAt:      time.Now().UTC(),
+		RequestPayload:   requestPayload,
+		ResponsePayload:  responsePayload,
+		TxHash:           execResp.Signature,
+		FeeAmount:        feeUSD,
+		FeeAsset:         "USD",
+		ExecutedAt:       time.Now().UTC(),
+		ExecutionChannel: string(model.TradeExecutionChannelJupiterLive),
 	}
 	switch req.Order.Side {
 	case model.TradeSignalTypeBuy:
@@ -320,6 +402,11 @@ func (e *JupiterExecutor) buildExecutionResult(ctx context.Context, req Executio
 		}
 	}
 	return result, nil
+}
+
+func (e *JupiterExecutor) feeUSD(solPriceUSD float64, orderResp jupiterOrderResponse) float64 {
+	feeLamports := maxInt64(orderResp.PrioritizationFeeLamports, 0) + maxInt64(orderResp.SignatureFeeLamports, 0) + maxInt64(orderResp.RentFeeLamports, 0)
+	return float64(feeLamports) / lamportsPerSOL * solPriceUSD
 }
 
 func (e *JupiterExecutor) fetchMintDecimals(ctx context.Context, mint string) (uint8, error) {

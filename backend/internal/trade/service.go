@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -19,24 +20,27 @@ import (
 
 var ErrTradeDisabled = errors.New("交易模块未启用")
 var ErrTradeExecutionNotReady = errors.New("Jupiter 执行器尚未配置完成")
+var ErrInvalidTradeMode = errors.New("交易模式不合法")
 
 type Repository interface {
 	EnsureAccount(ctx context.Context, account model.TradeAccount) (model.TradeAccount, error)
 	GetAccountByName(ctx context.Context, name string) (model.TradeAccount, error)
 	ListAccounts(ctx context.Context) ([]model.TradeAccount, error)
+	GetTradeMode(ctx context.Context) (model.TradeMode, error)
+	SetTradeMode(ctx context.Context, mode model.TradeMode) error
 	InsertSignalIfAbsent(ctx context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error)
 	UpdateSignalStatus(ctx context.Context, signalID string, status string) error
 	GetSignalByID(ctx context.Context, id string) (model.TradeSignal, error)
-	ListSignals(ctx context.Context, limit int) ([]model.TradeSignal, error)
+	ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error)
 	GetOpenPosition(ctx context.Context, accountID string, tokenAddress string) (model.TradePosition, error)
 	CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error)
 	UpdateOrderExecution(ctx context.Context, orderID string, status model.TradeOrderStatus, txHash string, requestJSON json.RawMessage, responseJSON json.RawMessage, failReason string, confirmedAt *time.Time) error
 	AddOrderEvent(ctx context.Context, orderID string, eventType string, detail any) error
 	SaveFilledBuy(ctx context.Context, order model.TradeOrder, fill model.TradeFill) error
 	SaveFilledSell(ctx context.Context, position model.TradePosition, order model.TradeOrder, fill model.TradeFill) error
-	ListOrders(ctx context.Context, limit int) ([]model.TradeOrder, error)
+	ListOrders(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeOrder, error)
 	GetOrder(ctx context.Context, id string) (model.TradeOrder, error)
-	ListPositions(ctx context.Context, status string, limit int) ([]model.TradePosition, error)
+	ListPositions(ctx context.Context, status string, tradeMode model.TradeMode, limit int) ([]model.TradePosition, error)
 	GetPosition(ctx context.Context, id string) (model.TradePosition, error)
 	UpdatePositionMark(ctx context.Context, positionID string, lastPrice float64, marketValue float64, unrealized float64, maxProfitRate float64, maxDrawdownAmount float64) error
 }
@@ -51,18 +55,21 @@ type ExecutionRequest struct {
 	Order    model.TradeOrder
 	Position *model.TradePosition
 	Config   config.TradeConfig
+	Mode     model.TradeMode
 }
 
 type ExecutionResult struct {
-	RequestPayload  json.RawMessage
-	ResponsePayload json.RawMessage
-	TxHash          string
-	FilledToken     float64
-	FilledQuote     float64
-	AvgPrice        float64
-	FeeAmount       float64
-	FeeAsset        string
-	ExecutedAt      time.Time
+	RequestPayload   json.RawMessage
+	ResponsePayload  json.RawMessage
+	TxHash           string
+	FilledToken      float64
+	FilledQuote      float64
+	AvgPrice         float64
+	FeeAmount        float64
+	FeeAsset         string
+	ExecutedAt       time.Time
+	Simulated        bool
+	ExecutionChannel string
 }
 
 type Service struct {
@@ -72,10 +79,12 @@ type Service struct {
 	priceProvider datasource.TokenPriceProvider
 	account       model.TradeAccount
 	enabled       bool
+	modeMu        sync.RWMutex
+	tradeMode     model.TradeMode
 }
 
 func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, executor Executor, priceProvider datasource.TokenPriceProvider) (*Service, error) {
-	svc := &Service{cfg: cfg, repo: repo, executor: executor, priceProvider: priceProvider, enabled: cfg.Enabled}
+	svc := &Service{cfg: cfg, repo: repo, executor: executor, priceProvider: priceProvider, enabled: cfg.Enabled, tradeMode: model.TradeModePaper}
 	if !cfg.Enabled {
 		return svc, nil
 	}
@@ -95,6 +104,20 @@ func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, ex
 		return nil, err
 	}
 	svc.account = account
+	mode, err := repo.GetTradeMode(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if mode == "" {
+		mode = model.TradeModePaper
+		if err := repo.SetTradeMode(ctx, mode); err != nil {
+			return nil, err
+		}
+	}
+	if !isValidTradeMode(mode) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTradeMode, mode)
+	}
+	svc.tradeMode = mode
 	return svc, nil
 }
 
@@ -106,20 +129,42 @@ func (s *Service) ListAccounts(ctx context.Context) ([]model.TradeAccount, error
 	return s.repo.ListAccounts(ctx)
 }
 
-func (s *Service) ListSignals(ctx context.Context, limit int) ([]model.TradeSignal, error) {
-	return s.repo.ListSignals(ctx, limit)
+func (s *Service) GetTradeMode() model.TradeMode {
+	s.modeMu.RLock()
+	defer s.modeMu.RUnlock()
+	return s.tradeMode
 }
 
-func (s *Service) ListOrders(ctx context.Context, limit int) ([]model.TradeOrder, error) {
-	return s.repo.ListOrders(ctx, limit)
+func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (model.TradeMode, error) {
+	if !s.enabled {
+		return "", ErrTradeDisabled
+	}
+	if !isValidTradeMode(mode) {
+		return "", fmt.Errorf("%w: %s", ErrInvalidTradeMode, mode)
+	}
+	if err := s.repo.SetTradeMode(ctx, mode); err != nil {
+		return "", err
+	}
+	s.modeMu.Lock()
+	s.tradeMode = mode
+	s.modeMu.Unlock()
+	return mode, nil
+}
+
+func (s *Service) ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error) {
+	return s.repo.ListSignals(ctx, normalizeTradeModeFilter(tradeMode), limit)
+}
+
+func (s *Service) ListOrders(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeOrder, error) {
+	return s.repo.ListOrders(ctx, normalizeTradeModeFilter(tradeMode), limit)
 }
 
 func (s *Service) GetOrder(ctx context.Context, id string) (model.TradeOrder, error) {
 	return s.repo.GetOrder(ctx, id)
 }
 
-func (s *Service) ListPositions(ctx context.Context, status string, limit int) ([]model.TradePosition, error) {
-	return s.repo.ListPositions(ctx, status, limit)
+func (s *Service) ListPositions(ctx context.Context, status string, tradeMode model.TradeMode, limit int) ([]model.TradePosition, error) {
+	return s.repo.ListPositions(ctx, status, normalizeTradeModeFilter(tradeMode), limit)
 }
 
 func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMessage) (model.TradeSignal, error) {
@@ -133,6 +178,7 @@ func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMe
 	signal, inserted, err := s.repo.InsertSignalIfAbsent(ctx, model.TradeSignal{
 		ID:               uuid.NewString(),
 		SignalID:         message.SignalID,
+		TradeMode:        s.GetTradeMode(),
 		SignalType:       message.SignalType,
 		StrategyCode:     message.StrategyCode,
 		TokenAddress:     message.TokenAddress,
@@ -204,6 +250,7 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	signal := model.TradeSignal{
 		ID:               uuid.NewString(),
 		SignalID:         uuid.NewString(),
+		TradeMode:        s.GetTradeMode(),
 		SignalType:       model.TradeSignalTypeSell,
 		StrategyCode:     "manual_close",
 		TokenAddress:     position.TokenAddress,
@@ -226,7 +273,7 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 	if !s.enabled || s.priceProvider == nil {
 		return nil
 	}
-	positions, err := s.repo.ListPositions(ctx, string(model.TradePositionStatusOpen), 200)
+	positions, err := s.repo.ListPositions(ctx, string(model.TradePositionStatusOpen), "", 200)
 	if err != nil {
 		return err
 	}
@@ -250,9 +297,12 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 }
 
 func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) error {
+	mode := signal.TradeMode
 	order, err := s.repo.CreateOrder(ctx, model.TradeOrder{
 		AccountID:         s.account.ID,
 		SignalID:          signal.ID,
+		TradeMode:         mode,
+		ExecutionChannel:  executionChannelForMode(mode),
 		TokenAddress:      signal.TokenAddress,
 		Side:              model.TradeSignalTypeBuy,
 		IntentAmountUSD:   s.account.BuyAmountUSD,
@@ -265,7 +315,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 	if err := s.repo.AddOrderEvent(ctx, order.ID, "created", map[string]any{"signalId": signal.SignalID}); err != nil {
 		return err
 	}
-	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg})
+	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: mode})
 	if err != nil {
 		_ = s.repo.UpdateOrderExecution(ctx, order.ID, model.TradeOrderStatusFailed, "", nil, nil, err.Error(), nil)
 		_ = s.repo.AddOrderEvent(ctx, order.ID, "failed", map[string]any{"error": err.Error()})
@@ -276,6 +326,8 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 	}
 	return s.repo.SaveFilledBuy(ctx, order, model.TradeFill{
 		OrderID:           order.ID,
+		TradeMode:         mode,
+		IsSimulated:       result.Simulated,
 		TxHash:            result.TxHash,
 		Side:              model.TradeSignalTypeBuy,
 		TokenAddress:      order.TokenAddress,
@@ -289,9 +341,12 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 }
 
 func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, position model.TradePosition) error {
+	mode := signal.TradeMode
 	order, err := s.repo.CreateOrder(ctx, model.TradeOrder{
 		AccountID:         s.account.ID,
 		SignalID:          signal.ID,
+		TradeMode:         mode,
+		ExecutionChannel:  executionChannelForMode(mode),
 		TokenAddress:      signal.TokenAddress,
 		Side:              model.TradeSignalTypeSell,
 		IntentAmountUSD:   0,
@@ -304,7 +359,7 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	if err := s.repo.AddOrderEvent(ctx, order.ID, "created", map[string]any{"positionId": position.ID}); err != nil {
 		return err
 	}
-	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Position: &position, Config: s.cfg})
+	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Position: &position, Config: s.cfg, Mode: mode})
 	if err != nil {
 		_ = s.repo.UpdateOrderExecution(ctx, order.ID, model.TradeOrderStatusFailed, "", nil, nil, err.Error(), nil)
 		_ = s.repo.AddOrderEvent(ctx, order.ID, "failed", map[string]any{"error": err.Error()})
@@ -315,6 +370,8 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	}
 	return s.repo.SaveFilledSell(ctx, position, order, model.TradeFill{
 		OrderID:           order.ID,
+		TradeMode:         mode,
+		IsSimulated:       result.Simulated,
 		TxHash:            result.TxHash,
 		Side:              model.TradeSignalTypeSell,
 		TokenAddress:      order.TokenAddress,
@@ -333,6 +390,24 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func isValidTradeMode(mode model.TradeMode) bool {
+	return mode == model.TradeModePaper || mode == model.TradeModeLive
+}
+
+func normalizeTradeModeFilter(mode model.TradeMode) model.TradeMode {
+	if !isValidTradeMode(mode) {
+		return ""
+	}
+	return mode
+}
+
+func executionChannelForMode(mode model.TradeMode) string {
+	if mode == model.TradeModePaper {
+		return string(model.TradeExecutionChannelJupiterPaper)
+	}
+	return string(model.TradeExecutionChannelJupiterLive)
 }
 
 func resolveWalletAddress(configured string, privateKey string) (string, error) {

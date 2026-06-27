@@ -97,8 +97,12 @@
 }
 ```
 
-说明：当前交易模块已支持真实 Jupiter 下单链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按实时 SOL/USD 价格把 `trade.buy_amount_usd` 折算成 SOL 数量后下单。
-另外，DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
+说明：
+
+- 当前交易模块支持全局 `模拟盘 / 实盘` 两种模式，模式值落库到 `system_runtime_settings`，服务重启后继续生效。
+- 模拟盘仍会调用 Jupiter `order` / 报价准备链路，但不会签名和执行链上交易；系统会基于 Jupiter 下单响应模拟 fill，并把相关订单、成交、持仓都打上 `paper` 标记。
+- 实盘保持原链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按实时 SOL/USD 价格把 `trade.buy_amount_usd` 折算成 SOL 数量后下单。
+- DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
 
 ## 本地开发
 
@@ -183,6 +187,7 @@ npm run build
 - `trade.jupiter.base_url`：Jupiter Ultra API 入口
 - `trade.jupiter.api_key`：Jupiter API Key
 - DexScreener 与 Jupiter HTTP 客户端固定通过服务器本机 clash 代理 `http://127.0.0.1:7890` 出网
+- 交易模式不通过配置文件固定，而是通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
 
 ## 部署
 
@@ -209,6 +214,9 @@ npm run build
 - `POST /api/market/birdeye/realtime-breakout-signals`
 - `POST /api/strategy-backtests/run`
 - `GET /api/trade/accounts`
+- `GET /api/trade/runtime`
+- `PUT /api/trade/runtime`
+- `GET /api/trade/signals`
 - `GET /api/trade/orders`
 - `GET /api/trade/positions`
 

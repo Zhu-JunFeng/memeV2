@@ -110,6 +110,12 @@ func migrate(database *sql.DB) error {
 			PRIMARY KEY (token_address, "interval", range_start, range_end)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_birdeye_kline_cache_ranges_lookup ON birdeye_kline_cache_ranges (token_address, "interval", range_start, range_end)`,
+		`CREATE TABLE IF NOT EXISTS system_runtime_settings (
+			setting_key varchar(64) PRIMARY KEY,
+			setting_value text NOT NULL,
+			created_at timestamptz NOT NULL,
+			updated_at timestamptz NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS trade_accounts (
 			id varchar(36) PRIMARY KEY,
 			name varchar(64) NOT NULL UNIQUE,
@@ -138,6 +144,9 @@ func migrate(database *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_signals_token_address ON trade_signals (token_address)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_signals_signal_time ON trade_signals (signal_time DESC)`,
+		`ALTER TABLE trade_signals ADD COLUMN IF NOT EXISTS trade_mode varchar(16)`,
+		`UPDATE trade_signals SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = ''`,
+		`ALTER TABLE trade_signals ALTER COLUMN trade_mode SET NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS trade_orders (
 			id varchar(36) PRIMARY KEY,
 			account_id varchar(36) NOT NULL,
@@ -157,6 +166,12 @@ func migrate(database *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_orders_account_created_at ON trade_orders (account_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_orders_signal_id ON trade_orders (signal_id)`,
+		`ALTER TABLE trade_orders ADD COLUMN IF NOT EXISTS trade_mode varchar(16)`,
+		`ALTER TABLE trade_orders ADD COLUMN IF NOT EXISTS execution_channel varchar(32)`,
+		`UPDATE trade_orders SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = ''`,
+		`UPDATE trade_orders SET execution_channel = 'jupiter_live' WHERE COALESCE(execution_channel, '') = ''`,
+		`ALTER TABLE trade_orders ALTER COLUMN trade_mode SET NOT NULL`,
+		`ALTER TABLE trade_orders ALTER COLUMN execution_channel SET NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS trade_fills (
 			id varchar(36) PRIMARY KEY,
 			order_id varchar(36) NOT NULL,
@@ -172,6 +187,12 @@ func migrate(database *sql.DB) error {
 			created_at timestamptz NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_fills_order_id ON trade_fills (order_id)`,
+		`ALTER TABLE trade_fills ADD COLUMN IF NOT EXISTS trade_mode varchar(16)`,
+		`ALTER TABLE trade_fills ADD COLUMN IF NOT EXISTS is_simulated boolean`,
+		`UPDATE trade_fills SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = ''`,
+		`UPDATE trade_fills SET is_simulated = false WHERE is_simulated IS NULL`,
+		`ALTER TABLE trade_fills ALTER COLUMN trade_mode SET NOT NULL`,
+		`ALTER TABLE trade_fills ALTER COLUMN is_simulated SET NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS trade_positions (
 			id varchar(36) PRIMARY KEY,
 			account_id varchar(36) NOT NULL,
@@ -194,6 +215,9 @@ func migrate(database *sql.DB) error {
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_positions_account_token_open ON trade_positions (account_id, token_address) WHERE status = 'open'`,
 		`CREATE INDEX IF NOT EXISTS idx_trade_positions_status_updated_at ON trade_positions (status, updated_at DESC)`,
+		`ALTER TABLE trade_positions ADD COLUMN IF NOT EXISTS trade_mode varchar(16)`,
+		`UPDATE trade_positions SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = ''`,
+		`ALTER TABLE trade_positions ALTER COLUMN trade_mode SET NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS trade_order_events (
 			id varchar(36) PRIMARY KEY,
 			order_id varchar(36) NOT NULL,

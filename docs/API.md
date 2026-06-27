@@ -336,22 +336,53 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 
 - `signal` 负责识别实时突破结构并向 Redis 发布统一交易信号
 - `trade` 负责消费信号、记录订单/成交/持仓，并通过 DexScreener 刷新持仓估值
-- 当前交易模块已支持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单。
+- 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
+- `paper` 模式仍调用 Jupiter `order` / 报价准备链路，但不会签名和执行；系统会基于 Jupiter 响应生成模拟成交
+- `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单
 - DexScreener 与 Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`。
 
 ### GET /api/trade/accounts
 
 返回交易账户列表。当前默认设计为单钱包单账户。
 
+### GET /api/trade/runtime
+
+返回当前全局交易模式。
+
+返回：
+
+- `tradeMode`：当前模式，`paper` 或 `live`
+- `options[]`：前端可直接渲染的模式选项
+
+### PUT /api/trade/runtime
+
+切换并持久化全局交易模式。
+
+请求体：
+
+```json
+{
+  "tradeMode": "paper"
+}
+```
+
+说明：
+
+- `paper`：仍请求 Jupiter `order`，但不会执行签名和链上提交
+- `live`：恢复真实下单执行
+- 切换后新进来的信号、订单、成交、持仓都会记录对应 `tradeMode`
+
 ### GET /api/trade/signals
 
 参数：
 
 - `limit`：可选，默认 `100`。
+- `tradeMode`：可选，`all` / `paper` / `live`，默认 `all`。
 
 返回交易模块已接收的标准化信号，字段包含：
 
 - `signalId`
+- `tradeMode`
 - `signalType`：`buy` / `sell`
 - `strategyCode`
 - `tokenAddress`
@@ -367,9 +398,12 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 参数：
 
 - `limit`：可选，默认 `100`。
+- `tradeMode`：可选，`all` / `paper` / `live`，默认 `all`。
 
 返回订单列表，字段包含：
 
+- `tradeMode`
+- `executionChannel`：当前为 `jupiter_paper` 或 `jupiter_live`
 - `side`：买/卖方向
 - `intentAmountUsd` / `intentTokenAmount`：下单意图金额
 - `status`：`pending` / `submitted` / `filled` / `failed`
@@ -390,9 +424,11 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 
 - `status`：可选，`open` / `closed`
 - `limit`：可选，默认 `100`
+- `tradeMode`：可选，`all` / `paper` / `live`，默认 `all`
 
 返回持仓列表，字段包含：
 
+- `tradeMode`
 - `quantity`
 - `costAmount`
 - `avgCostPrice`
