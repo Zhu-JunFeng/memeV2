@@ -52,31 +52,23 @@
           <div class="query-group-grid query-group-grid-primary">
             <label class="query-field query-field-wide">
               <span class="query-label">Token CA</span>
-              <div class="token-ca-row">
-                <el-select
-                  v-model="form.tokenAddress"
-                  class="token-ca-select"
-                  filterable
-                  allow-create
-                  default-first-option
-                  clearable
-                  :reserve-keyword="false"
-                  placeholder="输入或选择 token CA"
-                >
-                  <el-option
-                    v-for="option in tokenAddressOptions"
-                    :key="option.value"
-                    :label="option.label"
-                    :value="option.value"
-                  />
-                </el-select>
-                <TokenAddressLink
-                  v-if="form.tokenAddress"
-                  :address="form.tokenAddress"
-                  :short="true"
-                  :compact="true"
+              <el-select
+                v-model="form.tokenAddress"
+                class="token-ca-select"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                :reserve-keyword="false"
+                placeholder="输入或选择 token CA"
+              >
+                <el-option
+                  v-for="option in tokenAddressOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
                 />
-              </div>
+              </el-select>
             </label>
             <label class="query-field">
               <span class="query-label">K 线粒度</span>
@@ -1722,13 +1714,6 @@ onMounted(async () => {
 
 .token-ca-select {
   width: 100%;
-}
-
-.token-ca-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
 }
 
 .strategy-group-title-row {
