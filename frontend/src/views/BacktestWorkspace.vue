@@ -52,23 +52,31 @@
           <div class="query-group-grid query-group-grid-primary">
             <label class="query-field query-field-wide">
               <span class="query-label">Token CA</span>
-              <el-select
-                v-model="form.tokenAddress"
-                class="token-ca-select"
-                filterable
-                allow-create
-                default-first-option
-                clearable
-                :reserve-keyword="false"
-                placeholder="输入或选择 token CA"
-              >
-                <el-option
-                  v-for="option in tokenAddressOptions"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
+              <div class="token-ca-row">
+                <el-select
+                  v-model="form.tokenAddress"
+                  class="token-ca-select"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  :reserve-keyword="false"
+                  placeholder="输入或选择 token CA"
+                >
+                  <el-option
+                    v-for="option in tokenAddressOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <TokenAddressLink
+                  v-if="form.tokenAddress"
+                  :address="form.tokenAddress"
+                  :short="true"
+                  :compact="true"
                 />
-              </el-select>
+              </div>
             </label>
             <label class="query-field">
               <span class="query-label">K 线粒度</span>
@@ -409,7 +417,11 @@
             <el-table-column label="Token / 周期" min-width="220">
               <template #default="{ row }">
                 <div class="trade-cell-stack">
-                  <strong>{{ shortenAddress(row.tokenAddress) }}</strong>
+                  <TokenAddressLink
+                    :address="row.tokenAddress"
+                    :short="true"
+                    :compact="true"
+                  />
                   <span>{{ row.interval }} · {{ row.strategyCode }}</span>
                 </div>
               </template>
@@ -456,9 +468,13 @@
               }}</template>
             </el-table-column>
             <el-table-column label="Token" min-width="180">
-              <template #default="{ row }">{{
-                shortenAddress(row.tokenAddress)
-              }}</template>
+              <template #default="{ row }">
+                <TokenAddressLink
+                  :address="row.tokenAddress"
+                  :short="true"
+                  :compact="true"
+                />
+              </template>
             </el-table-column>
             <el-table-column label="计划金额" width="104">
               <template #default="{ row }">{{
@@ -510,9 +526,13 @@
             </el-table-column>
             <el-table-column prop="status" label="状态" width="84" />
             <el-table-column label="Token" min-width="180">
-              <template #default="{ row }">{{
-                shortenAddress(row.tokenAddress)
-              }}</template>
+              <template #default="{ row }">
+                <TokenAddressLink
+                  :address="row.tokenAddress"
+                  :short="true"
+                  :compact="true"
+                />
+              </template>
             </el-table-column>
             <el-table-column label="数量" width="108">
               <template #default="{ row }">{{
@@ -930,6 +950,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useBacktestStore } from "../stores/backtest.js";
 import KlineTradeChart from "../components/KlineTradeChart.vue";
+import TokenAddressLink from "../components/TokenAddressLink.vue";
 import { formatBeijingDateTime, formatBeijingRFC3339 } from "../utils/time.js";
 
 const store = useBacktestStore();
@@ -1032,7 +1053,7 @@ const levelViewOptions = [
 const tokenAddressOptions = computed(() =>
   PRESET_TOKEN_ADDRESSES.map((item, index) => ({
     value: item,
-    label: `#${index + 1} · ${shortenAddress(item)}`,
+    label: `#${index + 1} · ${shortAddress(item)}`,
   })),
 );
 const barCount = computed(() => store.result?.klines?.length || 0);
@@ -1374,13 +1395,13 @@ function recentFiveDayRange() {
   return { start, end };
 }
 
-function shortenAddress(value) {
-  if (!value || value.length <= 18) return value;
-  return `${value.slice(0, 8)}...${value.slice(-8)}`;
-}
-
 function tradeKey(trade) {
   return `${trade.takeProfitRate}-${trade.windowIndex}-${trade.levelIndex}-${trade.buyPoint?.time}-${trade.sellPoint?.time}`;
+}
+
+function shortAddress(value) {
+  if (!value || value.length <= 18) return value;
+  return `${value.slice(0, 8)}...${value.slice(-8)}`;
 }
 
 function isTradeFocused(trade) {
@@ -1701,6 +1722,13 @@ onMounted(async () => {
 
 .token-ca-select {
   width: 100%;
+}
+
+.token-ca-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
 }
 
 .strategy-group-title-row {
