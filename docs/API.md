@@ -414,13 +414,17 @@ Birdeye K 线专用实时突破信号入口。
 - `items[].candidateAt`：候选项目进入 V2 监控池的时间。
 - `items[].strategyName` / `items[].scanNo`：上游评分策略名和扫描批次。
 - `items[].upstreamScore` / `items[].upstreamMarketCap`：上游评分合格信号内携带的评分和市值。
-- `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功拉到的当前数据源最新 K 线收盘值和对应 K 线时间；GMGN 源下实际为 USD 价格。
+- `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功计算出的当前市值和对应 K 线时间；GMGN 源下按最新 USD 价格乘 Solana RPC `getTokenSupply` 当前总供应量计算。
 - `items[].birdeyeKlineFetchedAt`：兼容字段名，表示 V2 最近一次成功调用当前 K 线数据源并拿到 K 线的时间，前端按相对时间展示为 `2s前`、`4s前` 等。
 - `items[].buySignalId`：如果已触发 V2 买入信号，这里返回对应信号 ID。
 - `items[].entryTime` / `items[].entryMarketCap`：如果已触发买入信号，这里返回买点时间和买点市值。
 - `items[].levelMarketCap` / `items[].levelLowerMarketCap` / `items[].levelUpperMarketCap`：如果已触发买入信号，这里返回当时突破的压力带。
 
 说明：该接口只读取 Redis active 监控池，不查询历史已停止、已卖出或已被低市值过滤移除的候选项目。
+
+### GET /api/signal/candidate-monitor/stream
+
+Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ "items": [...] }`；之后候选池状态变化发送 `event: upsert`，数据为 `{ "item": {...} }`；候选移出 active 池发送 `event: delete`，数据为 `{ "id": "<tokenAddress>" }`；每 15 秒发送 `event: heartbeat`。
 
 ### GET /api/trade/accounts
 
@@ -474,6 +478,10 @@ Birdeye K 线专用实时突破信号入口。
 - `reason`
 - `consumeStatus`
 
+### GET /api/trade/signals/stream
+
+Signals 实时 SSE 流。参数同 `/api/trade/signals`。连接后先推 `snapshot`，之后新信号或消费状态变化推 `upsert`，每 15 秒推 `heartbeat`。
+
 ### GET /api/trade/orders
 
 参数：
@@ -490,6 +498,10 @@ Birdeye K 线专用实时突破信号入口。
 - `status`：`pending` / `submitted` / `filled` / `failed`
 - `submitTxHash`
 - `failReason`
+
+### GET /api/trade/orders/stream
+
+Orders 实时 SSE 流。参数同 `/api/trade/orders`。连接后先推 `snapshot`，之后订单创建、提交、失败、成交等状态变化推 `upsert`，每 15 秒推 `heartbeat`。
 
 ### GET /api/trade/orders/:id
 
@@ -519,6 +531,10 @@ Birdeye K 线专用实时突破信号入口。
 - `unrealizedPnl`
 - `maxProfitRate`
 - `maxDrawdownAmount`
+
+### GET /api/trade/positions/stream
+
+Positions 实时 SSE 流。参数同 `/api/trade/positions`。连接后先推 `snapshot`，之后持仓创建、估值刷新、平仓等变化推 `upsert`；如果订阅了 `status=open` 而持仓已平仓，会推 `delete`。每 15 秒推 `heartbeat`。
 
 ### POST /api/trade/positions/:id/close
 

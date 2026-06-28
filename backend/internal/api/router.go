@@ -15,6 +15,7 @@ import (
 	"solana-meme-backtest/backend/internal/apptime"
 	"solana-meme-backtest/backend/internal/backtest"
 	"solana-meme-backtest/backend/internal/datasource"
+	"solana-meme-backtest/backend/internal/eventbus"
 	"solana-meme-backtest/backend/internal/model"
 	"solana-meme-backtest/backend/internal/response"
 	"solana-meme-backtest/backend/internal/signal"
@@ -27,16 +28,17 @@ type Handler struct {
 	tradeService     *trade.Service
 	candidateMonitor *signal.CandidateMonitor
 	birdeyeKeyStore  birdeyeAPIKeyStore
+	eventBus         *eventbus.Broker
 }
 
 type birdeyeAPIKeyStore interface {
 	AddKey(ctx context.Context, apiKey string) (model.BirdeyeAPIKey, error)
 }
 
-func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore) *gin.Engine {
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore, bus *eventbus.Broker) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore}
+	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore, eventBus: bus}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -51,6 +53,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.POST("/market/gmgn/realtime-breakout-signals", h.getGMGNRealtimeSignals)
 	api.POST("/birdeye/api-keys", h.createBirdeyeAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
+	api.GET("/signal/candidate-monitor/stream", h.streamCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
 	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
 	api.POST("/strategy-backtests/run", h.runStrategyBacktest)
@@ -61,10 +64,13 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/trade/runtime", h.getTradeRuntime)
 	api.PUT("/trade/runtime", h.updateTradeRuntime)
 	api.GET("/trade/signals", h.listTradeSignals)
+	api.GET("/trade/signals/stream", h.streamTradeSignals)
 	api.GET("/trade/orders", h.listTradeOrders)
+	api.GET("/trade/orders/stream", h.streamTradeOrders)
 	api.GET("/trade/orders/:id", h.getTradeOrder)
 	api.POST("/trade/orders/:id/retry", h.retryTradeOrder)
 	api.GET("/trade/positions", h.listTradePositions)
+	api.GET("/trade/positions/stream", h.streamTradePositions)
 	api.POST("/trade/positions/:id/close", h.closeTradePosition)
 	return r
 }
@@ -668,16 +674,10 @@ func parseLimit(value string, fallback int) int {
 }
 
 func parseTradeModeFilter(c *gin.Context) (model.TradeMode, bool) {
-	value := c.Query("tradeMode")
-	switch value {
-	case "", "all":
-		return "", true
-	case string(model.TradeModePaper):
-		return model.TradeModePaper, true
-	case string(model.TradeModeLive):
-		return model.TradeModeLive, true
-	default:
-		response.Fail(c, http.StatusBadRequest, "tradeMode 仅支持 all/paper/live")
+	mode, ok := parseTradeModeValue(c.Query("tradeMode"))
+	if !ok {
+		responseBadTradeMode(c)
 		return "", false
 	}
+	return mode, true
 }

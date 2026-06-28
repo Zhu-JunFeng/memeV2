@@ -17,6 +17,7 @@ import (
 
 	"solana-meme-backtest/backend/internal/backtest"
 	"solana-meme-backtest/backend/internal/datasource"
+	"solana-meme-backtest/backend/internal/eventbus"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -38,14 +39,18 @@ type CandidateMonitorConfig struct {
 	RedisKeyPrefix   string
 	LevelOptions     backtest.LevelOptions
 	BreakoutFollow   backtest.BreakoutBandFollowConfig
+	SupplyProvider   datasource.TokenSupplyProvider
+	EventBus         *eventbus.Broker
 }
 
 type CandidateMonitor struct {
-	redis     *redis.Client
-	birdeye   datasource.KlineDataSource
-	publisher Publisher
-	store     candidateMonitorStore
-	cfg       CandidateMonitorConfig
+	redis          *redis.Client
+	birdeye        datasource.KlineDataSource
+	publisher      Publisher
+	store          candidateMonitorStore
+	cfg            CandidateMonitorConfig
+	supplyProvider datasource.TokenSupplyProvider
+	eventBus       *eventbus.Broker
 }
 
 type CandidateMonitorItem struct {
@@ -125,11 +130,13 @@ func NewCandidateMonitor(redisClient *redis.Client, birdeye datasource.KlineData
 	}
 	cfg = normalizeCandidateMonitorConfig(cfg)
 	return &CandidateMonitor{
-		redis:     redisClient,
-		birdeye:   birdeye,
-		publisher: publisher,
-		store:     newRedisCandidateMonitorStore(redisClient, cfg.RedisKeyPrefix),
-		cfg:       cfg,
+		redis:          redisClient,
+		birdeye:        birdeye,
+		publisher:      publisher,
+		store:          newRedisCandidateMonitorStore(redisClient, cfg.RedisKeyPrefix),
+		cfg:            cfg,
+		supplyProvider: cfg.SupplyProvider,
+		eventBus:       cfg.EventBus,
 	}
 }
 
@@ -309,6 +316,7 @@ func (m *CandidateMonitor) handleCandidatePayload(ctx context.Context, payload [
 	if err := m.store.UpsertCandidate(ctx, state); err != nil {
 		return err
 	}
+	m.publishCandidateUpsert(state)
 	log.Printf("candidate monitor accepted candidate: ca=%s symbol=%s runId=%s", state.TokenAddress, state.Symbol, state.RunID)
 	return nil
 }
@@ -348,14 +356,19 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 		return nil
 	}
 	latest := klines[len(klines)-1]
-	state.CurrentPrice = latest.MarketCapClose
+	currentMarketCap, err := m.calculateCurrentMarketCap(ctx, state.TokenAddress, latest.MarketCapClose)
+	if err != nil {
+		return err
+	}
+	state.CurrentPrice = currentMarketCap
 	state.CurrentAt = latest.OpenTime
 	state.KlineFetchedAt = time.Now().UTC()
-	if state.Status == candidateStatusWatching && m.cfg.MinMarketCap > 0 && latest.MarketCapClose < m.cfg.MinMarketCap {
+	if state.Status == candidateStatusWatching && m.cfg.MinMarketCap > 0 && currentMarketCap < m.cfg.MinMarketCap {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 			return err
 		}
-		log.Printf("candidate monitor stopped low market cap: ca=%s marketCap=%.2f", state.TokenAddress, latest.MarketCapClose)
+		m.publishCandidateDelete(state)
+		log.Printf("candidate monitor stopped low market cap: ca=%s marketCap=%.2f", state.TokenAddress, currentMarketCap)
 		return nil
 	}
 	switch state.Status {
@@ -378,9 +391,48 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	return m.birdeye.GetKlines(ctx, datasource.KlineQuery{TokenAddress: state.TokenAddress, Interval: m.cfg.Interval, StartTime: start, EndTime: end})
 }
 
+func (m *CandidateMonitor) calculateCurrentMarketCap(ctx context.Context, tokenAddress string, price float64) (float64, error) {
+	if price <= 0 {
+		return 0, fmt.Errorf("candidate monitor latest price invalid: ca=%s price=%.12f", tokenAddress, price)
+	}
+	if m.supplyProvider == nil {
+		return 0, errors.New("candidate monitor token supply provider not configured")
+	}
+	supply, err := m.supplyProvider.GetTokenSupply(ctx, tokenAddress)
+	if err != nil {
+		return 0, err
+	}
+	if supply <= 0 {
+		return 0, fmt.Errorf("candidate monitor token supply invalid: ca=%s supply=%.12f", tokenAddress, supply)
+	}
+	return price * supply, nil
+}
+
+func (m *CandidateMonitor) saveState(ctx context.Context, state candidateMonitorState) error {
+	if err := m.store.SaveState(ctx, state); err != nil {
+		return err
+	}
+	m.publishCandidateUpsert(state)
+	return nil
+}
+
+func (m *CandidateMonitor) publishCandidateUpsert(state candidateMonitorState) {
+	if m.eventBus == nil {
+		return
+	}
+	m.eventBus.Publish(eventbus.TopicCandidates, eventbus.Event{Type: eventbus.EventUpsert, ID: state.TokenAddress, Data: newCandidateMonitorItem(state)})
+}
+
+func (m *CandidateMonitor) publishCandidateDelete(state candidateMonitorState) {
+	if m.eventBus == nil {
+		return
+	}
+	m.eventBus.Publish(eventbus.TopicCandidates, eventbus.Event{Type: eventbus.EventDelete, ID: state.TokenAddress, Data: state.TokenAddress})
+}
+
 func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
 	if len(klines) < 2 {
-		return m.store.SaveState(ctx, state)
+		return m.saveState(ctx, state)
 	}
 	history := klines[:len(klines)-1]
 	current := klines[len(klines)-1]
@@ -395,7 +447,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	result := backtest.CalculateRealtimeScenarioSignalsByWindows(history, current, m.cfg.LevelOptions, windowSize, windowStep, backtest.PressureBreakoutDetector())
 	signals := candidateSignalsAfter(result.Signals, state.CandidateAt)
 	if len(signals) == 0 {
-		return m.store.SaveState(ctx, state)
+		return m.saveState(ctx, state)
 	}
 	sig := signals[0]
 	message, level, err := m.buildBuySignal(state, sig)
@@ -415,7 +467,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	state.EntryTime = message.SignalTime
 	state.EntryPrice = message.TriggerMarketCap
 	state.Level = level
-	if err := m.store.SaveState(ctx, state); err != nil {
+	if err := m.saveState(ctx, state); err != nil {
 		return err
 	}
 	log.Printf("candidate monitor published buy signal: ca=%s signalId=%s marketCap=%.2f", state.TokenAddress, message.SignalID, message.TriggerMarketCap)
@@ -477,11 +529,11 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, sig backt
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
 	entryIndex := findKlineIndex(klines, state.EntryTime)
 	if entryIndex < 0 {
-		return m.store.SaveState(ctx, state)
+		return m.saveState(ctx, state)
 	}
 	decision := backtest.EvaluateRealtimeBandFollowExit(klines, entryIndex, state.Level, m.cfg.BreakoutFollow)
 	if !decision.Triggered || decision.ExitPoint == nil {
-		return m.store.SaveState(ctx, state)
+		return m.saveState(ctx, state)
 	}
 	message, err := m.buildSellSignal(state, decision)
 	if err != nil {
@@ -498,6 +550,7 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	if err := m.store.StopCandidate(ctx, state, candidateStatusSold); err != nil {
 		return err
 	}
+	m.publishCandidateDelete(state)
 	log.Printf("candidate monitor published sell signal: ca=%s signalId=%s reason=%s", state.TokenAddress, message.SignalID, decision.Reason)
 	return nil
 }

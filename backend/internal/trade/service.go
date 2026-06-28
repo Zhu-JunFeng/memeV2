@@ -15,6 +15,7 @@ import (
 
 	"solana-meme-backtest/backend/internal/config"
 	"solana-meme-backtest/backend/internal/datasource"
+	"solana-meme-backtest/backend/internal/eventbus"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -81,10 +82,22 @@ type Service struct {
 	enabled       bool
 	modeMu        sync.RWMutex
 	tradeMode     model.TradeMode
+	eventBus      *eventbus.Broker
 }
 
-func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, executor Executor, priceProvider datasource.TokenPriceProvider) (*Service, error) {
+type ServiceOption func(*Service)
+
+func WithEventBus(bus *eventbus.Broker) ServiceOption {
+	return func(s *Service) {
+		s.eventBus = bus
+	}
+}
+
+func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, executor Executor, priceProvider datasource.TokenPriceProvider, options ...ServiceOption) (*Service, error) {
 	svc := &Service{cfg: cfg, repo: repo, executor: executor, priceProvider: priceProvider, enabled: cfg.Enabled, tradeMode: model.TradeModePaper}
+	for _, option := range options {
+		option(svc)
+	}
 	if !cfg.Enabled {
 		return svc, nil
 	}
@@ -196,11 +209,15 @@ func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMe
 	if !inserted {
 		return signal, nil
 	}
+	s.publishSignal(ctx, signal.ID)
 	if err := s.handleSignal(ctx, signal); err != nil {
 		_ = s.repo.UpdateSignalStatus(ctx, signal.ID, "failed")
+		s.publishSignal(ctx, signal.ID)
 		return signal, err
 	}
-	return signal, s.repo.UpdateSignalStatus(ctx, signal.ID, "executed")
+	err = s.repo.UpdateSignalStatus(ctx, signal.ID, "executed")
+	s.publishSignal(ctx, signal.ID)
+	return signal, err
 }
 
 // handleSignal 只负责“信号 -> 意图 -> 执行 -> 持仓状态”这条主链路，
@@ -266,6 +283,7 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 		return model.TradePosition{}, err
 	}
 	signal = storedSignal
+	s.publishSignal(ctx, signal.ID)
 	return position, s.executeSell(ctx, signal, position)
 }
 
@@ -292,6 +310,7 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 		if err := s.repo.UpdatePositionMark(ctx, position.ID, price, marketValue, unrealized, profitRate, drawdown); err != nil {
 			return err
 		}
+		s.publishPosition(ctx, position.ID)
 	}
 	return nil
 }
@@ -312,19 +331,22 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 	if err != nil {
 		return err
 	}
+	s.publishOrder(ctx, order.ID)
 	if err := s.repo.AddOrderEvent(ctx, order.ID, "created", map[string]any{"signalId": signal.SignalID}); err != nil {
 		return err
 	}
 	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: mode})
 	if err != nil {
 		_ = s.repo.UpdateOrderExecution(ctx, order.ID, model.TradeOrderStatusFailed, "", nil, nil, err.Error(), nil)
+		s.publishOrder(ctx, order.ID)
 		_ = s.repo.AddOrderEvent(ctx, order.ID, "failed", map[string]any{"error": err.Error()})
 		return err
 	}
 	if err := s.repo.UpdateOrderExecution(ctx, order.ID, model.TradeOrderStatusSubmitted, result.TxHash, result.RequestPayload, result.ResponsePayload, "", &result.ExecutedAt); err != nil {
 		return err
 	}
-	return s.repo.SaveFilledBuy(ctx, order, model.TradeFill{
+	s.publishOrder(ctx, order.ID)
+	if err := s.repo.SaveFilledBuy(ctx, order, model.TradeFill{
 		OrderID:           order.ID,
 		TradeMode:         mode,
 		IsSimulated:       result.Simulated,
@@ -337,7 +359,14 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 		FeeAmount:         result.FeeAmount,
 		FeeAsset:          defaultString(result.FeeAsset, "USD"),
 		ExecutedAt:        result.ExecutedAt,
-	})
+	}); err != nil {
+		return err
+	}
+	s.publishOrder(ctx, order.ID)
+	if position, err := s.repo.GetOpenPosition(ctx, s.account.ID, order.TokenAddress); err == nil {
+		s.publishPosition(ctx, position.ID)
+	}
+	return nil
 }
 
 func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, position model.TradePosition) error {
@@ -356,19 +385,22 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	if err != nil {
 		return err
 	}
+	s.publishOrder(ctx, order.ID)
 	if err := s.repo.AddOrderEvent(ctx, order.ID, "created", map[string]any{"positionId": position.ID}); err != nil {
 		return err
 	}
 	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Position: &position, Config: s.cfg, Mode: mode})
 	if err != nil {
 		_ = s.repo.UpdateOrderExecution(ctx, order.ID, model.TradeOrderStatusFailed, "", nil, nil, err.Error(), nil)
+		s.publishOrder(ctx, order.ID)
 		_ = s.repo.AddOrderEvent(ctx, order.ID, "failed", map[string]any{"error": err.Error()})
 		return err
 	}
 	if err := s.repo.UpdateOrderExecution(ctx, order.ID, model.TradeOrderStatusSubmitted, result.TxHash, result.RequestPayload, result.ResponsePayload, "", &result.ExecutedAt); err != nil {
 		return err
 	}
-	return s.repo.SaveFilledSell(ctx, position, order, model.TradeFill{
+	s.publishOrder(ctx, order.ID)
+	if err := s.repo.SaveFilledSell(ctx, position, order, model.TradeFill{
 		OrderID:           order.ID,
 		TradeMode:         mode,
 		IsSimulated:       result.Simulated,
@@ -381,7 +413,45 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 		FeeAmount:         result.FeeAmount,
 		FeeAsset:          defaultString(result.FeeAsset, "USD"),
 		ExecutedAt:        result.ExecutedAt,
-	})
+	}); err != nil {
+		return err
+	}
+	s.publishOrder(ctx, order.ID)
+	s.publishPosition(ctx, position.ID)
+	return nil
+}
+
+func (s *Service) publishSignal(ctx context.Context, id string) {
+	if s.eventBus == nil {
+		return
+	}
+	item, err := s.repo.GetSignalByID(ctx, id)
+	if err != nil {
+		return
+	}
+	s.eventBus.Publish(eventbus.TopicSignals, eventbus.Event{Type: eventbus.EventUpsert, ID: item.ID, Data: item})
+}
+
+func (s *Service) publishOrder(ctx context.Context, id string) {
+	if s.eventBus == nil {
+		return
+	}
+	item, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return
+	}
+	s.eventBus.Publish(eventbus.TopicOrders, eventbus.Event{Type: eventbus.EventUpsert, ID: item.ID, Data: item})
+}
+
+func (s *Service) publishPosition(ctx context.Context, id string) {
+	if s.eventBus == nil {
+		return
+	}
+	item, err := s.repo.GetPosition(ctx, id)
+	if err != nil {
+		return
+	}
+	s.eventBus.Publish(eventbus.TopicPositions, eventbus.Event{Type: eventbus.EventUpsert, ID: item.ID, Data: item})
 }
 
 func defaultString(value string, fallback string) string {

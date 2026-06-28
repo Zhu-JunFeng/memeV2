@@ -440,7 +440,7 @@
                 formatOptionalMarketCap(row.upstreamMarketCap)
               }}</template>
             </el-table-column>
-            <el-table-column label="当前价位" width="112">
+            <el-table-column label="当前市值" width="112">
               <template #default="{ row }">
                 {{ formatOptionalMarketCap(row.currentMarketCap) }}
               </template>
@@ -1353,10 +1353,12 @@ async function runStrategyForLoadedRange() {
 }
 
 async function refreshTradeDashboard() {
-  await store.loadTradeDashboard({
+  const params = {
     tradeMode: tradeFilterMode.value,
     limit: 50,
-  });
+  };
+  await store.loadTradeDashboard(params);
+  store.startTradeStreams(params);
 }
 
 async function handleTradeModeChange(value) {
@@ -1730,6 +1732,7 @@ onUnmounted(() => {
   if (relativeTimer) {
     window.clearInterval(relativeTimer);
   }
+  store.stopTradeStreams();
 });
 </script>
 

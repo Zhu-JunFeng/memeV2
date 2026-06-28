@@ -227,12 +227,13 @@ npm run build
 - `POST /api/market/gmgn/realtime-breakout-signals`
 - `GET /api/market/birdeye/klines` / `GET /api/market/birdeye/support-resistance`（保留切换）
 - `POST /api/strategy-backtests/run`
+- `GET /api/signal/candidate-monitor` / `GET /api/signal/candidate-monitor/stream`
 - `GET /api/trade/accounts`
 - `GET /api/trade/runtime`
 - `PUT /api/trade/runtime`
-- `GET /api/trade/signals`
-- `GET /api/trade/orders`
-- `GET /api/trade/positions`
+- `GET /api/trade/signals` / `GET /api/trade/signals/stream`
+- `GET /api/trade/orders` / `GET /api/trade/orders/stream`
+- `GET /api/trade/positions` / `GET /api/trade/positions/stream`
 
 ## 开发约束
 

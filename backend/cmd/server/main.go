@@ -15,6 +15,7 @@ import (
 	"solana-meme-backtest/backend/internal/config"
 	"solana-meme-backtest/backend/internal/datasource"
 	"solana-meme-backtest/backend/internal/db"
+	"solana-meme-backtest/backend/internal/eventbus"
 	"solana-meme-backtest/backend/internal/logger"
 	"solana-meme-backtest/backend/internal/repository"
 	"solana-meme-backtest/backend/internal/signal"
@@ -42,6 +43,8 @@ func main() {
 	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo)
 	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)
 	gmgnSource := datasource.NewGMGNDataSource(cfg.GMGN.BaseURL, cfg.GMGN.APIKey, cfg.GMGN.Chain, cfg.GMGN.MaxQPS)
+	supplyProvider := datasource.NewSolanaRPCSupplyProvider(cfg.Trade.SolanaRPCURL)
+	events := eventbus.NewBroker()
 	primaryKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeSource, gmgnSource)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("K 线数据源配置错误")
@@ -86,6 +89,8 @@ func main() {
 			RedisKeyPrefix:   cfg.Signal.RedisKeyPrefix,
 			LevelOptions:     backtest.DefaultLevelOptions(),
 			BreakoutFollow:   backtest.DefaultBreakoutBandFollowConfig(),
+			SupplyProvider:   supplyProvider,
+			EventBus:         events,
 		})
 		candidateMonitor.Start(context.Background())
 	}
@@ -97,7 +102,7 @@ func main() {
 	if err != nil && cfg.Trade.Enabled {
 		logg.Fatal().Err(err).Msg("初始化 Jupiter 执行器失败")
 	}
-	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource)
+	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource, trade.WithEventBus(events))
 	if err != nil {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
 	}
@@ -115,7 +120,7 @@ func main() {
 			worker.StartPriceSync(context.Background(), interval)
 		}
 	}
-	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo)
+	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo, events)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

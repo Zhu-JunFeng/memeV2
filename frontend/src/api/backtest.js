@@ -67,3 +67,29 @@ export function listTradePositions(params) {
 export function closeTradePosition(id) {
   return http.post(`/trade/positions/${id}/close`);
 }
+
+function streamURL(path, params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    query.set(key, value);
+  });
+  const suffix = query.toString();
+  return `/api${path}${suffix ? `?${suffix}` : ""}`;
+}
+
+export function candidateMonitorStreamURL() {
+  return streamURL("/signal/candidate-monitor/stream");
+}
+
+export function tradeSignalsStreamURL(params) {
+  return streamURL("/trade/signals/stream", params);
+}
+
+export function tradeOrdersStreamURL(params) {
+  return streamURL("/trade/orders/stream", params);
+}
+
+export function tradePositionsStreamURL(params) {
+  return streamURL("/trade/positions/stream", params);
+}

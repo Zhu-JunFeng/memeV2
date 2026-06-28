@@ -10,6 +10,17 @@ import (
 	"solana-meme-backtest/backend/internal/model"
 )
 
+type fakeSupplyProvider struct {
+	supply float64
+}
+
+func (p fakeSupplyProvider) GetTokenSupply(context.Context, string) (float64, error) {
+	if p.supply <= 0 {
+		return 1, nil
+	}
+	return p.supply, nil
+}
+
 type fakeCandidateStore struct {
 	states   map[string]candidateMonitorState
 	emitted  map[string]bool
@@ -57,9 +68,10 @@ func (s *fakeCandidateStore) ReleaseEmission(_ context.Context, signalID string)
 
 func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, pub *capturePublisher) *CandidateMonitor {
 	return &CandidateMonitor{
-		birdeye:   fakeKlineSource{items: klines},
-		publisher: pub,
-		store:     store,
+		birdeye:        fakeKlineSource{items: klines},
+		publisher:      pub,
+		store:          store,
+		supplyProvider: fakeSupplyProvider{supply: 1},
 		cfg: CandidateMonitorConfig{
 			Enabled:        true,
 			Interval:       "1m",
@@ -67,6 +79,7 @@ func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, pub *
 			LookbackBars:   120,
 			LevelOptions:   testLevelOptions(),
 			BreakoutFollow: backtest.DefaultBreakoutBandFollowConfig(),
+			SupplyProvider: fakeSupplyProvider{supply: 1},
 		},
 	}
 }
