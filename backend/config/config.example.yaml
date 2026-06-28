@@ -27,6 +27,7 @@ redis:
   password: ""
   db: 0
   channel: "solana:meme:signals:pressure_breakout"
+  consumer_channel: "" # 为空时交易消费沿用 channel；订阅候选池可配置为 solana_scalper:candidate_pool
 
 trade:
   enabled: false

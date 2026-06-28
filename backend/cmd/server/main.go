@@ -58,7 +58,11 @@ func main() {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
 	}
 	if tradeService.Enabled() {
-		worker := trade.NewWorker(tradeService, redisClient, cfg.Redis.Channel)
+		consumerChannel := cfg.Redis.ConsumerChannel
+		if consumerChannel == "" {
+			consumerChannel = cfg.Redis.Channel
+		}
+		worker := trade.NewWorker(tradeService, redisClient, consumerChannel)
 		if cfg.Trade.SignalConsumer {
 			worker.StartSignalConsumer(context.Background())
 		}

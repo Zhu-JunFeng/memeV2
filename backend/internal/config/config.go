@@ -45,11 +45,12 @@ type BitqueryConfig struct {
 }
 
 type RedisConfig struct {
-	Addr     string
-	Password string
-	DB       int
-	Channel  string
-	Enabled  bool
+	Addr            string
+	Password        string
+	DB              int
+	Channel         string
+	ConsumerChannel string
+	Enabled         bool
 }
 
 type TradeConfig struct {
@@ -95,6 +96,7 @@ func Load() (Config, error) {
 	v.SetDefault("birdeye.trade_max_pages", 1)
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
+	v.SetDefault("redis.consumer_channel", "")
 	v.SetDefault("redis.db", 0)
 	v.SetDefault("redis.enabled", false)
 	v.SetDefault("trade.enabled", false)
@@ -140,11 +142,12 @@ func Load() (Config, error) {
 			APIKey:  v.GetString("bitquery.api_key"),
 		},
 		Redis: RedisConfig{
-			Addr:     v.GetString("redis.addr"),
-			Password: v.GetString("redis.password"),
-			DB:       v.GetInt("redis.db"),
-			Channel:  v.GetString("redis.channel"),
-			Enabled:  v.GetBool("redis.enabled"),
+			Addr:            v.GetString("redis.addr"),
+			Password:        v.GetString("redis.password"),
+			DB:              v.GetInt("redis.db"),
+			Channel:         v.GetString("redis.channel"),
+			ConsumerChannel: v.GetString("redis.consumer_channel"),
+			Enabled:         v.GetBool("redis.enabled"),
 		},
 		Trade: TradeConfig{
 			Enabled:           v.GetBool("trade.enabled"),
