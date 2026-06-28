@@ -175,20 +175,21 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed","score":86.5,"marketCap":21000}`),
 	}
 	store.states["token-new"] = candidateMonitorState{
-		TokenAddress: "token-new",
-		Symbol:       "NEW",
-		RunID:        "run-new",
-		StrategyName: "score-v1",
-		ScanNo:       2,
-		CandidateAt:  base.Add(time.Minute),
-		Status:       candidateStatusBought,
-		BuySignalID:  "buy-1",
-		EntryTime:    base.Add(2 * time.Minute),
-		EntryPrice:   24000,
-		CurrentPrice: 25500,
-		CurrentAt:    base.Add(3 * time.Minute),
-		Level:        model.PriceLevel{Price: 23000, Lower: 22800, Upper: 23200},
-		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed","score":91.2,"marketCap":26000}`),
+		TokenAddress:   "token-new",
+		Symbol:         "NEW",
+		RunID:          "run-new",
+		StrategyName:   "score-v1",
+		ScanNo:         2,
+		CandidateAt:    base.Add(time.Minute),
+		Status:         candidateStatusBought,
+		BuySignalID:    "buy-1",
+		EntryTime:      base.Add(2 * time.Minute),
+		EntryPrice:     24000,
+		CurrentPrice:   25500,
+		CurrentAt:      base.Add(3 * time.Minute),
+		KlineFetchedAt: base.Add(3*time.Minute + 10*time.Second),
+		Level:          model.PriceLevel{Price: 23000, Lower: 22800, Upper: 23200},
+		RawPayload:     json.RawMessage(`{"event":"candidate_score_passed","score":91.2,"marketCap":26000}`),
 	}
 	items, err := monitor.ListCandidates(context.Background())
 	if err != nil {
@@ -209,6 +210,9 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 	}
 	if first.CurrentMarketCapAt == nil || !first.CurrentMarketCapAt.Equal(base.Add(3*time.Minute)) {
 		t.Fatalf("expected current market cap time, got %#v", first.CurrentMarketCapAt)
+	}
+	if first.BirdeyeKlineFetchedAt == nil || !first.BirdeyeKlineFetchedAt.Equal(base.Add(3*time.Minute+10*time.Second)) {
+		t.Fatalf("expected Birdeye fetch time, got %#v", first.BirdeyeKlineFetchedAt)
 	}
 	if first.LevelMarketCap != 23000 || first.LevelLowerMarketCap != 22800 || first.LevelUpperMarketCap != 23200 {
 		t.Fatalf("unexpected level fields: %#v", first)

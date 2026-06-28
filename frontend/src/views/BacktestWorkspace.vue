@@ -431,22 +431,15 @@
                 formatOptionalMarketCap(row.upstreamMarketCap)
               }}</template>
             </el-table-column>
-            <el-table-column label="当前市值" width="132">
+            <el-table-column label="当前市值" width="112">
               <template #default="{ row }">
-                <div v-if="row.currentMarketCap" class="trade-cell-stack">
-                  <span>{{ formatOptionalMarketCap(row.currentMarketCap) }}</span>
-                  <span>{{ formatShortTime(row.currentMarketCapAt) }}</span>
-                </div>
-                <span v-else>-</span>
+                {{ formatOptionalMarketCap(row.currentMarketCap) }}
               </template>
             </el-table-column>
-            <el-table-column label="策略 / Scan" min-width="160">
-              <template #default="{ row }">
-                <div class="trade-cell-stack">
-                  <span>{{ row.strategyName || "-" }}</span>
-                  <span>#{{ row.scanNo || "-" }}</span>
-                </div>
-              </template>
+            <el-table-column label="K线获取" width="104">
+              <template #default="{ row }">{{
+                formatRelativeTime(row.birdeyeKlineFetchedAt)
+              }}</template>
             </el-table-column>
             <el-table-column label="压力带" width="180">
               <template #default="{ row }">
@@ -1018,7 +1011,15 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useBacktestStore } from "../stores/backtest.js";
 import KlineTradeChart from "../components/KlineTradeChart.vue";
@@ -1108,6 +1109,7 @@ const strategyForm = reactive({
 const tradeTab = ref("candidates");
 const tradeRuntimeMode = ref("paper");
 const tradeFilterMode = ref("all");
+const relativeNow = ref(Date.now());
 const selectedWindowKey = ref("");
 const selectedLevelKey = ref("");
 const focusedTradeKey = ref("");
@@ -1515,6 +1517,19 @@ function formatOptionalMarketCap(value) {
   return Number.isFinite(number) && number !== 0 ? formatMarketCap(number) : "-";
 }
 
+function formatRelativeTime(value) {
+  if (!value) return "-";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "-";
+  const seconds = Math.max(0, Math.floor((relativeNow.value - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s前`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h前`;
+  return `${Math.floor(hours / 24)}d前`;
+}
+
 function formatFixed(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(2) : "0.00";
@@ -1684,10 +1699,21 @@ function levelDisplayName(level) {
   return level?.type === "support" ? "支撑" : "压力";
 }
 
+let relativeTimer = null;
+
 onMounted(async () => {
+  relativeTimer = window.setInterval(() => {
+    relativeNow.value = Date.now();
+  }, 1000);
   await Promise.all([store.loadStrategyMethods(), store.loadTradeRuntime()]);
   tradeRuntimeMode.value = store.tradeRuntime.tradeMode || "paper";
   await refreshTradeDashboard();
+});
+
+onUnmounted(() => {
+  if (relativeTimer) {
+    window.clearInterval(relativeTimer);
+  }
 });
 </script>
 

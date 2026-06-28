@@ -49,24 +49,25 @@ type CandidateMonitor struct {
 }
 
 type CandidateMonitorItem struct {
-	TokenAddress        string          `json:"tokenAddress"`
-	Symbol              string          `json:"symbol"`
-	RunID               string          `json:"runId"`
-	StrategyName        string          `json:"strategyName"`
-	ScanNo              int64           `json:"scanNo"`
-	Status              string          `json:"status"`
-	CandidateAt         time.Time       `json:"candidateAt"`
-	BuySignalID         string          `json:"buySignalId"`
-	EntryTime           *time.Time      `json:"entryTime,omitempty"`
-	EntryMarketCap      float64         `json:"entryMarketCap"`
-	CurrentMarketCap    *float64        `json:"currentMarketCap,omitempty"`
-	CurrentMarketCapAt  *time.Time      `json:"currentMarketCapAt,omitempty"`
-	LevelMarketCap      float64         `json:"levelMarketCap"`
-	LevelLowerMarketCap float64         `json:"levelLowerMarketCap"`
-	LevelUpperMarketCap float64         `json:"levelUpperMarketCap"`
-	UpstreamScore       *float64        `json:"upstreamScore,omitempty"`
-	UpstreamMarketCap   *float64        `json:"upstreamMarketCap,omitempty"`
-	RawPayload          json.RawMessage `json:"rawPayload,omitempty"`
+	TokenAddress          string          `json:"tokenAddress"`
+	Symbol                string          `json:"symbol"`
+	RunID                 string          `json:"runId"`
+	StrategyName          string          `json:"strategyName"`
+	ScanNo                int64           `json:"scanNo"`
+	Status                string          `json:"status"`
+	CandidateAt           time.Time       `json:"candidateAt"`
+	BuySignalID           string          `json:"buySignalId"`
+	EntryTime             *time.Time      `json:"entryTime,omitempty"`
+	EntryMarketCap        float64         `json:"entryMarketCap"`
+	CurrentMarketCap      *float64        `json:"currentMarketCap,omitempty"`
+	CurrentMarketCapAt    *time.Time      `json:"currentMarketCapAt,omitempty"`
+	BirdeyeKlineFetchedAt *time.Time      `json:"birdeyeKlineFetchedAt,omitempty"`
+	LevelMarketCap        float64         `json:"levelMarketCap"`
+	LevelLowerMarketCap   float64         `json:"levelLowerMarketCap"`
+	LevelUpperMarketCap   float64         `json:"levelUpperMarketCap"`
+	UpstreamScore         *float64        `json:"upstreamScore,omitempty"`
+	UpstreamMarketCap     *float64        `json:"upstreamMarketCap,omitempty"`
+	RawPayload            json.RawMessage `json:"rawPayload,omitempty"`
 }
 
 type candidateScorePassedMessage struct {
@@ -92,20 +93,21 @@ type candidateScorePassedMessage struct {
 }
 
 type candidateMonitorState struct {
-	TokenAddress string
-	Symbol       string
-	RunID        string
-	StrategyName string
-	ScanNo       int64
-	RawPayload   json.RawMessage
-	CandidateAt  time.Time
-	Status       string
-	BuySignalID  string
-	EntryTime    time.Time
-	EntryPrice   float64
-	CurrentPrice float64
-	CurrentAt    time.Time
-	Level        model.PriceLevel
+	TokenAddress   string
+	Symbol         string
+	RunID          string
+	StrategyName   string
+	ScanNo         int64
+	RawPayload     json.RawMessage
+	CandidateAt    time.Time
+	Status         string
+	BuySignalID    string
+	EntryTime      time.Time
+	EntryPrice     float64
+	CurrentPrice   float64
+	CurrentAt      time.Time
+	KlineFetchedAt time.Time
+	Level          model.PriceLevel
 }
 
 type candidateMonitorStore interface {
@@ -206,25 +208,31 @@ func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
 		at := state.CurrentAt
 		currentMarketCapAt = &at
 	}
+	var birdeyeKlineFetchedAt *time.Time
+	if !state.KlineFetchedAt.IsZero() {
+		value := state.KlineFetchedAt
+		birdeyeKlineFetchedAt = &value
+	}
 	return CandidateMonitorItem{
-		TokenAddress:        state.TokenAddress,
-		Symbol:              state.Symbol,
-		RunID:               state.RunID,
-		StrategyName:        state.StrategyName,
-		ScanNo:              state.ScanNo,
-		Status:              state.Status,
-		CandidateAt:         state.CandidateAt,
-		BuySignalID:         state.BuySignalID,
-		EntryTime:           entryTime,
-		EntryMarketCap:      state.EntryPrice,
-		CurrentMarketCap:    currentMarketCap,
-		CurrentMarketCapAt:  currentMarketCapAt,
-		LevelMarketCap:      state.Level.Price,
-		LevelLowerMarketCap: state.Level.Lower,
-		LevelUpperMarketCap: state.Level.Upper,
-		UpstreamScore:       upstream.Score,
-		UpstreamMarketCap:   upstream.MarketCap,
-		RawPayload:          append(json.RawMessage{}, state.RawPayload...),
+		TokenAddress:          state.TokenAddress,
+		Symbol:                state.Symbol,
+		RunID:                 state.RunID,
+		StrategyName:          state.StrategyName,
+		ScanNo:                state.ScanNo,
+		Status:                state.Status,
+		CandidateAt:           state.CandidateAt,
+		BuySignalID:           state.BuySignalID,
+		EntryTime:             entryTime,
+		EntryMarketCap:        state.EntryPrice,
+		CurrentMarketCap:      currentMarketCap,
+		CurrentMarketCapAt:    currentMarketCapAt,
+		BirdeyeKlineFetchedAt: birdeyeKlineFetchedAt,
+		LevelMarketCap:        state.Level.Price,
+		LevelLowerMarketCap:   state.Level.Lower,
+		LevelUpperMarketCap:   state.Level.Upper,
+		UpstreamScore:         upstream.Score,
+		UpstreamMarketCap:     upstream.MarketCap,
+		RawPayload:            append(json.RawMessage{}, state.RawPayload...),
 	}
 }
 
@@ -342,6 +350,7 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 	latest := klines[len(klines)-1]
 	state.CurrentPrice = latest.MarketCapClose
 	state.CurrentAt = latest.OpenTime
+	state.KlineFetchedAt = time.Now().UTC()
 	if state.Status == candidateStatusWatching && latest.MarketCapClose < m.cfg.MinMarketCap {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 			return err
@@ -371,7 +380,7 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 
 func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
 	if len(klines) < 2 {
-		return nil
+		return m.store.SaveState(ctx, state)
 	}
 	history := klines[:len(klines)-1]
 	current := klines[len(klines)-1]
@@ -468,7 +477,7 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, sig backt
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
 	entryIndex := findKlineIndex(klines, state.EntryTime)
 	if entryIndex < 0 {
-		return nil
+		return m.store.SaveState(ctx, state)
 	}
 	decision := backtest.EvaluateRealtimeBandFollowExit(klines, entryIndex, state.Level, m.cfg.BreakoutFollow)
 	if !decision.Triggered || decision.ExitPoint == nil {
@@ -657,20 +666,21 @@ func encodeCandidateState(state candidateMonitorState) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"tokenAddress": state.TokenAddress,
-		"symbol":       state.Symbol,
-		"runId":        state.RunID,
-		"strategyName": state.StrategyName,
-		"scanNo":       strconv.FormatInt(state.ScanNo, 10),
-		"rawPayload":   string(state.RawPayload),
-		"candidateAt":  strconv.FormatInt(state.CandidateAt.UnixMilli(), 10),
-		"status":       state.Status,
-		"buySignalId":  state.BuySignalID,
-		"entryTime":    strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
-		"entryPrice":   strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
-		"currentPrice": strconv.FormatFloat(state.CurrentPrice, 'f', -1, 64),
-		"currentAt":    strconv.FormatInt(state.CurrentAt.UnixMilli(), 10),
-		"level":        string(levelJSON),
+		"tokenAddress":   state.TokenAddress,
+		"symbol":         state.Symbol,
+		"runId":          state.RunID,
+		"strategyName":   state.StrategyName,
+		"scanNo":         strconv.FormatInt(state.ScanNo, 10),
+		"rawPayload":     string(state.RawPayload),
+		"candidateAt":    strconv.FormatInt(state.CandidateAt.UnixMilli(), 10),
+		"status":         state.Status,
+		"buySignalId":    state.BuySignalID,
+		"entryTime":      strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
+		"entryPrice":     strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
+		"currentPrice":   strconv.FormatFloat(state.CurrentPrice, 'f', -1, 64),
+		"currentAt":      strconv.FormatInt(state.CurrentAt.UnixMilli(), 10),
+		"klineFetchedAt": strconv.FormatInt(state.KlineFetchedAt.UnixMilli(), 10),
+		"level":          string(levelJSON),
 	}, nil
 }
 
@@ -734,6 +744,15 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 		}
 		if value > 0 {
 			state.CurrentAt = time.UnixMilli(value).UTC()
+		}
+	}
+	if fields["klineFetchedAt"] != "" {
+		value, err := strconv.ParseInt(fields["klineFetchedAt"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		if value > 0 {
+			state.KlineFetchedAt = time.UnixMilli(value).UTC()
 		}
 	}
 	if fields["level"] != "" {
