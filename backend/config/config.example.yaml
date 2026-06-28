@@ -27,7 +27,16 @@ redis:
   password: ""
   db: 0
   channel: "solana:meme:signals:pressure_breakout"
-  consumer_channel: "" # 为空时交易消费沿用 channel；订阅候选池可配置为 solana_scalper:candidate_pool
+  consumer_channel: "" # 为空时交易消费沿用 channel
+
+signal:
+  candidate_monitor_enabled: false
+  candidate_channel: "solana_scalper:candidate_pool"
+  poll_interval_seconds: 2
+  interval: "1m"
+  min_market_cap: 15000
+  lookback_bars: 120
+  redis_key_prefix: "solana_meme_v2:signal_monitor"
 
 trade:
   enabled: false

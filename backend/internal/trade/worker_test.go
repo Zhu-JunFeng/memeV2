@@ -2,7 +2,6 @@ package trade
 
 import (
 	"testing"
-	"time"
 
 	"solana-meme-backtest/backend/internal/model"
 )
@@ -29,7 +28,7 @@ func TestDecodeTradeSignalPayloadKeepsPressureBreakoutFormat(t *testing.T) {
 	}
 }
 
-func TestDecodeTradeSignalPayloadConvertsCandidateScorePassed(t *testing.T) {
+func TestDecodeTradeSignalPayloadRejectsCandidateScorePassed(t *testing.T) {
 	payload := []byte(`{
 		"event":"candidate_score_passed",
 		"runId":"run_1",
@@ -52,37 +51,14 @@ func TestDecodeTradeSignalPayloadConvertsCandidateScorePassed(t *testing.T) {
 		"pullback":{"maxDropPct":8}
 	}`)
 
-	signal, err := decodeTradeSignalPayload(payload)
-	if err != nil {
-		t.Fatalf("decode candidate signal: %v", err)
-	}
-	if signal.SignalID != "candidate_score_passed:run_1:28:JEG4fDCBX28BTzXSJi4CQUSVK9xfCJbV3jzCkKj1pump:1782567302796" {
-		t.Fatalf("unexpected signal id: %s", signal.SignalID)
-	}
-	if signal.SignalType != model.TradeSignalTypeBuy {
-		t.Fatalf("expected buy signal, got %s", signal.SignalType)
-	}
-	if signal.StrategyCode != "candidate_score_passed" || signal.Interval != "candidate_pool" {
-		t.Fatalf("unexpected strategy or interval: %#v", signal)
-	}
-	if signal.TokenAddress != "JEG4fDCBX28BTzXSJi4CQUSVK9xfCJbV3jzCkKj1pump" {
-		t.Fatalf("unexpected token address: %s", signal.TokenAddress)
-	}
-	if signal.TriggerPrice != 0.00008365 || signal.TriggerMarketCap != 83656 {
-		t.Fatalf("unexpected trigger fields: price=%f marketCap=%f", signal.TriggerPrice, signal.TriggerMarketCap)
-	}
-	expectedTime := time.UnixMilli(1782567302796).UTC()
-	if !signal.SignalTime.Equal(expectedTime) {
-		t.Fatalf("expected signal time %s, got %s", expectedTime, signal.SignalTime)
-	}
-	if len(signal.Metadata) == 0 {
-		t.Fatalf("expected original payload in metadata")
+	if _, err := decodeTradeSignalPayload(payload); err == nil {
+		t.Fatalf("expected candidate_score_passed to be rejected by trade worker")
 	}
 }
 
 func TestDecodeTradeSignalPayloadRejectsCandidateWithoutPublishedAt(t *testing.T) {
 	payload := []byte(`{"event":"candidate_score_passed","runId":"run_1","tokenAddress":"token-a"}`)
 	if _, err := decodeTradeSignalPayload(payload); err == nil {
-		t.Fatalf("expected missing publishedAt error")
+		t.Fatalf("expected candidate event error")
 	}
 }

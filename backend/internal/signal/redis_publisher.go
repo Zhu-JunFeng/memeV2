@@ -39,15 +39,19 @@ func (p *RedisPublisher) PublishRealtimeSignals(ctx context.Context, tokenAddres
 		if err != nil {
 			return err
 		}
-		payload, err := json.Marshal(message)
-		if err != nil {
-			return err
-		}
-		if err := p.client.Publish(ctx, p.channel, payload).Err(); err != nil {
+		if err := p.PublishTradeSignal(ctx, message); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (p *RedisPublisher) PublishTradeSignal(ctx context.Context, message model.TradeSignalMessage) error {
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	return p.client.Publish(ctx, p.channel, payload).Err()
 }
 
 func toTradeSignalMessage(tokenAddress string, interval string, item backtest.RealtimeScenarioSignal) (model.TradeSignalMessage, error) {

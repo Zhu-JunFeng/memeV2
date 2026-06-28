@@ -13,6 +13,7 @@ type Config struct {
 	Birdeye    BirdeyeConfig
 	Bitquery   BitqueryConfig
 	Redis      RedisConfig
+	Signal     SignalConfig
 	Trade      TradeConfig
 }
 
@@ -51,6 +52,16 @@ type RedisConfig struct {
 	Channel         string
 	ConsumerChannel string
 	Enabled         bool
+}
+
+type SignalConfig struct {
+	CandidateMonitorEnabled bool
+	CandidateChannel        string
+	PollIntervalSeconds     int
+	Interval                string
+	MinMarketCap            float64
+	LookbackBars            int
+	RedisKeyPrefix          string
 }
 
 type TradeConfig struct {
@@ -99,6 +110,13 @@ func Load() (Config, error) {
 	v.SetDefault("redis.consumer_channel", "")
 	v.SetDefault("redis.db", 0)
 	v.SetDefault("redis.enabled", false)
+	v.SetDefault("signal.candidate_monitor_enabled", false)
+	v.SetDefault("signal.candidate_channel", "solana_scalper:candidate_pool")
+	v.SetDefault("signal.poll_interval_seconds", 2)
+	v.SetDefault("signal.interval", "1m")
+	v.SetDefault("signal.min_market_cap", 15000)
+	v.SetDefault("signal.lookback_bars", 120)
+	v.SetDefault("signal.redis_key_prefix", "solana_meme_v2:signal_monitor")
 	v.SetDefault("trade.enabled", false)
 	v.SetDefault("trade.signal_consumer", false)
 	v.SetDefault("trade.price_sync_enabled", false)
@@ -148,6 +166,15 @@ func Load() (Config, error) {
 			Channel:         v.GetString("redis.channel"),
 			ConsumerChannel: v.GetString("redis.consumer_channel"),
 			Enabled:         v.GetBool("redis.enabled"),
+		},
+		Signal: SignalConfig{
+			CandidateMonitorEnabled: v.GetBool("signal.candidate_monitor_enabled"),
+			CandidateChannel:        v.GetString("signal.candidate_channel"),
+			PollIntervalSeconds:     v.GetInt("signal.poll_interval_seconds"),
+			Interval:                v.GetString("signal.interval"),
+			MinMarketCap:            v.GetFloat64("signal.min_market_cap"),
+			LookbackBars:            v.GetInt("signal.lookback_bars"),
+			RedisKeyPrefix:          v.GetString("signal.redis_key_prefix"),
 		},
 		Trade: TradeConfig{
 			Enabled:           v.GetBool("trade.enabled"),

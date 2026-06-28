@@ -3,7 +3,6 @@ package trade
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -21,28 +20,6 @@ type Worker struct {
 
 type redisSignalEnvelope struct {
 	Event string `json:"event"`
-}
-
-type candidateScorePassedMessage struct {
-	Event          string          `json:"event"`
-	RunID          string          `json:"runId"`
-	StrategyName   string          `json:"strategyName"`
-	ScanNo         int64           `json:"scanNo"`
-	Token          string          `json:"token"`
-	TokenAddress   string          `json:"tokenAddress"`
-	PairAddress    string          `json:"pairAddress"`
-	Score          float64         `json:"score"`
-	Liquidity      float64         `json:"liquidity"`
-	MarketCap      float64         `json:"marketCap"`
-	SignalPrice    float64         `json:"signalPrice"`
-	SignalVolumeM5 float64         `json:"signalVolumeM5"`
-	BuyRatio       float64         `json:"buyRatio"`
-	PriceChange5m  float64         `json:"priceChange5m"`
-	Volume24h      float64         `json:"volume24h"`
-	ObservedAt     int64           `json:"observedAt"`
-	ExpiresAt      int64           `json:"expiresAt"`
-	PublishedAt    int64           `json:"publishedAt"`
-	Pullback       json.RawMessage `json:"pullback,omitempty"`
 }
 
 func NewWorker(service *Service, redisClient *redis.Client, channel string) *Worker {
@@ -89,8 +66,6 @@ func decodeTradeSignalPayload(payload []byte) (model.TradeSignalMessage, error) 
 		return model.TradeSignalMessage{}, err
 	}
 	switch envelope.Event {
-	case "candidate_score_passed":
-		return decodeCandidateScorePassed(payload)
 	case "":
 		var signal model.TradeSignalMessage
 		if err := json.Unmarshal(payload, &signal); err != nil {
@@ -100,36 +75,6 @@ func decodeTradeSignalPayload(payload []byte) (model.TradeSignalMessage, error) 
 	default:
 		return model.TradeSignalMessage{}, fmt.Errorf("unsupported redis signal event: %s", envelope.Event)
 	}
-}
-
-func decodeCandidateScorePassed(payload []byte) (model.TradeSignalMessage, error) {
-	var candidate candidateScorePassedMessage
-	if err := json.Unmarshal(payload, &candidate); err != nil {
-		return model.TradeSignalMessage{}, err
-	}
-	if candidate.RunID == "" {
-		return model.TradeSignalMessage{}, errors.New("candidate_score_passed missing runId")
-	}
-	if candidate.TokenAddress == "" {
-		return model.TradeSignalMessage{}, errors.New("candidate_score_passed missing tokenAddress")
-	}
-	if candidate.PublishedAt <= 0 {
-		return model.TradeSignalMessage{}, errors.New("candidate_score_passed missing publishedAt")
-	}
-	signalID := fmt.Sprintf("candidate_score_passed:%s:%d:%s:%d", candidate.RunID, candidate.ScanNo, candidate.TokenAddress, candidate.PublishedAt)
-	reason := fmt.Sprintf("候选池评分合格: strategy=%s score=%.2f scanNo=%d", candidate.StrategyName, candidate.Score, candidate.ScanNo)
-	return model.TradeSignalMessage{
-		SignalID:         signalID,
-		SignalType:       model.TradeSignalTypeBuy,
-		StrategyCode:     "candidate_score_passed",
-		TokenAddress:     candidate.TokenAddress,
-		Interval:         "candidate_pool",
-		SignalTime:       time.UnixMilli(candidate.PublishedAt).UTC(),
-		TriggerPrice:     candidate.SignalPrice,
-		TriggerMarketCap: candidate.MarketCap,
-		Reason:           reason,
-		Metadata:         json.RawMessage(payload),
-	}, nil
 }
 
 func (w *Worker) StartPriceSync(ctx context.Context, interval time.Duration) {

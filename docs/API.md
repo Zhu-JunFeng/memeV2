@@ -337,7 +337,9 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `signal` 负责识别实时突破结构并向 Redis 发布统一交易信号
 - `trade` 负责消费信号、记录订单/成交/持仓，并通过 DexScreener 刷新持仓估值
 - 如配置 `redis.consumer_channel`，交易消费订阅该通道；未配置时沿用 `redis.channel`
-- 交易消费支持原生 `TradeSignalMessage`，也支持老版候选池 `candidate_score_passed` 事件并转换为买入信号
+- 交易消费只处理标准 `TradeSignalMessage`；老版候选池 `candidate_score_passed` 由信号模块订阅后进入二次监控，不再直接买入
+- 候选池二次监控每 2 秒调用 Birdeye 查询 active CA 的 1m 最新 K 线，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
+- 未买入候选最新市值低于 `15000` 时从监控池移除；已买入候选继续监控卖点
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式仍调用 Jupiter `order` / 报价准备链路，但不会签名和执行；系统会基于 Jupiter 响应生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单

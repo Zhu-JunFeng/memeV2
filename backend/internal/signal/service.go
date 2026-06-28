@@ -11,6 +11,7 @@ import (
 
 type Publisher interface {
 	PublishRealtimeSignals(ctx context.Context, tokenAddress string, interval string, signals []backtest.RealtimeScenarioSignal) error
+	PublishTradeSignal(ctx context.Context, message model.TradeSignalMessage) error
 }
 
 type Service struct {
@@ -124,5 +125,9 @@ func mergeHistoryWithRealtimeKline(history []model.Kline, current model.Kline) [
 type noopPublisher struct{}
 
 func (noopPublisher) PublishRealtimeSignals(context.Context, string, string, []backtest.RealtimeScenarioSignal) error {
+	return nil
+}
+
+func (noopPublisher) PublishTradeSignal(context.Context, model.TradeSignalMessage) error {
 	return nil
 }

@@ -48,6 +48,20 @@ func main() {
 		redisClient = redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
 	}
 	signalService := signal.NewService(birdeyeSource, publisher)
+	if cfg.Signal.CandidateMonitorEnabled && redisClient != nil {
+		monitor := signal.NewCandidateMonitor(redisClient, birdeyeUpstream, publisher, signal.CandidateMonitorConfig{
+			Enabled:          cfg.Signal.CandidateMonitorEnabled,
+			CandidateChannel: cfg.Signal.CandidateChannel,
+			PollInterval:     time.Duration(cfg.Signal.PollIntervalSeconds) * time.Second,
+			Interval:         cfg.Signal.Interval,
+			MinMarketCap:     cfg.Signal.MinMarketCap,
+			LookbackBars:     cfg.Signal.LookbackBars,
+			RedisKeyPrefix:   cfg.Signal.RedisKeyPrefix,
+			LevelOptions:     backtest.DefaultLevelOptions(),
+			BreakoutFollow:   backtest.DefaultBreakoutBandFollowConfig(),
+		})
+		monitor.Start(context.Background())
+	}
 	priceSource := datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL)
 	jupiterExecutor, err := trade.NewJupiterExecutor(cfg.Trade, priceSource)
 	if err != nil && cfg.Trade.Enabled {

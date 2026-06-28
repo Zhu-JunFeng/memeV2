@@ -22,12 +22,18 @@ type capturePublisher struct {
 	tokenAddress string
 	interval     string
 	signals      []backtest.RealtimeScenarioSignal
+	tradeSignals []model.TradeSignalMessage
 }
 
 func (c *capturePublisher) PublishRealtimeSignals(_ context.Context, tokenAddress string, interval string, signals []backtest.RealtimeScenarioSignal) error {
 	c.tokenAddress = tokenAddress
 	c.interval = interval
 	c.signals = append([]backtest.RealtimeScenarioSignal{}, signals...)
+	return nil
+}
+
+func (c *capturePublisher) PublishTradeSignal(_ context.Context, message model.TradeSignalMessage) error {
+	c.tradeSignals = append(c.tradeSignals, message)
 	return nil
 }
 

@@ -75,8 +75,9 @@
 
 - `POST /api/market/birdeye/realtime-breakout-signals` 会同步返回命中的突破信号
 - 若配置了 Redis，信号模块会把命中的结构突破转换成标准化交易消息后发布到 channel
+- `signal` 模块可订阅上游候选池评分合格事件，进入 Redis 监控池后每 2 秒查询 Birdeye 最新 1m K 线，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
 - `trade` 模块负责：
-  - 消费 Redis 信号；如配置 `redis.consumer_channel`，交易消费使用该独立通道
+  - 消费标准 Redis 交易信号；如配置 `redis.consumer_channel`，交易消费使用该独立通道
   - 保证同一账户同一 token 同时最多一笔 open position
   - 写入 `trade_signals / trade_orders / trade_fills / trade_positions / trade_order_events`
   - 通过 DexScreener 刷新 open position 的最新估值
@@ -178,7 +179,9 @@ npm run build
 - `database.auto_migrate`：启动时自动建表
 - `birdeye.api_key` / `birdeye.api_keys`：Birdeye key 与 key 池
 - `redis.enabled` / `redis.addr` / `redis.channel`：实时信号发布通道，未配置消费通道时也作为交易消费通道
-- `redis.consumer_channel`：交易模块独立订阅通道；对接候选池时使用 `solana_scalper:candidate_pool`
+- `redis.consumer_channel`：交易模块独立订阅通道；为空时消费 `redis.channel`
+- `signal.candidate_monitor_enabled` / `signal.candidate_channel`：是否启用候选池后二次压力突破监控及上游候选池通道
+- `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
