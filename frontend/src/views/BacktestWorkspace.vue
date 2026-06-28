@@ -431,6 +431,15 @@
                 formatOptionalMarketCap(row.upstreamMarketCap)
               }}</template>
             </el-table-column>
+            <el-table-column label="当前市值" width="132">
+              <template #default="{ row }">
+                <div v-if="row.currentMarketCap" class="trade-cell-stack">
+                  <span>{{ formatOptionalMarketCap(row.currentMarketCap) }}</span>
+                  <span>{{ formatShortTime(row.currentMarketCapAt) }}</span>
+                </div>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
             <el-table-column label="策略 / Scan" min-width="160">
               <template #default="{ row }">
                 <div class="trade-cell-stack">

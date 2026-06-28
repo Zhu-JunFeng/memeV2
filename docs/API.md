@@ -383,6 +383,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `items[].candidateAt`：候选项目进入 V2 监控池的时间。
 - `items[].strategyName` / `items[].scanNo`：上游评分策略名和扫描批次。
 - `items[].upstreamScore` / `items[].upstreamMarketCap`：上游评分合格信号内携带的评分和市值。
+- `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功拉到的 Birdeye 最新 K 线收盘市值和对应 K 线时间。
 - `items[].buySignalId`：如果已触发 V2 买入信号，这里返回对应信号 ID。
 - `items[].entryTime` / `items[].entryMarketCap`：如果已触发买入信号，这里返回买点时间和买点市值。
 - `items[].levelMarketCap` / `items[].levelLowerMarketCap` / `items[].levelUpperMarketCap`：如果已触发买入信号，这里返回当时突破的压力带。

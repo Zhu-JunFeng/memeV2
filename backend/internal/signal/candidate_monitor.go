@@ -59,6 +59,8 @@ type CandidateMonitorItem struct {
 	BuySignalID         string          `json:"buySignalId"`
 	EntryTime           *time.Time      `json:"entryTime,omitempty"`
 	EntryMarketCap      float64         `json:"entryMarketCap"`
+	CurrentMarketCap    *float64        `json:"currentMarketCap,omitempty"`
+	CurrentMarketCapAt  *time.Time      `json:"currentMarketCapAt,omitempty"`
 	LevelMarketCap      float64         `json:"levelMarketCap"`
 	LevelLowerMarketCap float64         `json:"levelLowerMarketCap"`
 	LevelUpperMarketCap float64         `json:"levelUpperMarketCap"`
@@ -101,6 +103,8 @@ type candidateMonitorState struct {
 	BuySignalID  string
 	EntryTime    time.Time
 	EntryPrice   float64
+	CurrentPrice float64
+	CurrentAt    time.Time
 	Level        model.PriceLevel
 }
 
@@ -194,6 +198,14 @@ func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
 		value := state.EntryTime
 		entryTime = &value
 	}
+	var currentMarketCap *float64
+	var currentMarketCapAt *time.Time
+	if !state.CurrentAt.IsZero() {
+		value := state.CurrentPrice
+		currentMarketCap = &value
+		at := state.CurrentAt
+		currentMarketCapAt = &at
+	}
 	return CandidateMonitorItem{
 		TokenAddress:        state.TokenAddress,
 		Symbol:              state.Symbol,
@@ -205,6 +217,8 @@ func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
 		BuySignalID:         state.BuySignalID,
 		EntryTime:           entryTime,
 		EntryMarketCap:      state.EntryPrice,
+		CurrentMarketCap:    currentMarketCap,
+		CurrentMarketCapAt:  currentMarketCapAt,
 		LevelMarketCap:      state.Level.Price,
 		LevelLowerMarketCap: state.Level.Lower,
 		LevelUpperMarketCap: state.Level.Upper,
@@ -326,6 +340,8 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 		return nil
 	}
 	latest := klines[len(klines)-1]
+	state.CurrentPrice = latest.MarketCapClose
+	state.CurrentAt = latest.OpenTime
 	if state.Status == candidateStatusWatching && latest.MarketCapClose < m.cfg.MinMarketCap {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 			return err
@@ -370,7 +386,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	result := backtest.CalculateRealtimeScenarioSignalsByWindows(history, current, m.cfg.LevelOptions, windowSize, windowStep, backtest.PressureBreakoutDetector())
 	signals := candidateSignalsAfter(result.Signals, state.CandidateAt)
 	if len(signals) == 0 {
-		return nil
+		return m.store.SaveState(ctx, state)
 	}
 	sig := signals[0]
 	message, level, err := m.buildBuySignal(state, sig)
@@ -456,7 +472,7 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	}
 	decision := backtest.EvaluateRealtimeBandFollowExit(klines, entryIndex, state.Level, m.cfg.BreakoutFollow)
 	if !decision.Triggered || decision.ExitPoint == nil {
-		return nil
+		return m.store.SaveState(ctx, state)
 	}
 	message, err := m.buildSellSignal(state, decision)
 	if err != nil {
@@ -652,6 +668,8 @@ func encodeCandidateState(state candidateMonitorState) (map[string]any, error) {
 		"buySignalId":  state.BuySignalID,
 		"entryTime":    strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
 		"entryPrice":   strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
+		"currentPrice": strconv.FormatFloat(state.CurrentPrice, 'f', -1, 64),
+		"currentAt":    strconv.FormatInt(state.CurrentAt.UnixMilli(), 10),
 		"level":        string(levelJSON),
 	}, nil
 }
@@ -701,6 +719,22 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 			return candidateMonitorState{}, err
 		}
 		state.EntryPrice = value
+	}
+	if fields["currentPrice"] != "" {
+		value, err := strconv.ParseFloat(fields["currentPrice"], 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		state.CurrentPrice = value
+	}
+	if fields["currentAt"] != "" {
+		value, err := strconv.ParseInt(fields["currentAt"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		if value > 0 {
+			state.CurrentAt = time.UnixMilli(value).UTC()
+		}
 	}
 	if fields["level"] != "" {
 		if err := json.Unmarshal([]byte(fields["level"]), &state.Level); err != nil {

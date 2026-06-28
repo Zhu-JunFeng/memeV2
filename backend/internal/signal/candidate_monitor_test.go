@@ -185,6 +185,8 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 		BuySignalID:  "buy-1",
 		EntryTime:    base.Add(2 * time.Minute),
 		EntryPrice:   24000,
+		CurrentPrice: 25500,
+		CurrentAt:    base.Add(3 * time.Minute),
 		Level:        model.PriceLevel{Price: 23000, Lower: 22800, Upper: 23200},
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed","score":91.2,"marketCap":26000}`),
 	}
@@ -201,6 +203,12 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 	}
 	if first.EntryTime == nil || !first.EntryTime.Equal(base.Add(2*time.Minute)) {
 		t.Fatalf("expected entry time, got %#v", first.EntryTime)
+	}
+	if first.CurrentMarketCap == nil || *first.CurrentMarketCap != 25500 {
+		t.Fatalf("expected current market cap, got %#v", first.CurrentMarketCap)
+	}
+	if first.CurrentMarketCapAt == nil || !first.CurrentMarketCapAt.Equal(base.Add(3*time.Minute)) {
+		t.Fatalf("expected current market cap time, got %#v", first.CurrentMarketCapAt)
 	}
 	if first.LevelMarketCap != 23000 || first.LevelLowerMarketCap != 22800 || first.LevelUpperMarketCap != 23200 {
 		t.Fatalf("unexpected level fields: %#v", first)
