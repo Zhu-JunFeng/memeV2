@@ -44,6 +44,10 @@ export function listTradeSignals(params) {
   return http.get("/trade/signals", { params });
 }
 
+export function listCandidateMonitor() {
+  return http.get("/signal/candidate-monitor");
+}
+
 export function listTradeOrders(params) {
   return http.get("/trade/orders", { params });
 }

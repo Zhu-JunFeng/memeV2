@@ -159,3 +159,53 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		t.Fatalf("expected sold state, got %#v", store.stopped)
 	}
 }
+
+func TestCandidateMonitorListCandidates(t *testing.T) {
+	base := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
+	store := newFakeCandidateStore()
+	monitor := testCandidateMonitor(store, nil, &capturePublisher{})
+	store.states["token-old"] = candidateMonitorState{
+		TokenAddress: "token-old",
+		Symbol:       "OLD",
+		RunID:        "run-old",
+		StrategyName: "score-v1",
+		ScanNo:       1,
+		CandidateAt:  base,
+		Status:       candidateStatusWatching,
+		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed","score":86.5,"marketCap":21000}`),
+	}
+	store.states["token-new"] = candidateMonitorState{
+		TokenAddress: "token-new",
+		Symbol:       "NEW",
+		RunID:        "run-new",
+		StrategyName: "score-v1",
+		ScanNo:       2,
+		CandidateAt:  base.Add(time.Minute),
+		Status:       candidateStatusBought,
+		BuySignalID:  "buy-1",
+		EntryTime:    base.Add(2 * time.Minute),
+		EntryPrice:   24000,
+		Level:        model.PriceLevel{Price: 23000, Lower: 22800, Upper: 23200},
+		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed","score":91.2,"marketCap":26000}`),
+	}
+	items, err := monitor.ListCandidates(context.Background())
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(items))
+	}
+	first := items[0]
+	if first.TokenAddress != "token-new" || first.UpstreamScore == nil || *first.UpstreamScore != 91.2 || first.UpstreamMarketCap == nil || *first.UpstreamMarketCap != 26000 {
+		t.Fatalf("unexpected first item: %#v", first)
+	}
+	if first.EntryTime == nil || !first.EntryTime.Equal(base.Add(2*time.Minute)) {
+		t.Fatalf("expected entry time, got %#v", first.EntryTime)
+	}
+	if first.LevelMarketCap != 23000 || first.LevelLowerMarketCap != 22800 || first.LevelUpperMarketCap != 23200 {
+		t.Fatalf("unexpected level fields: %#v", first)
+	}
+	if items[1].EntryTime != nil {
+		t.Fatalf("watching candidate should not expose empty entry time: %#v", items[1].EntryTime)
+	}
+}

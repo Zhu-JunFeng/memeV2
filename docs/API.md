@@ -345,6 +345,24 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单
 - DexScreener 与 Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`。
 
+### GET /api/signal/candidate-monitor
+
+返回当前仍在 V2 信号模块 active 监控池里的上游候选项目，供前端展示“上游发出来但尚未一定触发买卖”的项目。
+
+返回字段：
+
+- `items[].tokenAddress`：候选项目 CA。
+- `items[].symbol`：上游发来的 symbol。
+- `items[].status`：当前监控状态，`watching` 表示等待压力带突破，`bought` 表示已发出买入信号并继续等待卖点。
+- `items[].candidateAt`：候选项目进入 V2 监控池的时间。
+- `items[].strategyName` / `items[].scanNo`：上游评分策略名和扫描批次。
+- `items[].upstreamScore` / `items[].upstreamMarketCap`：上游评分合格信号内携带的评分和市值。
+- `items[].buySignalId`：如果已触发 V2 买入信号，这里返回对应信号 ID。
+- `items[].entryTime` / `items[].entryMarketCap`：如果已触发买入信号，这里返回买点时间和买点市值。
+- `items[].levelMarketCap` / `items[].levelLowerMarketCap` / `items[].levelUpperMarketCap`：如果已触发买入信号，这里返回当时突破的压力带。
+
+说明：该接口只读取 Redis active 监控池，不查询历史已停止、已卖出或已被低市值过滤移除的候选项目。
+
 ### GET /api/trade/accounts
 
 返回交易账户列表。当前默认设计为单钱包单账户。

@@ -20,15 +20,16 @@ import (
 )
 
 type Handler struct {
-	backtestService *backtest.Service
-	signalService   *signal.Service
-	tradeService    *trade.Service
+	backtestService  *backtest.Service
+	signalService    *signal.Service
+	tradeService     *trade.Service
+	candidateMonitor *signal.CandidateMonitor
 }
 
-func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service) *gin.Engine {
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService}
+	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -36,6 +37,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/market/birdeye/klines", h.getBirdeyeKlines)
 	api.GET("/market/birdeye/support-resistance", h.getBirdeyeSupportResistance)
 	api.POST("/market/birdeye/realtime-breakout-signals", h.getBirdeyeRealtimeSignals)
+	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
 	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
 	api.POST("/strategy-backtests/run", h.runStrategyBacktest)
@@ -185,6 +187,19 @@ func (h *Handler) getBirdeyeRealtimeSignals(c *gin.Context) {
 		return
 	}
 	response.OK(c, result)
+}
+
+func (h *Handler) listCandidateMonitor(c *gin.Context) {
+	if h.candidateMonitor == nil {
+		response.OK(c, gin.H{"items": []signal.CandidateMonitorItem{}})
+		return
+	}
+	items, err := h.candidateMonitor.ListCandidates(c.Request.Context())
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
 }
 
 func (h *Handler) getDBSupportResistance(c *gin.Context) {

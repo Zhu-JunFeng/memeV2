@@ -48,8 +48,9 @@ func main() {
 		redisClient = redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
 	}
 	signalService := signal.NewService(birdeyeSource, publisher)
+	var candidateMonitor *signal.CandidateMonitor
 	if cfg.Signal.CandidateMonitorEnabled && redisClient != nil {
-		monitor := signal.NewCandidateMonitor(redisClient, birdeyeUpstream, publisher, signal.CandidateMonitorConfig{
+		candidateMonitor = signal.NewCandidateMonitor(redisClient, birdeyeUpstream, publisher, signal.CandidateMonitorConfig{
 			Enabled:          cfg.Signal.CandidateMonitorEnabled,
 			CandidateChannel: cfg.Signal.CandidateChannel,
 			PollInterval:     time.Duration(cfg.Signal.PollIntervalSeconds) * time.Second,
@@ -60,7 +61,7 @@ func main() {
 			LevelOptions:     backtest.DefaultLevelOptions(),
 			BreakoutFollow:   backtest.DefaultBreakoutBandFollowConfig(),
 		})
-		monitor.Start(context.Background())
+		candidateMonitor.Start(context.Background())
 	}
 	priceSource := datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL)
 	jupiterExecutor, err := trade.NewJupiterExecutor(cfg.Trade, priceSource)
@@ -85,7 +86,7 @@ func main() {
 			worker.StartPriceSync(context.Background(), interval)
 		}
 	}
-	router := api.NewRouter(backtestService, signalService, tradeService)
+	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

@@ -48,6 +48,25 @@ type CandidateMonitor struct {
 	cfg       CandidateMonitorConfig
 }
 
+type CandidateMonitorItem struct {
+	TokenAddress        string          `json:"tokenAddress"`
+	Symbol              string          `json:"symbol"`
+	RunID               string          `json:"runId"`
+	StrategyName        string          `json:"strategyName"`
+	ScanNo              int64           `json:"scanNo"`
+	Status              string          `json:"status"`
+	CandidateAt         time.Time       `json:"candidateAt"`
+	BuySignalID         string          `json:"buySignalId"`
+	EntryTime           *time.Time      `json:"entryTime,omitempty"`
+	EntryMarketCap      float64         `json:"entryMarketCap"`
+	LevelMarketCap      float64         `json:"levelMarketCap"`
+	LevelLowerMarketCap float64         `json:"levelLowerMarketCap"`
+	LevelUpperMarketCap float64         `json:"levelUpperMarketCap"`
+	UpstreamScore       *float64        `json:"upstreamScore,omitempty"`
+	UpstreamMarketCap   *float64        `json:"upstreamMarketCap,omitempty"`
+	RawPayload          json.RawMessage `json:"rawPayload,omitempty"`
+}
+
 type candidateScorePassedMessage struct {
 	Event          string          `json:"event"`
 	RunID          string          `json:"runId"`
@@ -142,6 +161,57 @@ func (m *CandidateMonitor) Start(ctx context.Context) {
 	}
 	go m.subscribeCandidates(ctx)
 	go m.pollCandidates(ctx)
+}
+
+func (m *CandidateMonitor) ListCandidates(ctx context.Context) ([]CandidateMonitorItem, error) {
+	if m == nil || m.store == nil {
+		return []CandidateMonitorItem{}, nil
+	}
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]CandidateMonitorItem, 0, len(states))
+	for _, state := range states {
+		items = append(items, newCandidateMonitorItem(state))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CandidateAt.After(items[j].CandidateAt)
+	})
+	return items, nil
+}
+
+func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
+	var upstream struct {
+		Score     *float64 `json:"score"`
+		MarketCap *float64 `json:"marketCap"`
+	}
+	if len(state.RawPayload) > 0 {
+		_ = json.Unmarshal(state.RawPayload, &upstream)
+	}
+	var entryTime *time.Time
+	if !state.EntryTime.IsZero() {
+		value := state.EntryTime
+		entryTime = &value
+	}
+	return CandidateMonitorItem{
+		TokenAddress:        state.TokenAddress,
+		Symbol:              state.Symbol,
+		RunID:               state.RunID,
+		StrategyName:        state.StrategyName,
+		ScanNo:              state.ScanNo,
+		Status:              state.Status,
+		CandidateAt:         state.CandidateAt,
+		BuySignalID:         state.BuySignalID,
+		EntryTime:           entryTime,
+		EntryMarketCap:      state.EntryPrice,
+		LevelMarketCap:      state.Level.Price,
+		LevelLowerMarketCap: state.Level.Lower,
+		LevelUpperMarketCap: state.Level.Upper,
+		UpstreamScore:       upstream.Score,
+		UpstreamMarketCap:   upstream.MarketCap,
+		RawPayload:          append(json.RawMessage{}, state.RawPayload...),
+	}
 }
 
 func (m *CandidateMonitor) subscribeCandidates(ctx context.Context) {

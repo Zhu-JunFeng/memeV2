@@ -376,6 +376,10 @@
       </div>
       <div class="trade-kpis">
         <div class="trade-kpi">
+          <span>Candidates</span>
+          <strong>{{ store.candidateMonitorItems.length }}</strong>
+        </div>
+        <div class="trade-kpi">
           <span>Signals</span><strong>{{ store.tradeSignals.length }}</strong>
         </div>
         <div class="trade-kpi">
@@ -389,6 +393,73 @@
         </div>
       </div>
       <el-tabs v-model="tradeTab" class="trade-tabs">
+        <el-tab-pane label="Candidates" name="candidates">
+          <el-table
+            :data="store.candidateMonitorItems"
+            size="small"
+            stripe
+            class="trade-table"
+            table-layout="auto"
+            empty-text="暂无上游候选项目"
+          >
+            <el-table-column label="状态" width="96">
+              <template #default="{ row }">
+                <el-tag size="small" :type="candidateStatusTagType(row.status)">
+                  {{ candidateStatusText(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Symbol / CA" min-width="220">
+              <template #default="{ row }">
+                <div class="trade-cell-stack">
+                  <strong>{{ row.symbol || "-" }}</strong>
+                  <TokenAddressLink
+                    :address="row.tokenAddress"
+                    :short="true"
+                    :compact="true"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="上游评分" width="100">
+              <template #default="{ row }">{{
+                formatOptionalFixed(row.upstreamScore)
+              }}</template>
+            </el-table-column>
+            <el-table-column label="上游市值" width="112">
+              <template #default="{ row }">{{
+                formatOptionalMarketCap(row.upstreamMarketCap)
+              }}</template>
+            </el-table-column>
+            <el-table-column label="策略 / Scan" min-width="160">
+              <template #default="{ row }">
+                <div class="trade-cell-stack">
+                  <span>{{ row.strategyName || "-" }}</span>
+                  <span>#{{ row.scanNo || "-" }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="压力带" width="180">
+              <template #default="{ row }">
+                <span v-if="row.levelMarketCap">
+                  {{ formatMarketCap(row.levelLowerMarketCap) }} -
+                  {{ formatMarketCap(row.levelUpperMarketCap) }}
+                </span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="入池时间" width="168">
+              <template #default="{ row }">{{
+                formatBeijingDateTime(row.candidateAt)
+              }}</template>
+            </el-table-column>
+            <el-table-column label="买入信号" min-width="150">
+              <template #default="{ row }">{{
+                shortAddress(row.buySignalId || "-")
+              }}</template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
         <el-tab-pane label="Signals" name="signals">
           <el-table
             :data="store.tradeSignals"
@@ -478,7 +549,7 @@
             <el-table-column prop="status" label="状态" width="90" />
             <el-table-column label="Tx" min-width="160">
               <template #default="{ row }">{{
-                shortenAddress(row.submitTxHash || "-")
+                shortAddress(row.submitTxHash || "-")
               }}</template>
             </el-table-column>
             <el-table-column label="时间" width="168">
@@ -1025,7 +1096,7 @@ const strategyForm = reactive({
   activationProfitRatePercent: 5,
   lockedProfitRatePercent: 3,
 });
-const tradeTab = ref("signals");
+const tradeTab = ref("candidates");
 const tradeRuntimeMode = ref("paper");
 const tradeFilterMode = ref("all");
 const selectedWindowKey = ref("");
@@ -1430,9 +1501,19 @@ function formatMarketCap(value) {
   return number.toFixed(2).replace(/\.00$/, "");
 }
 
+function formatOptionalMarketCap(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number !== 0 ? formatMarketCap(number) : "-";
+}
+
 function formatFixed(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(2) : "0.00";
+}
+
+function formatOptionalFixed(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number !== 0 ? number.toFixed(2) : "-";
 }
 
 function formatPercent(value) {
@@ -1482,6 +1563,26 @@ function tradeModeText(value) {
 
 function modeTagType(value) {
   return value === "live" ? "danger" : "info";
+}
+
+function candidateStatusText(value) {
+  const textMap = {
+    watching: "监控中",
+    bought: "已买入",
+    stopped: "已停止",
+    sold: "已卖出",
+  };
+  return textMap[value] || value || "-";
+}
+
+function candidateStatusTagType(value) {
+  const typeMap = {
+    watching: "warning",
+    bought: "success",
+    stopped: "info",
+    sold: "info",
+  };
+  return typeMap[value] || "info";
 }
 
 function formatCompact(value) {

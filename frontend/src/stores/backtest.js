@@ -5,6 +5,7 @@ import {
   fetchBirdeyeSupportResistance,
   fetchTradeRuntime,
   listBacktests,
+  listCandidateMonitor,
   listStrategyBacktestMethods,
   listTradeOrders,
   listTradePositions,
@@ -30,6 +31,7 @@ export const useBacktestStore = defineStore("backtest", {
       options: [],
     },
     tradeSignals: [],
+    candidateMonitorItems: [],
     tradeOrders: [],
     tradePositions: [],
   }),
@@ -121,16 +123,19 @@ export const useBacktestStore = defineStore("backtest", {
       this.tradeLoading = true;
       this.error = "";
       try {
-        const [signals, orders, positions] = await Promise.all([
+        const [signals, candidates, orders, positions] = await Promise.all([
           listTradeSignals(params),
+          listCandidateMonitor(),
           listTradeOrders(params),
           listTradePositions({ ...params, status: params.status || "" }),
         ]);
         this.tradeSignals = signals.items || [];
+        this.candidateMonitorItems = candidates.items || [];
         this.tradeOrders = orders.items || [];
         this.tradePositions = positions.items || [];
         return {
           signals: this.tradeSignals,
+          candidates: this.candidateMonitorItems,
           orders: this.tradeOrders,
           positions: this.tradePositions,
         };
