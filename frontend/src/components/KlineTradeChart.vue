@@ -40,7 +40,7 @@
     <div class="chart-status-bar">
       <div v-if="displayLevels.length" class="level-strip">
         <div>
-          <strong>关键市值</strong>
+          <strong>关键价位</strong>
           <span
             >仅显示强度最高的支撑/压力各 {{ LEVELS_PER_TYPE }} 条，隐藏
             {{ hiddenLevelCount }} 条低权重线</span
@@ -130,11 +130,11 @@
           {{ formatTradeTime(hoveredTradeMarker.point.time) }}
         </div>
         <div class="trade-hover-card__row">
-          {{ hoveredTradeMarker.side === "buy" ? "买入市值" : "卖出市值" }}
+          {{ hoveredTradeMarker.side === "buy" ? "买入价位" : "卖出价位" }}
           {{ formatMarketCap(hoveredTradeMarker.price) }}
         </div>
         <div class="trade-hover-card__row">
-          买入市值
+          买入价位
           {{
             formatMarketCap(
               hoveredTradeMarker.trade.buyPoint.marketCap ||
@@ -414,7 +414,7 @@ function levelLabel(level) {
 
 function levelTooltip(level) {
   const name = levelRole(level) === "support" ? "支撑位" : "压力位";
-  return `${name} · 市值 ${formatMarketCap(level.marketCap)} · 触碰 ${level.touches || 0} 次 · 强度 ${Number(level.score || 0).toFixed(1)}`;
+  return `${name} · 价位 ${formatMarketCap(level.marketCap)} · 触碰 ${level.touches || 0} 次 · 强度 ${Number(level.score || 0).toFixed(1)}`;
 }
 
 function levelRole(level) {

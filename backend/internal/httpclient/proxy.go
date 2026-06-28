@@ -9,7 +9,7 @@ import (
 
 const FixedClashProxyURL = "http://127.0.0.1:7890"
 
-// NewFixedProxyClient 为 DexScreener/Jupiter 这类外网依赖统一走服务器本机 clash 代理。
+// NewFixedProxyClient 为 GMGN/DexScreener/Jupiter 这类外网依赖统一走服务器本机 clash 代理。
 func NewFixedProxyClient(timeout time.Duration, dialTimeout time.Duration) *http.Client {
 	proxyURL, err := url.Parse(FixedClashProxyURL)
 	if err != nil {

@@ -2,6 +2,8 @@ package signal
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"solana-meme-backtest/backend/internal/backtest"
@@ -15,24 +17,57 @@ type Publisher interface {
 }
 
 type Service struct {
-	birdeye   datasource.KlineDataSource
-	publisher Publisher
+	klines        datasource.KlineDataSource
+	namedSources  map[string]datasource.KlineDataSource
+	defaultSource string
+	publisher     Publisher
 }
 
-func NewService(birdeye datasource.KlineDataSource, publisher Publisher) *Service {
+type ServiceOption func(*Service)
+
+func NewService(klines datasource.KlineDataSource, publisher Publisher, options ...ServiceOption) *Service {
 	if publisher == nil {
 		publisher = noopPublisher{}
 	}
-	return &Service{
-		birdeye:   birdeye,
-		publisher: publisher,
+	svc := &Service{
+		klines:       klines,
+		namedSources: map[string]datasource.KlineDataSource{},
+		publisher:    publisher,
+	}
+	for _, option := range options {
+		option(svc)
+	}
+	return svc
+}
+
+func WithKlineSource(name string, source datasource.KlineDataSource) ServiceOption {
+	return func(s *Service) {
+		name = normalizeSourceName(name)
+		if name == "" || source == nil {
+			return
+		}
+		s.namedSources[name] = source
+	}
+}
+
+func WithDefaultKlineSource(name string) ServiceOption {
+	return func(s *Service) {
+		s.defaultSource = normalizeSourceName(name)
 	}
 }
 
 // GetKlineLevels 作为信号模块的“结构识别”入口：
-// 它只负责从 Birdeye K 线里识别压力/支撑结构，不掺杂回测逻辑。
+// 它只负责从当前 K 线数据源里识别压力/支撑结构，不掺杂回测逻辑。
 func (s *Service) GetKlineLevels(ctx context.Context, req datasource.KlineQuery, options backtest.LevelOptions) (backtest.KlineLevelsResult, error) {
-	klines, err := s.birdeye.GetKlines(ctx, req)
+	return s.GetKlineLevelsFromSource(ctx, "", req, options)
+}
+
+func (s *Service) GetKlineLevelsFromSource(ctx context.Context, source string, req datasource.KlineQuery, options backtest.LevelOptions) (backtest.KlineLevelsResult, error) {
+	klineSource, err := s.source(source)
+	if err != nil {
+		return backtest.KlineLevelsResult{}, err
+	}
+	klines, err := klineSource.GetKlines(ctx, req)
 	if err != nil {
 		return backtest.KlineLevelsResult{}, err
 	}
@@ -58,7 +93,15 @@ func (s *Service) GetKlineLevels(ctx context.Context, req datasource.KlineQuery,
 // DetectRealtimeSignals 用历史 K 线 + 当前实时 K 线做结构突破判断，
 // 如果命中信号则同步写入 Redis，供外部订阅系统消费。
 func (s *Service) DetectRealtimeSignals(ctx context.Context, req RealtimeRequest) (backtest.RealtimeSignalResult, error) {
-	klines, err := s.birdeye.GetKlines(ctx, datasource.KlineQuery{
+	return s.DetectRealtimeSignalsFromSource(ctx, "", req)
+}
+
+func (s *Service) DetectRealtimeSignalsFromSource(ctx context.Context, source string, req RealtimeRequest) (backtest.RealtimeSignalResult, error) {
+	klineSource, err := s.source(source)
+	if err != nil {
+		return backtest.RealtimeSignalResult{}, err
+	}
+	klines, err := klineSource.GetKlines(ctx, datasource.KlineQuery{
 		TokenAddress: req.TokenAddress,
 		Interval:     req.Interval,
 		StartTime:    req.StartTime,
@@ -95,6 +138,24 @@ func (s *Service) DetectRealtimeSignals(ctx context.Context, req RealtimeRequest
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) source(name string) (datasource.KlineDataSource, error) {
+	name = normalizeSourceName(name)
+	if name == "" {
+		name = s.defaultSource
+	}
+	if source, ok := s.namedSources[name]; ok && source != nil {
+		return source, nil
+	}
+	if name == "" {
+		return s.klines, nil
+	}
+	return nil, fmt.Errorf("%w: %s", datasource.ErrUnsupportedKlineSource, name)
+}
+
+func normalizeSourceName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 type RealtimeRequest struct {

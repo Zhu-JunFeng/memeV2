@@ -11,6 +11,7 @@ type Config struct {
 	Database   DatabaseConfig
 	Datasource DatasourceConfig
 	Birdeye    BirdeyeConfig
+	GMGN       GMGNConfig
 	Bitquery   BitqueryConfig
 	Redis      RedisConfig
 	Signal     SignalConfig
@@ -30,6 +31,7 @@ type DatabaseConfig struct {
 type DatasourceConfig struct {
 	KlineQuery       string
 	TokenSearchQuery string
+	KlineSource      string
 }
 
 type BirdeyeConfig struct {
@@ -38,6 +40,13 @@ type BirdeyeConfig struct {
 	APIKeys       []string
 	Chain         string
 	TradeMaxPages int
+}
+
+type GMGNConfig struct {
+	BaseURL string
+	APIKey  string
+	Chain   string
+	MaxQPS  float64
 }
 
 type BitqueryConfig struct {
@@ -78,6 +87,7 @@ type TradeConfig struct {
 	SolanaRPCURL      string
 	DexScreener       DexScreenerConfig
 	Jupiter           JupiterConfig
+	PriceSource       string
 }
 
 type DexScreenerConfig struct {
@@ -102,9 +112,13 @@ func Load() (Config, error) {
 	v.SetDefault("server.port", "8890")
 	v.SetDefault("server.mode", "debug")
 	v.SetDefault("database.auto_migrate", false)
+	v.SetDefault("datasource.kline_source", "gmgn")
 	v.SetDefault("birdeye.base_url", "https://public-api.birdeye.so")
 	v.SetDefault("birdeye.chain", "solana")
 	v.SetDefault("birdeye.trade_max_pages", 1)
+	v.SetDefault("gmgn.base_url", "https://openapi.gmgn.ai")
+	v.SetDefault("gmgn.chain", "sol")
+	v.SetDefault("gmgn.max_qps", 8.0)
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
 	v.SetDefault("redis.consumer_channel", "")
@@ -114,7 +128,7 @@ func Load() (Config, error) {
 	v.SetDefault("signal.candidate_channel", "solana_scalper:candidate_pool")
 	v.SetDefault("signal.poll_interval_seconds", 2)
 	v.SetDefault("signal.interval", "1m")
-	v.SetDefault("signal.min_market_cap", 15000)
+	v.SetDefault("signal.min_market_cap", 0)
 	v.SetDefault("signal.lookback_bars", 120)
 	v.SetDefault("signal.redis_key_prefix", "solana_meme_v2:signal_monitor")
 	v.SetDefault("trade.enabled", false)
@@ -126,6 +140,7 @@ func Load() (Config, error) {
 	v.SetDefault("trade.slippage_bps", 500)
 	v.SetDefault("trade.priority_fee", 0)
 	v.SetDefault("trade.solana_rpc_url", "https://api.mainnet-beta.solana.com")
+	v.SetDefault("trade.price_source", "gmgn")
 	v.SetDefault("trade.dexscreener.base_url", "https://api.dexscreener.com")
 	v.SetDefault("trade.jupiter.base_url", "https://lite-api.jup.ag")
 
@@ -147,6 +162,7 @@ func Load() (Config, error) {
 		Datasource: DatasourceConfig{
 			KlineQuery:       v.GetString("datasource.kline_query"),
 			TokenSearchQuery: v.GetString("datasource.token_search_query"),
+			KlineSource:      normalizeSourceName(v.GetString("datasource.kline_source"), "gmgn"),
 		},
 		Birdeye: BirdeyeConfig{
 			BaseURL:       v.GetString("birdeye.base_url"),
@@ -154,6 +170,12 @@ func Load() (Config, error) {
 			APIKeys:       normalizeAPIKeys(v.GetStringSlice("birdeye.api_keys"), v.GetString("birdeye.api_key")),
 			Chain:         v.GetString("birdeye.chain"),
 			TradeMaxPages: v.GetInt("birdeye.trade_max_pages"),
+		},
+		GMGN: GMGNConfig{
+			BaseURL: v.GetString("gmgn.base_url"),
+			APIKey:  v.GetString("gmgn.api_key"),
+			Chain:   v.GetString("gmgn.chain"),
+			MaxQPS:  v.GetFloat64("gmgn.max_qps"),
 		},
 		Bitquery: BitqueryConfig{
 			BaseURL: v.GetString("bitquery.base_url"),
@@ -188,6 +210,7 @@ func Load() (Config, error) {
 			SlippageBPS:       v.GetInt("trade.slippage_bps"),
 			PriorityFee:       v.GetInt64("trade.priority_fee"),
 			SolanaRPCURL:      v.GetString("trade.solana_rpc_url"),
+			PriceSource:       normalizeSourceName(v.GetString("trade.price_source"), "gmgn"),
 			DexScreener: DexScreenerConfig{
 				BaseURL: v.GetString("trade.dexscreener.base_url"),
 			},
@@ -220,4 +243,12 @@ func normalizeAPIKeys(keys []string, fallback string) []string {
 	}
 	appendKey(fallback)
 	return normalized
+}
+
+func normalizeSourceName(value string, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
 }

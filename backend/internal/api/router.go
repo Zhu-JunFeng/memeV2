@@ -41,9 +41,14 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
 	api.GET("/market/klines", h.getKlines)
+	api.GET("/market/support-resistance", h.getSupportResistance)
+	api.POST("/market/realtime-breakout-signals", h.getRealtimeSignals)
 	api.GET("/market/birdeye/klines", h.getBirdeyeKlines)
 	api.GET("/market/birdeye/support-resistance", h.getBirdeyeSupportResistance)
 	api.POST("/market/birdeye/realtime-breakout-signals", h.getBirdeyeRealtimeSignals)
+	api.GET("/market/gmgn/klines", h.getGMGNKlines)
+	api.GET("/market/gmgn/support-resistance", h.getGMGNSupportResistance)
+	api.POST("/market/gmgn/realtime-breakout-signals", h.getGMGNRealtimeSignals)
 	api.POST("/birdeye/api-keys", h.createBirdeyeAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
@@ -108,6 +113,7 @@ type createBacktestRequest struct {
 }
 
 type strategyBacktestRunRequest struct {
+	DataSource   string           `json:"dataSource"`
 	MethodCode   string           `json:"methodCode" binding:"required"`
 	MethodConfig json.RawMessage  `json:"methodConfig"`
 	TokenAddress string           `json:"tokenAddress" binding:"required"`
@@ -135,6 +141,7 @@ type levelOptionsBody struct {
 }
 
 type realtimeSignalRequest struct {
+	DataSource   string           `json:"dataSource"`
 	TokenAddress string           `json:"tokenAddress" binding:"required"`
 	Interval     string           `json:"interval" binding:"required"`
 	StartTime    time.Time        `json:"startTime" binding:"required"`
@@ -155,7 +162,27 @@ func (h *Handler) getBirdeyeKlines(c *gin.Context) {
 	h.getKlines(c)
 }
 
+func (h *Handler) getGMGNKlines(c *gin.Context) {
+	c.Request.URL.RawQuery = c.Request.URL.Query().Encode()
+	query := c.Request.URL.Query()
+	query.Set("source", "gmgn")
+	c.Request.URL.RawQuery = query.Encode()
+	h.getKlines(c)
+}
+
+func (h *Handler) getSupportResistance(c *gin.Context) {
+	h.getSupportResistanceFromSource(c, c.Query("source"))
+}
+
 func (h *Handler) getBirdeyeSupportResistance(c *gin.Context) {
+	h.getSupportResistanceFromSource(c, "birdeye")
+}
+
+func (h *Handler) getGMGNSupportResistance(c *gin.Context) {
+	h.getSupportResistanceFromSource(c, "gmgn")
+}
+
+func (h *Handler) getSupportResistanceFromSource(c *gin.Context, source string) {
 	start, err := parseTime(c.Query("startTime"))
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "startTime 格式错误")
@@ -170,7 +197,7 @@ func (h *Handler) getBirdeyeSupportResistance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.signalService.GetKlineLevels(c.Request.Context(), datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
+	result, err := h.signalService.GetKlineLevelsFromSource(c.Request.Context(), source, datasource.KlineQuery{TokenAddress: c.Query("tokenAddress"), Interval: c.Query("interval"), StartTime: start, EndTime: end}, options)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -178,15 +205,30 @@ func (h *Handler) getBirdeyeSupportResistance(c *gin.Context) {
 	response.OK(c, result)
 }
 
+func (h *Handler) getRealtimeSignals(c *gin.Context) {
+	h.getRealtimeSignalsFromSource(c, "")
+}
+
 func (h *Handler) getBirdeyeRealtimeSignals(c *gin.Context) {
+	h.getRealtimeSignalsFromSource(c, "birdeye")
+}
+
+func (h *Handler) getGMGNRealtimeSignals(c *gin.Context) {
+	h.getRealtimeSignalsFromSource(c, "gmgn")
+}
+
+func (h *Handler) getRealtimeSignalsFromSource(c *gin.Context, source string) {
 	var req realtimeSignalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
 		return
 	}
+	if source == "" {
+		source = req.DataSource
+	}
 	options := backtest.DefaultLevelOptions()
 	applyLevelOptionsBody(&options, req.LevelOptions)
-	result, err := h.signalService.DetectRealtimeSignals(c.Request.Context(), signal.RealtimeRequest{
+	result, err := h.signalService.DetectRealtimeSignalsFromSource(c.Request.Context(), source, signal.RealtimeRequest{
 		TokenAddress: req.TokenAddress,
 		Interval:     req.Interval,
 		StartTime:    req.StartTime,
@@ -282,7 +324,7 @@ func (h *Handler) runStrategyBacktest(c *gin.Context) {
 	}
 	options := backtest.DefaultLevelOptions()
 	applyLevelOptionsBody(&options, req.LevelOptions)
-	result, err := h.backtestService.RunStrategyBacktest(c.Request.Context(), "birdeye", backtest.StrategyBacktestRequest{
+	result, err := h.backtestService.RunStrategyBacktest(c.Request.Context(), req.DataSource, backtest.StrategyBacktestRequest{
 		MethodCode:   req.MethodCode,
 		MethodConfig: req.MethodConfig,
 		TokenAddress: req.TokenAddress,
@@ -573,6 +615,12 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Fail(c, http.StatusBadRequest, "Birdeye API Key 未配置")
 	case errors.Is(err, datasource.ErrBirdeyeNoAvailableKey):
 		response.Fail(c, http.StatusBadRequest, "Birdeye 可用 API Key 不存在")
+	case errors.Is(err, datasource.ErrGMGNNotConfigured):
+		response.Fail(c, http.StatusBadRequest, "GMGN API Key 未配置")
+	case errors.Is(err, datasource.ErrUnsupportedKlineSource):
+		response.Fail(c, http.StatusBadRequest, "K 线数据源仅支持 gmgn/birdeye/sql/db")
+	case errors.Is(err, datasource.ErrUnsupportedPriceSource):
+		response.Fail(c, http.StatusBadRequest, "价格数据源仅支持 gmgn/dexscreener")
 	case errors.Is(err, datasource.ErrBitqueryNotConfigured):
 		response.Fail(c, http.StatusBadRequest, "Bitquery API Token 未配置")
 	case errors.Is(err, backtest.ErrStrategyMethodNotFound):

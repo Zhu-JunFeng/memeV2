@@ -2,7 +2,7 @@
 
 ## 背景
 
-候选池二次监控需要持续调用 Birdeye 最新 K 线。如果配置文件里的 key 出现 `Compute units usage limit exceeded`，原先只能依赖进程内 key 池继续轮换，无法在数据库中记录哪个 key 已不可用，也无法在线新增 key。
+候选池二次监控原先需要持续调用 Birdeye 最新 K 线；当前默认 K 线源已切到 GMGN，切回 Birdeye 时仍使用本 key 池。如果配置文件里的 key 出现 `Compute units usage limit exceeded`，原先只能依赖进程内 key 池继续轮换，无法在数据库中记录哪个 key 已不可用，也无法在线新增 key。
 
 ## 业务规则
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"solana-meme-backtest/backend/internal/apptime"
@@ -28,6 +29,8 @@ type Service struct {
 	klines              datasource.KlineDataSource
 	dbBars              datasource.KlineDataSource
 	birdeye             datasource.KlineDataSource
+	namedKlineSources   map[string]datasource.KlineDataSource
+	defaultKlineSource  string
 	tradePoints         datasource.TradePointDataSource
 	bitqueryTradePoints datasource.TradePointDataSource
 	dbTradePoints       datasource.TradePointDataSource
@@ -35,6 +38,8 @@ type Service struct {
 	repo                Repository
 	strategyMethods     map[string]StrategyMethod
 }
+
+type ServiceOption func(*Service)
 
 type AnalyzeRequest struct {
 	SessionID    string
@@ -95,7 +100,7 @@ type SavedAnalysis struct {
 	Metrics model.Metrics             `json:"metrics"`
 }
 
-func NewService(klines datasource.KlineDataSource, dbBars datasource.KlineDataSource, birdeye datasource.KlineDataSource, tradePoints datasource.TradePointDataSource, bitqueryTradePoints datasource.TradePointDataSource, dbTradePoints datasource.TradePointDataSource, tokens datasource.TokenDataSource, repo Repository) *Service {
+func NewService(klines datasource.KlineDataSource, dbBars datasource.KlineDataSource, birdeye datasource.KlineDataSource, tradePoints datasource.TradePointDataSource, bitqueryTradePoints datasource.TradePointDataSource, dbTradePoints datasource.TradePointDataSource, tokens datasource.TokenDataSource, repo Repository, options ...ServiceOption) *Service {
 	methods := []StrategyMethod{
 		newBreakoutBandFollowMethod(),
 	}
@@ -103,16 +108,37 @@ func NewService(klines datasource.KlineDataSource, dbBars datasource.KlineDataSo
 	for _, method := range methods {
 		methodMap[method.Metadata().Code] = method
 	}
-	return &Service{
+	svc := &Service{
 		klines:              klines,
 		dbBars:              dbBars,
 		birdeye:             birdeye,
+		namedKlineSources:   map[string]datasource.KlineDataSource{},
 		tradePoints:         tradePoints,
 		bitqueryTradePoints: bitqueryTradePoints,
 		dbTradePoints:       dbTradePoints,
 		tokens:              tokens,
 		repo:                repo,
 		strategyMethods:     methodMap,
+	}
+	for _, option := range options {
+		option(svc)
+	}
+	return svc
+}
+
+func WithKlineSource(name string, source datasource.KlineDataSource) ServiceOption {
+	return func(s *Service) {
+		name = normalizeSourceName(name)
+		if name == "" || source == nil {
+			return
+		}
+		s.namedKlineSources[name] = source
+	}
+}
+
+func WithDefaultKlineSource(name string) ServiceOption {
+	return func(s *Service) {
+		s.defaultKlineSource = normalizeSourceName(name)
 	}
 }
 
@@ -127,17 +153,35 @@ func (s *Service) GetKlines(ctx context.Context, source string, req datasource.K
 	if !req.StartTime.IsZero() && !req.EndTime.IsZero() && !req.StartTime.Before(req.EndTime) {
 		return nil, ErrInvalidTimeRange
 	}
-	return s.source(source).GetKlines(ctx, req)
+	klineSource, err := s.source(source)
+	if err != nil {
+		return nil, err
+	}
+	return klineSource.GetKlines(ctx, req)
 }
 
-func (s *Service) source(name string) datasource.KlineDataSource {
+func (s *Service) source(name string) (datasource.KlineDataSource, error) {
+	name = normalizeSourceName(name)
+	if name == "" {
+		name = s.defaultKlineSource
+	}
+	if source, ok := s.namedKlineSources[name]; ok && source != nil {
+		return source, nil
+	}
 	if name == "birdeye" {
-		return s.birdeye
+		return s.birdeye, nil
 	}
 	if name == "db" {
-		return s.dbBars
+		return s.dbBars, nil
 	}
-	return s.klines
+	if name == "" {
+		return s.klines, nil
+	}
+	return nil, fmt.Errorf("%w: %s", datasource.ErrUnsupportedKlineSource, name)
+}
+
+func normalizeSourceName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func (s *Service) GetMarkedKlines(ctx context.Context, source string, tradeSource string, klineReq datasource.KlineQuery, tradeReq datasource.TradePointQuery) (MarkedKlinesResult, error) {
@@ -221,7 +265,11 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (AnalyzeResul
 	if !req.StartTime.Before(req.EndTime) {
 		return AnalyzeResult{}, ErrInvalidTimeRange
 	}
-	klines, err := s.source(req.DataSource).GetKlines(ctx, datasource.KlineQuery{TokenAddress: req.TokenAddress, Interval: req.Interval, StartTime: req.StartTime, EndTime: req.EndTime})
+	klineSource, err := s.source(req.DataSource)
+	if err != nil {
+		return AnalyzeResult{}, err
+	}
+	klines, err := klineSource.GetKlines(ctx, datasource.KlineQuery{TokenAddress: req.TokenAddress, Interval: req.Interval, StartTime: req.StartTime, EndTime: req.EndTime})
 	if err != nil {
 		return AnalyzeResult{}, err
 	}

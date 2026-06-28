@@ -7,6 +7,7 @@ database:
   auto_migrate: true
 
 datasource:
+  kline_source: "gmgn" # gmgn / birdeye / sql / db；默认所有 K 线入口走 GMGN
   kline_query: ""
   token_search_query: ""
 
@@ -16,6 +17,12 @@ birdeye:
   api_keys: [] # 对应环境变量 BACKTEST_BIRDEYE_API_KEYS，可传逗号分隔；429/额度耗尽时自动轮换
   chain: "solana"
   trade_max_pages: 1
+
+gmgn:
+  base_url: "https://openapi.gmgn.ai"
+  api_key: "" # 对应环境变量 BACKTEST_GMGN_API_KEY；GMGN K 线与价格源必填
+  chain: "sol"
+  max_qps: 8 # 实测 token_kline 约 10 QPS，线上默认留 20% 余量
 
 bitquery:
   base_url: "https://streaming.bitquery.io/graphql"
@@ -34,7 +41,7 @@ signal:
   candidate_channel: "solana_scalper:candidate_pool"
   poll_interval_seconds: 2
   interval: "1m"
-  min_market_cap: 15000
+  min_market_cap: 0 # GMGN 返回价格不是市值，默认不按市值阈值移除；切到 Birdeye 市值源时可设 15000
   lookback_bars: 120
   redis_key_prefix: "solana_meme_v2:signal_monitor"
 
@@ -50,6 +57,7 @@ trade:
   slippage_bps: 500
   priority_fee: 0
   solana_rpc_url: "https://api.mainnet-beta.solana.com"
+  price_source: "gmgn" # gmgn / dexscreener；持仓估值默认使用 GMGN 最新 1m K 线 close
   dexscreener:
     base_url: "https://api.dexscreener.com"
   jupiter:

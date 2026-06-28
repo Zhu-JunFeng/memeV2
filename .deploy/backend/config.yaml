@@ -3,10 +3,11 @@ server:
   mode: release
 
 database:
-  dsn: "sqlite:/data/solana-scalper-v2/data/business.sqlite"
+  dsn: "" # 生产通过 /data/solana-scalper-v2/backend/.env 中的 BACKTEST_DATABASE_DSN 注入
   auto_migrate: true
 
 datasource:
+  kline_source: "gmgn"
   kline_query: ""
   token_search_query: ""
 
@@ -16,6 +17,12 @@ birdeye:
   chain: "solana"
   cache_db_path: "/data/solana-scalper-v2/data/birdeye-cache.sqlite"
   trade_max_pages: 1
+
+gmgn:
+  base_url: "https://openapi.gmgn.ai"
+  api_key: ""
+  chain: "sol"
+  max_qps: 8
 
 bitquery:
   base_url: "https://streaming.bitquery.io/graphql"

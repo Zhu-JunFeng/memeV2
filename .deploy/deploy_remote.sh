@@ -12,6 +12,7 @@ ExecStart=/data/solana-scalper-v2/backend/solana-meme-backtest
 Restart=always
 RestartSec=5
 Environment=GIN_MODE=release
+EnvironmentFile=-/data/solana-scalper-v2/backend/.env
 
 [Install]
 WantedBy=multi-user.target

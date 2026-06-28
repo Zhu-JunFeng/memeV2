@@ -47,13 +47,27 @@
 - `interval`：K 线粒度，例如 `1m`、`5m`、`15m`、`1h`。
 - `startTime`：北京时间 RFC3339 开始时间。
 - `endTime`：北京时间 RFC3339 结束时间。
-- `source`：可选，`sql` 或 `birdeye`；不传时使用 SQL 数据源。
+- `source`：可选，`gmgn` / `birdeye` / `sql` / `db`；不传时使用 `datasource.kline_source` 配置，当前默认 `gmgn`。
 
 返回：
 
-- `items`：K 线数组，字段包含 `openTime`、`closeTime`、`marketCapOpen`、`marketCapHigh`、`marketCapLow`、`marketCapClose`、`volume`。
+- `items`：K 线数组，字段包含 `openTime`、`closeTime`、`open`、`high`、`low`、`close`、`marketCapOpen`、`marketCapHigh`、`marketCapLow`、`marketCapClose`、`volume`。GMGN 返回的是 USD 价格，后端会把同一组价格同时写入 `open/high/low/close` 与算法沿用的 `marketCap*` 字段。
+
+配置：
+
+- `BACKTEST_DATASOURCE_KLINE_SOURCE` / `datasource.kline_source`：默认 K 线数据源，支持 `gmgn` / `birdeye` / `sql` / `db`，当前默认 `gmgn`。
+- `BACKTEST_GMGN_API_KEY` / `gmgn.api_key`：GMGN API Key；选择 GMGN 时必填。
+- `BACKTEST_GMGN_BASE_URL` / `gmgn.base_url`：默认 `https://openapi.gmgn.ai`。
+- `BACKTEST_GMGN_CHAIN` / `gmgn.chain`：默认 `sol`。
+- `BACKTEST_GMGN_MAX_QPS` / `gmgn.max_qps`：进程内 GMGN 请求限速，默认 `8`，低于实测约 `10 QPS` 的硬上限。
 
 说明：SQL 数据源依赖 `BACKTEST_DATASOURCE_KLINE_QUERY` 或配置文件 `datasource.kline_query`。SQL 参数顺序固定为 `tokenAddress`、`interval`、`startTime`、`endTime`。
+
+### GET /api/market/gmgn/klines
+
+GMGN K 线专用入口。参数同 `/api/market/klines`，但固定使用 GMGN 数据源。
+
+说明：GMGN `token_kline` 接口的 `from/to` 使用毫秒时间戳，后端会自动转换；`volume` 为 USD 成交额，`amount` 不进入当前统一 K 线模型。活跃项目的当前 1m K 线会在同一个 `openTime` 下持续更新，最新一根 `close` 可作为近实时价格。
 
 ### GET /api/market/birdeye/klines
 
@@ -70,9 +84,17 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 说明：未配置 API Key 时直接返回中文错误，不改用 SQL 或其他数据源。Birdeye K 线首次拉取成功后会写入 PostgreSQL cache；同一个 token + interval 只要本地已经缓存过，后续都直接优先读取该项目缓存，不再为了追最新 K 线重复请求 Birdeye。
 
 
+### GET /api/market/support-resistance
+
+根据 CA 获取指定数据源的 K 线，并基于这批 K 线计算支撑位、压力位。`source` 不传时使用 `datasource.kline_source`，当前默认 GMGN。
+
+### GET /api/market/gmgn/support-resistance
+
+GMGN K 线专用支撑/压力位入口。参数同 `/api/market/support-resistance`，但固定使用 GMGN。
+
 ### GET /api/market/birdeye/support-resistance
 
-根据 CA 获取 Birdeye 市值 K 线，并基于这批市值 K 线计算支撑位、压力位。
+Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resistance`，但固定使用 Birdeye。
 
 参数：
 
@@ -95,18 +117,18 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 
 返回：
 
-- `klines`：Birdeye 市值 K 线数组，字段包含 `marketCapOpen`、`marketCapHigh`、`marketCapLow`、`marketCapClose`。
+- `klines`：K 线数组，字段包含 `open`、`high`、`low`、`close`、`marketCapOpen`、`marketCapHigh`、`marketCapLow`、`marketCapClose`。GMGN 源下这些数值为 USD 价格；Birdeye 源下仍为原来的市值口径。
 - `windowSize`：实际生效的窗口 K 线数量。
 - `windowStep`：窗口滑动步长，当前固定为 `1`。
 - `windows`：滑动窗口结果数组。
 - `windows[].startTime/endTime`：该窗口覆盖的 K 线时间范围。
 - `windows[].klineCount`：该窗口包含的 K 线数量。
-- `windows[].levels`：该窗口下的支撑/压力位数组，字段包含 `marketCap`、`lowerMarketCap`、`upperMarketCap`。
+- `windows[].levels`：该窗口下的支撑/压力位数组，字段沿用 `marketCap`、`lowerMarketCap`、`upperMarketCap` 命名；GMGN 源下实际含义为 USD 价格带。
 - `windows[].levels[].calculation`：该市值位的计算依据，包含 pivot 数量、支撑/压力票数、价格容忍度、当前市值、类型判定原因、状态判定原因、强度分拆解、形成市值位的局部高低点和触碰样本。
 - `windows[].levels[].breakout`：压力位突破回测结果；会返回试压点 `failedTouches`、突破点 `breakoutPoint`、买入点 `buyPoint`、止损止盈价格、退出点、收益率，以及最终是先止损、先止盈还是超时平仓。当前场景还要求：试压组与突破点之间，最多只允许 `1` 根 K 线的最高价刺穿压力带上沿，超过则不算有效场景。
 - 在试压组内部，从第一根试压阳线到最后一根试压阳线之间，若收盘价高于压力带上沿的 K 线超过 `3` 根，该场景直接过滤，不进入回测。
 
-说明：未配置 Birdeye API Key 时直接返回中文错误，不改用 SQL、DB 或其他数据源。接口内部会先查 PostgreSQL cache；同一个 token + interval 只要已经缓存过，后续都直接复用该项目缓存，不再请求 Birdeye 最新 K 线。只有首次没有任何缓存时才会调用 Birdeye，并把成功返回的 K 线写入 PG。
+说明：选择哪个 `source` 就只调用对应数据源，不自动改用其他数据源。GMGN 未配置 API Key 时直接返回中文错误。Birdeye 专用入口仍保留原项目级 PostgreSQL cache 语义。
 
 ### GET /api/strategy-backtests/methods
 
@@ -121,12 +143,13 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 
 ### POST /api/strategy-backtests/run
 
-按指定 CA、区间和回测方法执行策略回测。当前固定使用 Birdeye K 线，并优先复用 PostgreSQL cache 中已覆盖的 K 线。
+按指定 CA、区间和回测方法执行策略回测。默认使用 `datasource.kline_source`，当前为 GMGN；请求体可传 `dataSource` 切换到 `birdeye` / `sql` / `db`。
 
 请求体：
 
 ```json
 {
+  "dataSource": "gmgn",
   "methodCode": "breakout_band_follow",
   "methodConfig": {
     "takeProfitRateStart": 0.08,
@@ -186,11 +209,19 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `feeRate` 表示单笔买入加卖出的总手续费比例，默认 `0.015`，统计时会从每笔收益里直接扣减。
 - 如果样本结束前未触发止盈或止损，则按最后一根 K 线收盘价卖出。
 
-说明：该接口内部按项目级 cache 复用 Birdeye K 线；某个 token + interval 首次缓存后，后续回测直接走 PostgreSQL，不再请求 Birdeye 最新 K 线。
+说明：该接口不再写死 Birdeye。`dataSource=gmgn` 时直接按请求区间调用 GMGN；`dataSource=birdeye` 时沿用 Birdeye 项目级 cache。
+
+### POST /api/market/realtime-breakout-signals
+
+基于“历史 K 线 + 当前实时 K 线”动态判断是否触发压力带突破信号。默认使用 `datasource.kline_source`，当前为 GMGN；请求体可传 `dataSource` 切换。
+
+### POST /api/market/gmgn/realtime-breakout-signals
+
+GMGN K 线专用实时突破信号入口。
 
 ### POST /api/market/birdeye/realtime-breakout-signals
 
-基于“历史 K 线 + 当前实时 K 线”动态判断是否触发压力带突破信号。
+Birdeye K 线专用实时突破信号入口。
 
 这个接口的目标不是重新做整段回测，而是：
 
@@ -361,15 +392,15 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 交易模块当前与回测、信号模块解耦：
 
 - `signal` 负责识别实时突破结构并向 Redis 发布统一交易信号
-- `trade` 负责消费信号、记录订单/成交/持仓，并通过 DexScreener 刷新持仓估值
+- `trade` 负责消费信号、记录订单/成交/持仓，并通过 `trade.price_source` 刷新持仓估值；当前默认 GMGN，可切回 DexScreener
 - 如配置 `redis.consumer_channel`，交易消费订阅该通道；未配置时沿用 `redis.channel`
 - 交易消费只处理标准 `TradeSignalMessage`；老版候选池 `candidate_score_passed` 由信号模块订阅后进入二次监控，不再直接买入
-- 候选池二次监控每 2 秒调用 Birdeye 查询 active CA 的 1m 最新 K 线，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
-- 未买入候选最新市值低于 `15000` 时从监控池移除；已买入候选继续监控卖点
+- 候选池二次监控每 2 秒调用 `datasource.kline_source` 查询 active CA 的 1m 最新 K 线；当前默认 GMGN，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
+- 未买入候选在配置了正数 `signal.min_market_cap` 且最新市值低于阈值时从监控池移除；GMGN 价格源默认 `0` 不按市值阈值移除，已买入候选继续监控卖点
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式仍调用 Jupiter `order` / 报价准备链路，但不会签名和执行；系统会基于 Jupiter 响应生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单
-- DexScreener 与 Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`。
+- GMGN、Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`；DexScreener 仅在 `trade.price_source=dexscreener` 时使用。
 
 ### GET /api/signal/candidate-monitor
 
@@ -383,8 +414,8 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `items[].candidateAt`：候选项目进入 V2 监控池的时间。
 - `items[].strategyName` / `items[].scanNo`：上游评分策略名和扫描批次。
 - `items[].upstreamScore` / `items[].upstreamMarketCap`：上游评分合格信号内携带的评分和市值。
-- `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功拉到的 Birdeye 最新 K 线收盘市值和对应 K 线时间。
-- `items[].birdeyeKlineFetchedAt`：V2 最近一次成功调用 Birdeye 并拿到 K 线的时间，前端按相对时间展示为 `2s前`、`4s前` 等。
+- `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功拉到的当前数据源最新 K 线收盘值和对应 K 线时间；GMGN 源下实际为 USD 价格。
+- `items[].birdeyeKlineFetchedAt`：兼容字段名，表示 V2 最近一次成功调用当前 K 线数据源并拿到 K 线的时间，前端按相对时间展示为 `2s前`、`4s前` 等。
 - `items[].buySignalId`：如果已触发 V2 买入信号，这里返回对应信号 ID。
 - `items[].entryTime` / `items[].entryMarketCap`：如果已触发买入信号，这里返回买点时间和买点市值。
 - `items[].levelMarketCap` / `items[].levelLowerMarketCap` / `items[].levelUpperMarketCap`：如果已触发买入信号，这里返回当时突破的压力带。

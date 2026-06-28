@@ -137,14 +137,28 @@ func (s *DBTradePointDataSource) GetTradePoints(ctx context.Context, req TradePo
 
 func closeTime(openTime time.Time, interval string) time.Time {
 	switch interval {
+	case "30s":
+		return openTime.Add(30 * time.Second)
 	case "1m":
 		return openTime.Add(time.Minute)
+	case "3m":
+		return openTime.Add(3 * time.Minute)
 	case "5m":
 		return openTime.Add(5 * time.Minute)
 	case "15m":
 		return openTime.Add(15 * time.Minute)
+	case "30m":
+		return openTime.Add(30 * time.Minute)
 	case "1h":
 		return openTime.Add(time.Hour)
+	case "2h":
+		return openTime.Add(2 * time.Hour)
+	case "4h":
+		return openTime.Add(4 * time.Hour)
+	case "1d":
+		return openTime.AddDate(0, 0, 1)
+	case "1w":
+		return openTime.AddDate(0, 0, 7)
 	default:
 		return openTime
 	}

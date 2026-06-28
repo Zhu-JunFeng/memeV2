@@ -1,6 +1,6 @@
 # Solana Meme Backtest V2
 
-基于 Birdeye 市值 K 线的 Solana meme 币支撑/压力位分析、回测与交易信号系统。
+基于可切换 K 线数据源的 Solana meme 币支撑/压力位分析、回测与交易信号系统；当前默认使用 GMGN，保留 Birdeye / SQL / DB 切换能力。
 
 当前版本重点覆盖三块能力：
 
@@ -12,7 +12,7 @@
 
 - 后端：Go、Gin、Viper、Zerolog、PostgreSQL
 - 前端：Vue 3、Vite、Pinia、Vue Router、Element Plus、Vitest
-- 数据源：Birdeye、DexScreener、Redis
+- 数据源：GMGN、Birdeye、DexScreener、Redis
 
 ## 目录结构
 
@@ -24,7 +24,7 @@
 │   └── internal/
 │       ├── api/          # HTTP API
 │       ├── backtest/     # 支撑/压力位与回测核心
-│       ├── datasource/   # Birdeye / SQL / DexScreener 数据源
+│       ├── datasource/   # GMGN / Birdeye / SQL / DexScreener 数据源
 │       ├── db/           # PostgreSQL 初始化与表迁移
 │       ├── repository/   # 回测/交易持久化
 │       ├── signal/       # 结构识别 + Redis 信号发布
@@ -37,11 +37,12 @@
 
 ## 核心能力
 
-### 1. Birdeye K 线缓存
+### 1. K 线数据源
 
-- 同一个 `tokenAddress + interval` 首次调用 Birdeye 成功后写入 PostgreSQL cache
-- 后续优先复用项目缓存，不重复请求最新 K 线
-- 支持 Birdeye API key 池，遇到 `429` 或额度耗尽自动轮换
+- 默认 K 线源为 GMGN：`datasource.kline_source=gmgn`，覆盖回测、实时信号、候选池二次监控等 K 线读取入口
+- 前端和接口可通过 `source` / `dataSource` 切换 `gmgn`、`birdeye`、`sql`、`db`
+- GMGN 返回 USD 价格 K 线；为复用现有算法，后端同时填充 `open/high/low/close` 与算法沿用的 `marketCap*` 字段
+- Birdeye 原数据源继续保留，首次调用成功后仍写入 PostgreSQL cache，并支持 API key 池轮换
 
 ### 2. 支撑带 / 压力带计算
 
@@ -73,14 +74,14 @@
 
 ### 5. 实时信号与交易模块
 
-- `POST /api/market/birdeye/realtime-breakout-signals` 会同步返回命中的突破信号
+- `POST /api/market/realtime-breakout-signals` 会按当前 K 线数据源同步返回命中的突破信号；GMGN/Birdeye 专用入口也保留
 - 若配置了 Redis，信号模块会把命中的结构突破转换成标准化交易消息后发布到 channel
-- `signal` 模块可订阅上游候选池评分合格事件，进入 Redis 监控池后每 2 秒查询 Birdeye 最新 1m K 线，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
+- `signal` 模块可订阅上游候选池评分合格事件，进入 Redis 监控池后每 2 秒查询当前 K 线源的最新 1m K 线，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
 - `trade` 模块负责：
   - 消费标准 Redis 交易信号；如配置 `redis.consumer_channel`，交易消费使用该独立通道
   - 保证同一账户同一 token 同时最多一笔 open position
   - 写入 `trade_signals / trade_orders / trade_fills / trade_positions / trade_order_events`
-  - 通过 DexScreener 刷新 open position 的最新估值
+  - 通过 `trade.price_source` 刷新 open position 的最新估值，当前默认 GMGN，可切换 DexScreener
 
 当前 Redis 信号消息结构：
 
@@ -104,7 +105,7 @@
 - 当前交易模块支持全局 `模拟盘 / 实盘` 两种模式，模式值落库到 `system_runtime_settings`，服务重启后继续生效。
 - 模拟盘仍会调用 Jupiter `order` / 报价准备链路，但不会签名和执行链上交易；系统会基于 Jupiter 下单响应模拟 fill，并把相关订单、成交、持仓都打上 `paper` 标记。
 - 实盘保持原链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按实时 SOL/USD 价格把 `trade.buy_amount_usd` 折算成 SOL 数量后下单。
-- DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
+- GMGN、DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
 
 ## 本地开发
 
@@ -126,7 +127,8 @@ go run ./cmd/server
 至少配置这些项：
 
 - `database.dsn`
-- `birdeye.api_key` 或 `birdeye.api_keys`
+- `gmgn.api_key`（默认 GMGN K 线源必填）
+- `birdeye.api_key` 或 `birdeye.api_keys`（切换到 Birdeye 或拉交易点时使用）
 - 若启用实时交易：`redis.*`、`trade.*`
 
 健康检查：
@@ -177,21 +179,24 @@ npm run build
 
 - `database.dsn`：PostgreSQL 连接串
 - `database.auto_migrate`：启动时自动建表
+- `datasource.kline_source`：默认 K 线源，支持 `gmgn` / `birdeye` / `sql` / `db`，当前默认 `gmgn`
+- `gmgn.api_key` / `gmgn.max_qps`：GMGN key 与进程内限速；实测 `token_kline` 约 10 QPS，默认按 8 QPS 留余量
 - `birdeye.api_key` / `birdeye.api_keys`：Birdeye key 与 key 池
 - `redis.enabled` / `redis.addr` / `redis.channel`：实时信号发布通道，未配置消费通道时也作为交易消费通道
 - `redis.consumer_channel`：交易模块独立订阅通道；为空时消费 `redis.channel`
 - `signal.candidate_monitor_enabled` / `signal.candidate_channel`：是否启用候选池后二次压力突破监控及上游候选池通道
-- `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值
+- `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值；GMGN 价格源默认设为 `0` 表示不按市值阈值移除，切回 Birdeye 市值源时可设 `15000`
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
 - `trade.buy_amount_usd`：固定买入金额
 - `trade.wallet_private_key`：Solana 钱包私钥（base58）
 - `trade.solana_rpc_url`：用于查询 token decimals 的 Solana RPC
-- `trade.dexscreener.base_url`：持仓估值接口
+- `trade.price_source`：持仓估值和 SOL/USD 折算价格源，支持 `gmgn` / `dexscreener`，当前默认 `gmgn`
+- `trade.dexscreener.base_url`：DexScreener 持仓估值接口，仅在 `trade.price_source=dexscreener` 时使用
 - `trade.jupiter.base_url`：Jupiter Ultra API 入口
 - `trade.jupiter.api_key`：Jupiter API Key
-- DexScreener 与 Jupiter HTTP 客户端固定通过服务器本机 clash 代理 `http://127.0.0.1:7890` 出网
+- GMGN、Jupiter HTTP 客户端固定通过服务器本机 clash 代理 `http://127.0.0.1:7890` 出网；DexScreener 仅在启用对应价格源时使用固定代理
 - 交易模式不通过配置文件固定，而是通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
 
 ## 部署
@@ -214,9 +219,13 @@ npm run build
 
 常用接口：
 
-- `GET /api/market/birdeye/klines`
-- `GET /api/market/birdeye/support-resistance`
-- `POST /api/market/birdeye/realtime-breakout-signals`
+- `GET /api/market/klines`
+- `GET /api/market/gmgn/klines`
+- `GET /api/market/support-resistance`
+- `GET /api/market/gmgn/support-resistance`
+- `POST /api/market/realtime-breakout-signals`
+- `POST /api/market/gmgn/realtime-breakout-signals`
+- `GET /api/market/birdeye/klines` / `GET /api/market/birdeye/support-resistance`（保留切换）
 - `POST /api/strategy-backtests/run`
 - `GET /api/trade/accounts`
 - `GET /api/trade/runtime`

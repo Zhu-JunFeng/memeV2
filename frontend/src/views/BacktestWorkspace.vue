@@ -79,6 +79,15 @@
                 <el-option label="1h" value="1h" />
               </el-select>
             </label>
+            <label class="query-field">
+              <span class="query-label">数据源</span>
+              <el-select v-model="form.dataSource">
+                <el-option label="GMGN" value="gmgn" />
+                <el-option label="Birdeye" value="birdeye" />
+                <el-option label="SQL" value="sql" />
+                <el-option label="DB" value="db" />
+              </el-select>
+            </label>
           </div>
         </section>
 
@@ -306,7 +315,7 @@
 
     <section class="status-strip">
       <div class="status-item">
-        <span>Source</span><strong>Birdeye K 线</strong>
+        <span>Source</span><strong>{{ dataSourceLabel }} K 线</strong>
       </div>
       <div class="status-item">
         <span>Interval</span><strong>{{ form.interval }}</strong>
@@ -431,7 +440,7 @@
                 formatOptionalMarketCap(row.upstreamMarketCap)
               }}</template>
             </el-table-column>
-            <el-table-column label="当前市值" width="112">
+            <el-table-column label="当前价位" width="112">
               <template #default="{ row }">
                 {{ formatOptionalMarketCap(row.currentMarketCap) }}
               </template>
@@ -491,7 +500,7 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="触发市值" width="120">
+            <el-table-column label="触发价位" width="120">
               <template #default="{ row }">{{
                 formatMarketCap(row.triggerMarketCap)
               }}</template>
@@ -856,7 +865,7 @@
           <div class="strategy-result-exit-reason">{{ trade.exitReason }}</div>
           <div class="strategy-result-meta">
             <span
-              >买卖点按突破市值回测，净收益已扣除总手续费
+              >买卖点按突破价位回测，净收益已扣除总手续费
               {{ formatPercent(trade.feeRate) }}</span
             >
           </div>
@@ -870,7 +879,7 @@
           v-if="levelOptions.length"
           v-model="selectedLevelKey"
           class="level-picker"
-          placeholder="选择要解释的市值位"
+          placeholder="选择要解释的价位"
         >
           <el-option
             v-for="option in levelOptions"
@@ -897,7 +906,7 @@
         <div>
           <div class="panel-title">每个支撑/压力位的计算依据</div>
           <div class="panel-subtitle">
-            市值带来自滑动窗口内的局部高低点聚类；选中后可在 K
+            价格带来自滑动窗口内的局部高低点聚类；选中后可在 K
             线上看到参与计算的点位。
           </div>
         </div>
@@ -1088,6 +1097,7 @@ const PRESET_TOKEN_ADDRESSES = [
 const form = reactive({
   tokenAddress: "cY435H7F4wcZ4NgWQFM3wUjBDffdb3qdsQST2EVpump",
   interval: "1m",
+  dataSource: "gmgn",
   windowSize: 120,
   levelWindowSize: 120,
   levelWindowStep: 20,
@@ -1184,6 +1194,10 @@ const tradeFilterOptions = [
   { label: "模拟盘", value: "paper" },
   { label: "实盘", value: "live" },
 ];
+const dataSourceLabel = computed(() => {
+  const labels = { gmgn: "GMGN", birdeye: "Birdeye", sql: "SQL", db: "DB" };
+  return labels[form.dataSource] || form.dataSource || "GMGN";
+});
 const selectedStrategyMethod = computed(
   () =>
     strategyMethodOptions.value.find(
@@ -1268,6 +1282,7 @@ async function loadRangeLevels(range, sourceLabel) {
     return;
   }
   const result = await store.loadKlineLevels({
+    source: form.dataSource,
     tokenAddress: form.tokenAddress,
     interval: form.interval,
     startTime: formatBeijingRFC3339(range.start),
@@ -1290,7 +1305,7 @@ async function loadRangeLevels(range, sourceLabel) {
   focusedTradeKey.value = "";
   activeStrategyGroupKey.value = "";
   ElMessage.success(
-    `已加载 ${result.klines.length} 根 Birdeye K线，筛出 ${dedupeScenarioWindows(result.windows || []).length} 个压力突破场景窗口`,
+    `已加载 ${result.klines.length} 根 ${dataSourceLabel.value} K线，筛出 ${dedupeScenarioWindows(result.windows || []).length} 个压力突破场景窗口`,
   );
 }
 
@@ -1301,6 +1316,7 @@ async function runStrategyForLoadedRange() {
   }
   const range = loadedRange.value || recentFiveDayRange();
   const result = await store.runStrategyBacktest({
+    dataSource: form.dataSource,
     methodCode: strategyForm.methodCode,
     methodConfig: {
       takeProfitRateStart: strategyForm.takeProfitRateStartPercent / 100,

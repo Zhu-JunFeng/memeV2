@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import {
   closeTradePosition,
   createBacktest,
-  fetchBirdeyeSupportResistance,
+  fetchSupportResistance,
   fetchTradeRuntime,
   listBacktests,
   listCandidateMonitor,
@@ -40,7 +40,7 @@ export const useBacktestStore = defineStore("backtest", {
       this.loading = true;
       this.error = "";
       try {
-        const data = await fetchBirdeyeSupportResistance(params);
+        const data = await fetchSupportResistance(params);
         this.result = {
           klines: data.klines || [],
           windows: data.windows || [],

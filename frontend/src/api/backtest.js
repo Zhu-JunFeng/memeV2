@@ -8,8 +8,8 @@ export function fetchKlines(params) {
   return http.get("/market/klines", { params });
 }
 
-export function fetchBirdeyeSupportResistance(params) {
-  return http.get("/market/birdeye/support-resistance", { params });
+export function fetchSupportResistance(params) {
+  return http.get("/market/support-resistance", { params });
 }
 
 export function listStrategyBacktestMethods() {

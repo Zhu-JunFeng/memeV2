@@ -140,8 +140,8 @@ func normalizeCandidateMonitorConfig(cfg CandidateMonitorConfig) CandidateMonito
 	if strings.TrimSpace(cfg.Interval) == "" {
 		cfg.Interval = "1m"
 	}
-	if cfg.MinMarketCap <= 0 {
-		cfg.MinMarketCap = 15000
+	if cfg.MinMarketCap < 0 {
+		cfg.MinMarketCap = 0
 	}
 	if cfg.LookbackBars <= 0 {
 		cfg.LookbackBars = 120
@@ -351,7 +351,7 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 	state.CurrentPrice = latest.MarketCapClose
 	state.CurrentAt = latest.OpenTime
 	state.KlineFetchedAt = time.Now().UTC()
-	if state.Status == candidateStatusWatching && latest.MarketCapClose < m.cfg.MinMarketCap {
+	if state.Status == candidateStatusWatching && m.cfg.MinMarketCap > 0 && latest.MarketCapClose < m.cfg.MinMarketCap {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 			return err
 		}
