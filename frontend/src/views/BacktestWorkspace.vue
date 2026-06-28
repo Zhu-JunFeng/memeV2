@@ -559,9 +559,17 @@
             </el-table-column>
             <el-table-column prop="status" label="状态" width="90" />
             <el-table-column label="Tx" min-width="160">
-              <template #default="{ row }">{{
-                shortAddress(row.submitTxHash || "-")
-              }}</template>
+              <template #default="{ row }">
+                <div v-if="row.submitTxHash" class="tx-cell">
+                  <span :title="row.submitTxHash">{{
+                    shortAddress(row.submitTxHash)
+                  }}</span>
+                  <el-button link type="primary" @click.stop="copyOrderTx(row)"
+                    >复制</el-button
+                  >
+                </div>
+                <span v-else>-</span>
+              </template>
             </el-table-column>
             <el-table-column label="时间" width="168">
               <template #default="{ row }">{{
@@ -1033,6 +1041,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { useBacktestStore } from "../stores/backtest.js";
 import KlineTradeChart from "../components/KlineTradeChart.vue";
 import TokenAddressLink from "../components/TokenAddressLink.vue";
+import { copyText } from "../utils/clipboard.js";
 import { formatBeijingDateTime, formatBeijingRFC3339 } from "../utils/time.js";
 
 const store = useBacktestStore();
@@ -1401,6 +1410,17 @@ async function handleClosePosition(row) {
     limit: 50,
   });
   ElMessage.success("平仓指令已提交");
+}
+
+async function copyOrderTx(row) {
+  const tx = String(row?.submitTxHash || "").trim();
+  if (!tx) return;
+  try {
+    await copyText(tx);
+    ElMessage.success("Tx 已复制");
+  } catch (error) {
+    ElMessage.error("复制失败");
+  }
 }
 
 function handleChartRangeSelected(range) {
@@ -1815,6 +1835,16 @@ onUnmounted(() => {
 
 .trade-table :deep(.el-table__cell) {
   padding: 8px 0;
+}
+
+.tx-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tx-cell :deep(.el-button) {
+  margin-left: 0;
 }
 
 .trade-cell-stack {
