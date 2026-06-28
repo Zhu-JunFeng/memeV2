@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,12 +26,17 @@ type Handler struct {
 	signalService    *signal.Service
 	tradeService     *trade.Service
 	candidateMonitor *signal.CandidateMonitor
+	birdeyeKeyStore  birdeyeAPIKeyStore
 }
 
-func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor) *gin.Engine {
+type birdeyeAPIKeyStore interface {
+	AddKey(ctx context.Context, apiKey string) (model.BirdeyeAPIKey, error)
+}
+
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor}
+	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -37,6 +44,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/market/birdeye/klines", h.getBirdeyeKlines)
 	api.GET("/market/birdeye/support-resistance", h.getBirdeyeSupportResistance)
 	api.POST("/market/birdeye/realtime-breakout-signals", h.getBirdeyeRealtimeSignals)
+	api.POST("/birdeye/api-keys", h.createBirdeyeAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
 	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
@@ -135,6 +143,10 @@ type realtimeSignalRequest struct {
 	CurrentKline *model.Kline     `json:"currentKline,omitempty"`
 }
 
+type createBirdeyeAPIKeyRequest struct {
+	APIKey string `json:"apiKey" binding:"required"`
+}
+
 func (h *Handler) getBirdeyeKlines(c *gin.Context) {
 	c.Request.URL.RawQuery = c.Request.URL.Query().Encode()
 	query := c.Request.URL.Query()
@@ -187,6 +199,29 @@ func (h *Handler) getBirdeyeRealtimeSignals(c *gin.Context) {
 		return
 	}
 	response.OK(c, result)
+}
+
+func (h *Handler) createBirdeyeAPIKey(c *gin.Context) {
+	var req createBirdeyeAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "" {
+		response.Fail(c, http.StatusBadRequest, "Birdeye API Key 不能为空")
+		return
+	}
+	if h.birdeyeKeyStore == nil {
+		response.Fail(c, http.StatusBadRequest, "Birdeye API Key 池未启用")
+		return
+	}
+	item, err := h.birdeyeKeyStore.AddKey(c.Request.Context(), apiKey)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, item)
 }
 
 func (h *Handler) listCandidateMonitor(c *gin.Context) {
@@ -536,6 +571,8 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Fail(c, http.StatusBadRequest, "数据源查询 SQL 未配置")
 	case errors.Is(err, datasource.ErrBirdeyeNotConfigured):
 		response.Fail(c, http.StatusBadRequest, "Birdeye API Key 未配置")
+	case errors.Is(err, datasource.ErrBirdeyeNoAvailableKey):
+		response.Fail(c, http.StatusBadRequest, "Birdeye 可用 API Key 不存在")
 	case errors.Is(err, datasource.ErrBitqueryNotConfigured):
 		response.Fail(c, http.StatusBadRequest, "Bitquery API Token 未配置")
 	case errors.Is(err, backtest.ErrStrategyMethodNotFound):

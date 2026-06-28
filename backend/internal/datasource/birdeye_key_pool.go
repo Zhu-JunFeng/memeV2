@@ -1,6 +1,7 @@
 package datasource
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +9,12 @@ import (
 	"strings"
 	"sync/atomic"
 )
+
+type BirdeyeKeyPool interface {
+	ListAvailableBirdeyeKeys(ctx context.Context) ([]string, error)
+	MarkBirdeyeKeyUnavailable(ctx context.Context, apiKey string, reason string) error
+	MarkBirdeyeKeySuccessful(ctx context.Context, apiKey string) error
+}
 
 type birdeyeAPIError struct {
 	statusCode int
@@ -37,6 +44,14 @@ func (e *birdeyeAPIError) Retryable() bool {
 		strings.Contains(message, "rate limit") ||
 		strings.Contains(message, "too many requests") ||
 		strings.Contains(message, "quota")
+}
+
+func isBirdeyeComputeUnitLimit(err error) bool {
+	var apiErr *birdeyeAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(apiErr.message)), "compute units usage limit exceeded")
 }
 
 type birdeyeFailureBody struct {

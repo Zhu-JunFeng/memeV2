@@ -244,3 +244,42 @@ ALTER TABLE trade_positions ADD COLUMN IF NOT EXISTS trade_mode varchar(16);
 UPDATE trade_positions SET trade_mode = 'live' WHERE COALESCE(trade_mode, '') = '';
 ALTER TABLE trade_positions ALTER COLUMN trade_mode SET NOT NULL;
 ```
+
+## 005-Birdeye API Key 池与中文注释（PostgreSQL）
+
+```sql
+CREATE TABLE birdeye_api_keys (
+  id varchar(36) PRIMARY KEY,
+  api_key text NOT NULL UNIQUE,
+  key_mask varchar(32) NOT NULL,
+  status varchar(16) NOT NULL,
+  unavailable_reason text NOT NULL DEFAULT '',
+  unavailable_at timestamptz,
+  last_successful_used_at timestamptz,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+
+CREATE INDEX idx_birdeye_api_keys_status_created_at
+  ON birdeye_api_keys (status, created_at ASC);
+
+COMMENT ON TABLE birdeye_api_keys IS 'Birdeye API Key池表';
+COMMENT ON COLUMN birdeye_api_keys.id IS 'Key记录ID';
+COMMENT ON COLUMN birdeye_api_keys.api_key IS 'Birdeye API Key密文原值';
+COMMENT ON COLUMN birdeye_api_keys.key_mask IS '脱敏Key展示值';
+COMMENT ON COLUMN birdeye_api_keys.status IS 'Key状态';
+COMMENT ON COLUMN birdeye_api_keys.unavailable_reason IS '不可用原因';
+COMMENT ON COLUMN birdeye_api_keys.unavailable_at IS '标记不可用时间';
+COMMENT ON COLUMN birdeye_api_keys.last_successful_used_at IS '最近成功使用时间';
+COMMENT ON COLUMN birdeye_api_keys.created_at IS '创建时间';
+COMMENT ON COLUMN birdeye_api_keys.updated_at IS '更新时间';
+```
+
+本次迁移同时对既有业务表补充中文表注释和字段注释，覆盖范围：
+
+- `backtest_sessions`、`backtest_trade_points`、`backtest_trade_results`、`backtest_metric_snapshots`
+- `birdeye_kline_cache`、`birdeye_kline_cache_ranges`、`birdeye_api_keys`
+- `system_runtime_settings`
+- `trade_accounts`、`trade_signals`、`trade_orders`、`trade_fills`、`trade_positions`、`trade_order_events`
+
+注释语句随后端启动迁移自动执行，字段含义与当前代码中的业务读写语义保持一致。

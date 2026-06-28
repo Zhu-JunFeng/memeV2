@@ -18,6 +18,7 @@ type BirdeyeTradePointDataSource struct {
 	client   *http.Client
 	baseURL  string
 	apiKeys  []string
+	keyPool  BirdeyeKeyPool
 	chain    string
 	maxPages int
 	cursor   uint32
@@ -58,9 +59,14 @@ func NewBirdeyeTradePointDataSource(baseURL string, apiKeys []string, chain stri
 	}
 }
 
+func (s *BirdeyeTradePointDataSource) WithKeyPool(keyPool BirdeyeKeyPool) *BirdeyeTradePointDataSource {
+	s.keyPool = keyPool
+	return s
+}
+
 func (s *BirdeyeTradePointDataSource) GetTradePoints(ctx context.Context, req TradePointQuery) ([]model.TradePoint, error) {
-	if len(s.apiKeys) == 0 {
-		return nil, ErrBirdeyeNotConfigured
+	if _, err := s.availableKeys(ctx); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.WalletAddress) == "" {
 		return nil, errors.New("钱包地址不能为空")
@@ -114,19 +120,53 @@ func (s *BirdeyeTradePointDataSource) fetchTokenTxPage(ctx context.Context, toke
 	query.Set("limit", strconv.Itoa(limit))
 	endpoint.RawQuery = query.Encode()
 
+	keys, err := s.availableKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var lastErr error
-	for attempt := 0; attempt < len(s.apiKeys); attempt++ {
-		key := nextBirdeyeKey(s.apiKeys, &s.cursor)
+	for attempt := 0; attempt < len(keys); attempt++ {
+		key := nextBirdeyeKey(keys, &s.cursor)
 		body, err := s.doTokenTxRequest(ctx, endpoint.String(), key)
 		if err == nil {
+			s.markSuccessful(ctx, key)
 			return body.Data.Items, nil
 		}
 		lastErr = err
-		if !shouldRetryBirdeye(err) {
-			return nil, err
-		}
+		s.markUnavailableIfNeeded(ctx, key, err)
 	}
 	return nil, lastErr
+}
+
+func (s *BirdeyeTradePointDataSource) availableKeys(ctx context.Context) ([]string, error) {
+	if s.keyPool == nil {
+		if len(s.apiKeys) == 0 {
+			return nil, ErrBirdeyeNotConfigured
+		}
+		return s.apiKeys, nil
+	}
+	keys, err := s.keyPool.ListAvailableBirdeyeKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, ErrBirdeyeNoAvailableKey
+	}
+	return keys, nil
+}
+
+func (s *BirdeyeTradePointDataSource) markUnavailableIfNeeded(ctx context.Context, apiKey string, err error) {
+	if s.keyPool == nil || !isBirdeyeComputeUnitLimit(err) {
+		return
+	}
+	_ = s.keyPool.MarkBirdeyeKeyUnavailable(ctx, apiKey, err.Error())
+}
+
+func (s *BirdeyeTradePointDataSource) markSuccessful(ctx context.Context, apiKey string) {
+	if s.keyPool == nil {
+		return
+	}
+	_ = s.keyPool.MarkBirdeyeKeySuccessful(ctx, apiKey)
 }
 
 func (s *BirdeyeTradePointDataSource) doTokenTxRequest(ctx context.Context, endpoint string, apiKey string) (*birdeyeTokenTxResponse, error) {

@@ -245,6 +245,32 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `signals[].reason`：信号说明。
 - `signals[].breakout`：用于回放的试压点、整理区和突破点详情。
 
+### POST /api/birdeye/api-keys
+
+向数据库中的 Birdeye API Key 池新增一个 key。新增后的 key 默认状态为 `available`，后续所有直接调用 Birdeye 的路径会从数据库中轮流选择可用 key。
+
+请求体：
+
+```json
+{
+  "apiKey": "birdeye api key"
+}
+```
+
+返回：
+
+- `id`：Key 记录 ID。
+- `keyMask`：脱敏后的 key 展示值。
+- `status`：当前状态，新增后为 `available`。
+- `unavailableReason`：不可用原因，新增后为空。
+- `unavailableAt`：被标记不可用的时间，新增后为空。
+
+说明：
+
+- 接口不会返回 API Key 原文。
+- 如果新增的 key 已存在，会把该 key 重新标记为 `available`，清空不可用原因。
+- 当 Birdeye 返回 `Compute units usage limit exceeded` 时，V2 会把当前使用的 key 标记为 `unavailable`，并继续用池内其他可用 key 补偿请求，直到数据库中没有可用 key。
+
 
 ### GET /api/market/db/support-resistance
 

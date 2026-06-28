@@ -34,9 +34,13 @@ func main() {
 	source := datasource.NewSQLDataSource(database, cfg.Datasource.KlineQuery, cfg.Datasource.TokenSearchQuery)
 	dbBarSource := datasource.NewDBBarDataSource(database)
 	dbTradePointSource := datasource.NewDBTradePointDataSource(database)
-	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain)
+	birdeyeKeyRepo := repository.NewBirdeyeAPIKeyRepository(database)
+	if err := birdeyeKeyRepo.EnsureConfigKeys(context.Background(), cfg.Birdeye.APIKeys); err != nil {
+		logg.Fatal().Err(err).Msg("初始化 Birdeye API Key 池失败")
+	}
+	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo)
 	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)
-	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages)
+	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages).WithKeyPool(birdeyeKeyRepo)
 	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey)
 	backtestRepo := repository.NewBacktestRepository(database)
 	tradeRepo := repository.NewTradeRepository(database)
@@ -86,7 +90,7 @@ func main() {
 			worker.StartPriceSync(context.Background(), interval)
 		}
 	}
-	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor)
+	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

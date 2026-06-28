@@ -15,11 +15,13 @@ import (
 )
 
 var ErrBirdeyeNotConfigured = errors.New("Birdeye API Key 未配置")
+var ErrBirdeyeNoAvailableKey = errors.New("Birdeye 可用 API Key 不存在")
 
 type BirdeyeDataSource struct {
 	client  *http.Client
 	baseURL string
 	apiKeys []string
+	keyPool BirdeyeKeyPool
 	chain   string
 	cursor  uint32
 }
@@ -67,9 +69,14 @@ func NewBirdeyeDataSource(baseURL string, apiKeys []string, chain string) *Birde
 	}
 }
 
+func (s *BirdeyeDataSource) WithKeyPool(keyPool BirdeyeKeyPool) *BirdeyeDataSource {
+	s.keyPool = keyPool
+	return s
+}
+
 func (s *BirdeyeDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model.Kline, error) {
-	if len(s.apiKeys) == 0 {
-		return nil, ErrBirdeyeNotConfigured
+	if _, err := s.availableKeys(ctx); err != nil {
+		return nil, err
 	}
 	circulatingSupply, err := s.fetchCirculatingSupply(ctx, req.TokenAddress)
 	if err != nil {
@@ -127,35 +134,72 @@ func (s *BirdeyeDataSource) fetchCirculatingSupply(ctx context.Context, tokenAdd
 }
 
 func (s *BirdeyeDataSource) fetchOHLCV(ctx context.Context, endpoint string) (*birdeyeOHLCVResponse, error) {
+	keys, err := s.availableKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var lastErr error
-	for attempt := 0; attempt < len(s.apiKeys); attempt++ {
-		key := nextBirdeyeKey(s.apiKeys, &s.cursor)
+	for attempt := 0; attempt < len(keys); attempt++ {
+		key := nextBirdeyeKey(keys, &s.cursor)
 		body, err := s.doOHLCVRequest(ctx, endpoint, key)
 		if err == nil {
+			s.markSuccessful(ctx, key)
 			return body, nil
 		}
 		lastErr = err
-		if !shouldRetryBirdeye(err) {
-			return nil, err
-		}
+		s.markUnavailableIfNeeded(ctx, key, err)
 	}
 	return nil, lastErr
 }
 
 func (s *BirdeyeDataSource) fetchMarketData(ctx context.Context, endpoint string) (*birdeyeMarketDataResponse, error) {
+	keys, err := s.availableKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var lastErr error
-	for attempt := 0; attempt < len(s.apiKeys); attempt++ {
-		key := nextBirdeyeKey(s.apiKeys, &s.cursor)
+	for attempt := 0; attempt < len(keys); attempt++ {
+		key := nextBirdeyeKey(keys, &s.cursor)
 		body, err := s.doMarketDataRequest(ctx, endpoint, key)
 		if err == nil {
+			s.markSuccessful(ctx, key)
 			return body, nil
 		}
 		lastErr = err
-		if !shouldRetryBirdeye(err) {
-			return nil, err
-		}
+		s.markUnavailableIfNeeded(ctx, key, err)
 	}
 	return nil, lastErr
+}
+
+func (s *BirdeyeDataSource) availableKeys(ctx context.Context) ([]string, error) {
+	if s.keyPool == nil {
+		if len(s.apiKeys) == 0 {
+			return nil, ErrBirdeyeNotConfigured
+		}
+		return s.apiKeys, nil
+	}
+	keys, err := s.keyPool.ListAvailableBirdeyeKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, ErrBirdeyeNoAvailableKey
+	}
+	return keys, nil
+}
+
+func (s *BirdeyeDataSource) markUnavailableIfNeeded(ctx context.Context, apiKey string, err error) {
+	if s.keyPool == nil || !isBirdeyeComputeUnitLimit(err) {
+		return
+	}
+	_ = s.keyPool.MarkBirdeyeKeyUnavailable(ctx, apiKey, err.Error())
+}
+
+func (s *BirdeyeDataSource) markSuccessful(ctx context.Context, apiKey string) {
+	if s.keyPool == nil {
+		return
+	}
+	_ = s.keyPool.MarkBirdeyeKeySuccessful(ctx, apiKey)
 }
 
 func (s *BirdeyeDataSource) doOHLCVRequest(ctx context.Context, endpoint string, apiKey string) (*birdeyeOHLCVResponse, error) {
