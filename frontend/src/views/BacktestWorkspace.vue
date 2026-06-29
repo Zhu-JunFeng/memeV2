@@ -634,23 +634,51 @@
           </el-table>
         </el-tab-pane>
         <el-tab-pane label="Positions" name="positions">
+          <div class="positions-strip">
+            <div class="positions-strip-item">
+              <span>Open 持仓</span>
+              <strong>{{ openTradePositions.length }}</strong>
+            </div>
+            <div class="positions-strip-item">
+              <span>持仓成本</span>
+              <strong>{{ formatAbsoluteUsd(positionTotals.cost) }}</strong>
+            </div>
+            <div class="positions-strip-item">
+              <span>当前价值</span>
+              <strong>{{ formatAbsoluteUsd(positionTotals.marketValue) }}</strong>
+            </div>
+            <div class="positions-strip-item">
+              <span>总收益</span>
+              <strong :class="profitClass(positionTotals.totalPnl)">{{
+                formatSignedUsd(positionTotals.totalPnl)
+              }}</strong>
+            </div>
+          </div>
           <el-table
             :data="store.tradePositions"
             size="small"
             stripe
-            class="trade-table"
+            class="trade-table trade-table-positions"
             table-layout="auto"
             empty-text="暂无持仓"
+            :row-class-name="positionRowClassName"
           >
-            <el-table-column label="模式" width="92">
+            <el-table-column label="模式" width="84">
               <template #default="{ row }">
                 <el-tag size="small" :type="modeTagType(row.tradeMode)">{{
                   tradeModeText(row.tradeMode)
                 }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="status" label="状态" width="84" />
-            <el-table-column label="Token" min-width="180">
+            <el-table-column label="状态" width="104">
+              <template #default="{ row }">
+                <span class="position-status" :class="positionStatusClass(row)">
+                  <i />
+                  {{ positionStatusText(row.status) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Token" min-width="220">
               <template #default="{ row }">
                 <div class="position-token-cell">
                   <button
@@ -669,63 +697,82 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="数量" width="108">
-              <template #default="{ row }">{{
-                formatCompactTokenAmount(row.quantity)
-              }}</template>
+            <el-table-column label="仓位" width="146">
+              <template #default="{ row }">
+                <div class="trade-cell-stack position-size-cell">
+                  <strong>{{ formatCompactTokenAmount(row.quantity) }}</strong>
+                  <span>成本 {{ formatAbsoluteUsd(row.costAmount) }}</span>
+                </div>
+              </template>
             </el-table-column>
-            <el-table-column label="买入市值" width="132">
+            <el-table-column label="价位" width="170">
+              <template #default="{ row }">
+                <div class="position-market-stack">
+                  <div>
+                    <span>买入</span>
+                    <strong>{{ formatOptionalMarketCap(row.entryMarketCap) }}</strong>
+                  </div>
+                  <div>
+                    <span>{{ row.status === "closed" ? "卖出" : "当前" }}</span>
+                    <strong>{{
+                      row.status === "closed"
+                        ? formatOptionalMarketCap(row.exitMarketCap)
+                        : formatOptionalMarketCap(positionCurrentMarketCap(row))
+                    }}</strong>
+                  </div>
+                  <small>信号 {{ formatOptionalMarketCap(row.signalEntryMarketCap) }}</small>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="收益" width="178">
+              <template #default="{ row }">
+                <div class="position-pnl-cell">
+                  <div :class="profitClass(positionTotalPnl(row))">
+                    <strong>{{ formatSignedUsd(positionTotalPnl(row)) }}</strong>
+                    <span>{{ formatPercent(positionTotalRate(row)) }}</span>
+                  </div>
+                  <div class="position-pnl-bar">
+                    <i :style="positionPnlBarStyle(row)" />
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="拆分" width="154">
+              <template #default="{ row }">
+                <div class="position-split-cell">
+                  <span>已实现 {{ formatSignedUsd(row.realizedPnl) }}</span>
+                  <span>未实现 {{ formatSignedUsd(row.unrealizedPnl) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="风控" width="136">
               <template #default="{ row }">
                 <div class="trade-cell-stack">
-                  <strong>{{ formatOptionalMarketCap(row.entryMarketCap) }}</strong>
-                  <span>信号 {{ formatOptionalMarketCap(row.signalEntryMarketCap) }}</span>
+                  <strong>{{ formatPercent(row.maxProfitRate) }}</strong>
+                  <span>回撤 {{ formatDrawdownUsd(row.maxDrawdownAmount) }}</span>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="当前市值" width="110">
-              <template #default="{ row }">{{
-                formatOptionalMarketCap(positionCurrentMarketCap(row))
-              }}</template>
-            </el-table-column>
-            <el-table-column label="卖出市值" width="132">
+            <el-table-column label="时间" width="174">
               <template #default="{ row }">
-                <div class="trade-cell-stack">
-                  <strong>{{ formatOptionalMarketCap(row.exitMarketCap) }}</strong>
-                  <span>信号 {{ formatOptionalMarketCap(row.signalExitMarketCap) }}</span>
+                <div class="position-time-cell">
+                  <strong>{{ formatCompactRelativeTime(row.openedAt) }}</strong>
+                  <span :title="formatBeijingDateTime(row.openedAt)">
+                    开仓 {{ formatShortTime(row.openedAt) }}
+                  </span>
+                  <span
+                    v-if="row.closedAt"
+                    :title="formatBeijingDateTime(row.closedAt)"
+                  >
+                    平仓 {{ formatShortTime(row.closedAt) }}
+                  </span>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="已实现" width="146">
-              <template #default="{ row }">
-                <div
-                  class="trade-cell-stack trade-cell-stack-profit"
-                  :class="profitClass(row.realizedPnl)"
-                >
-                  <strong>{{ formatSignedUsd(row.realizedPnl) }}</strong>
-                  <span>{{ formatPercent(positionRealizedRate(row)) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="未实现" width="146">
-              <template #default="{ row }">
-                <div
-                  class="trade-cell-stack trade-cell-stack-profit"
-                  :class="profitClass(row.unrealizedPnl)"
-                >
-                  <strong>{{ formatSignedUsd(row.unrealizedPnl) }}</strong>
-                  <span>{{ formatPercent(positionUnrealizedRate(row)) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="卖出原因" min-width="180">
+            <el-table-column label="卖出原因" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">
                 <span>{{ row.exitReason || "-" }}</span>
               </template>
-            </el-table-column>
-            <el-table-column label="更新时间" width="168">
-              <template #default="{ row }">{{
-                formatBeijingDateTime(row.updatedAt)
-              }}</template>
             </el-table-column>
             <el-table-column label="操作" width="88" fixed="right">
               <template #default="{ row }">
@@ -1392,6 +1439,17 @@ const openTradePositions = computed(() =>
 const closedTradePositions = computed(() =>
   store.tradePositions.filter((item) => item.status === "closed"),
 );
+const positionTotals = computed(() =>
+  store.tradePositions.reduce(
+    (total, item) => {
+      total.cost += Number(item.costAmount || 0);
+      total.marketValue += positionDisplayMarketValue(item);
+      total.totalPnl += positionTotalPnl(item);
+      return total;
+    },
+    { cost: 0, marketValue: 0, totalPnl: 0 },
+  ),
+);
 const candidateMonitorMap = computed(() =>
   Object.fromEntries(
     (store.candidateMonitorItems || []).map((item) => [item.tokenAddress, item]),
@@ -1860,6 +1918,12 @@ function formatSignedUsd(value) {
   return `${number >= 0 ? "+" : ""}${number.toFixed(2)}u`;
 }
 
+function formatAbsoluteUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${number.toFixed(2)}u`;
+}
+
 function formatCostUsd(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
@@ -1910,6 +1974,49 @@ function positionCurrentMarketCap(row) {
   const tokenAddress = String(row?.tokenAddress || "").trim();
   if (!tokenAddress) return 0;
   return Number(candidateMonitorMap.value[tokenAddress]?.currentMarketCap || 0);
+}
+
+function positionTotalPnl(row) {
+  return Number(row?.realizedPnl || 0) + Number(row?.unrealizedPnl || 0);
+}
+
+function positionTotalRate(row) {
+  const costAmount = Number(row?.costAmount || 0);
+  if (!Number.isFinite(costAmount) || costAmount <= 0) return 0;
+  return positionTotalPnl(row) / costAmount;
+}
+
+function positionDisplayMarketValue(row) {
+  const marketValue = Number(row?.marketValue || 0);
+  if (Number.isFinite(marketValue) && marketValue > 0) return marketValue;
+  const costAmount = Number(row?.costAmount || 0);
+  const totalPnl = positionTotalPnl(row);
+  if (Number.isFinite(costAmount) && costAmount > 0) return Math.max(0, costAmount + totalPnl);
+  return 0;
+}
+
+function positionPnlBarStyle(row) {
+  const rate = positionTotalRate(row);
+  const width = Math.min(100, Math.max(6, Math.abs(rate) * 100));
+  const color = rate >= 0 ? "#16a34a" : "#dc2626";
+  return {
+    width: `${width}%`,
+    "--position-pnl-color": color,
+  };
+}
+
+function positionStatusText(value) {
+  if (value === "open") return "持仓中";
+  if (value === "closed") return "已平仓";
+  return value || "-";
+}
+
+function positionStatusClass(row) {
+  return row?.status === "open" ? "open" : "closed";
+}
+
+function positionRowClassName({ row }) {
+  return row?.status === "open" ? "position-row-open" : "position-row-closed";
 }
 
 function positionUnrealizedRate(row) {
@@ -2336,6 +2443,160 @@ onUnmounted(() => {
   color: #94a3b8;
 }
 
+.positions-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+
+.positions-strip-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.02));
+}
+
+.positions-strip-item span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.positions-strip-item strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.trade-table-positions :deep(.el-table__row.position-row-open td) {
+  background: rgba(20, 184, 106, 0.045);
+}
+
+.trade-table-positions :deep(.el-table__row.position-row-closed td) {
+  background: rgba(100, 116, 139, 0.035);
+}
+
+.trade-table-positions :deep(.cell) {
+  line-height: 1.24;
+}
+
+.position-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.position-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.position-status.open {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.position-status.closed {
+  color: #475569;
+  background: rgba(100, 116, 139, 0.12);
+}
+
+.position-size-cell strong {
+  font-size: 13px;
+}
+
+.position-market-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.position-market-stack div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.position-market-stack span,
+.position-market-stack small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.position-market-stack strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.position-pnl-cell {
+  display: grid;
+  gap: 6px;
+}
+
+.position-pnl-cell > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  font-weight: 700;
+}
+
+.position-pnl-cell strong {
+  font-size: 13px;
+}
+
+.position-pnl-cell span {
+  font-size: 11px;
+}
+
+.position-pnl-bar {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.position-pnl-bar i {
+  display: block;
+  height: 100%;
+  min-width: 6px;
+  border-radius: inherit;
+  background: var(--position-pnl-color, #16a34a);
+}
+
+.position-split-cell,
+.position-time-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.position-split-cell span {
+  color: #475569;
+  font-size: 11px;
+}
+
+.position-time-cell strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.position-time-cell span {
+  color: #64748b;
+  font-size: 11px;
+}
+
 .trade-table-orders :deep(.el-table__cell) {
   padding-top: 6px;
   padding-bottom: 6px;
@@ -2505,7 +2766,8 @@ onUnmounted(() => {
 @media (max-width: 1100px) {
   .trade-runtime-grid,
   .trade-summary-grid,
-  .trade-kpis {
+  .trade-kpis,
+  .positions-strip {
     grid-template-columns: 1fr;
   }
 }
