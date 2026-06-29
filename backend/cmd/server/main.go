@@ -94,6 +94,7 @@ func main() {
 			LevelOptions:     backtest.DefaultLevelOptions(),
 			BreakoutFollow:   backtest.DefaultBreakoutBandFollowConfig(),
 			SupplyProvider:   supplyProvider,
+			KlineSource:      gmgnSource,
 			SystemKlines:     systemKlineStore,
 			EventBus:         events,
 		})

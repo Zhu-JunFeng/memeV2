@@ -44,6 +44,7 @@ type CandidateMonitorConfig struct {
 	BreakoutFollow   backtest.BreakoutBandFollowConfig
 	SupplyProvider   datasource.TokenSupplyProvider
 	PriceProvider    datasource.TokenPriceProvider
+	KlineSource      datasource.KlineDataSource
 	SystemKlines     monitorKlineStore
 	EventBus         *eventbus.Broker
 	Now              func() time.Time
@@ -52,6 +53,7 @@ type CandidateMonitorConfig struct {
 type CandidateMonitor struct {
 	redis          *redis.Client
 	priceProvider  datasource.TokenPriceProvider
+	klineSource    datasource.KlineDataSource
 	publisher      Publisher
 	store          candidateMonitorStore
 	cfg            CandidateMonitorConfig
@@ -147,10 +149,16 @@ func NewCandidateMonitor(redisClient *redis.Client, priceProvider datasource.Tok
 		publisher = noopPublisher{}
 	}
 	cfg.PriceProvider = priceProvider
+	if cfg.KlineSource == nil {
+		if source, ok := priceProvider.(datasource.KlineDataSource); ok {
+			cfg.KlineSource = source
+		}
+	}
 	cfg = normalizeCandidateMonitorConfig(cfg)
 	return &CandidateMonitor{
 		redis:          redisClient,
 		priceProvider:  cfg.PriceProvider,
+		klineSource:    cfg.KlineSource,
 		publisher:      publisher,
 		store:          newRedisCandidateMonitorStore(redisClient, cfg.RedisKeyPrefix),
 		cfg:            cfg,
@@ -194,7 +202,7 @@ func normalizeCandidateMonitorConfig(cfg CandidateMonitorConfig) CandidateMonito
 }
 
 func (m *CandidateMonitor) Start(ctx context.Context) {
-	if m == nil || !m.cfg.Enabled || m.redis == nil || m.priceProvider == nil || m.publisher == nil || m.store == nil {
+	if m == nil || !m.cfg.Enabled || m.redis == nil || m.priceProvider == nil || m.klineSource == nil || m.publisher == nil || m.store == nil {
 		return
 	}
 	m.preloadActiveKlines(ctx)
@@ -467,8 +475,8 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 }
 
 func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidateMonitorState) ([]model.Kline, error) {
-	if m.priceProvider == nil {
-		return nil, errors.New("candidate monitor token price provider not configured")
+	if m.klineSource == nil {
+		return nil, errors.New("candidate monitor kline source not configured")
 	}
 	sampleAt := m.now()
 	interval, err := intervalDuration(m.cfg.Interval)
@@ -479,25 +487,56 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	if lookbackBars < monitorKlineCacheLimit {
 		lookbackBars = monitorKlineCacheLimit
 	}
-	price, err := m.priceProvider.GetTokenPrice(ctx, state.TokenAddress)
-	if err != nil {
-		return nil, err
-	}
 	supply, err := m.tokenSupply(ctx, state.TokenAddress)
 	if err != nil {
 		return nil, err
 	}
-	marketCap := price * supply
-	if marketCap <= 0 {
-		return nil, fmt.Errorf("candidate monitor invalid market cap: ca=%s price=%.12f supply=%.12f", state.TokenAddress, price, supply)
+	// 首次进入缓存时补足回测所需窗口，后续轮询只增量拉最近几根 GMGN K 线。
+	fetchBars := 5
+	existing := m.klineCache.Get(state.TokenAddress, m.cfg.Interval)
+	if len(existing) == 0 {
+		fetchBars = lookbackBars
 	}
-	// 监控阶段不再拉取上游 token_kline，而是把实时价格样本聚合成系统自己的 1m 市值K线。
-	merged, latestBar := m.klineCache.ApplyPriceSample(state.TokenAddress, m.cfg.Interval, sampleAt, marketCap)
-	if m.systemKlines != nil {
-		m.systemKlines.EnqueueUpsert([]model.Kline{latestBar})
+	start := sampleAt.Add(-time.Duration(fetchBars) * interval)
+	incoming, err := m.klineSource.GetKlines(ctx, datasource.KlineQuery{
+		TokenAddress: state.TokenAddress,
+		Interval:     m.cfg.Interval,
+		StartTime:    start,
+		EndTime:      sampleAt,
+	})
+	if err != nil {
+		return nil, err
 	}
-	start := sampleAt.Add(-time.Duration(lookbackBars) * interval)
-	return filterKlinesAfter(merged, start), nil
+	normalized := scalePriceKlinesToMarketCap(incoming, supply)
+	merged := m.klineCache.MergePreferIncoming(state.TokenAddress, m.cfg.Interval, normalized)
+	if m.systemKlines != nil && len(normalized) > 0 {
+		m.systemKlines.EnqueueUpsert(normalized)
+	}
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	latest := merged[len(merged)-1]
+	if latest.MarketCapClose <= 0 {
+		return nil, fmt.Errorf("candidate monitor invalid market cap kline: ca=%s", state.TokenAddress)
+	}
+	lookbackStart := sampleAt.Add(-time.Duration(lookbackBars) * interval)
+	return filterKlinesAfter(merged, lookbackStart), nil
+}
+
+func scalePriceKlinesToMarketCap(klines []model.Kline, supply float64) []model.Kline {
+	if supply <= 0 || len(klines) == 0 {
+		return append([]model.Kline(nil), klines...)
+	}
+	items := make([]model.Kline, 0, len(klines))
+	for _, item := range klines {
+		scaled := item
+		scaled.MarketCapOpen = item.Open * supply
+		scaled.MarketCapHigh = item.High * supply
+		scaled.MarketCapLow = item.Low * supply
+		scaled.MarketCapClose = item.Close * supply
+		items = append(items, scaled)
+	}
+	return items
 }
 
 func (m *CandidateMonitor) tokenSupply(ctx context.Context, tokenAddress string) (float64, error) {
@@ -638,7 +677,7 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, decisionB
 		"strategyCode":    strategyBreakoutFollow,
 		"decisionBarTime": decisionBar.OpenTime,
 		"entryBarTime":    sig.SignalTime,
-		"volumeMode":      "sample_count",
+		"volumeMode":      "gmgn_volume",
 	})
 	if err != nil {
 		return model.TradeSignalMessage{}, model.PriceLevel{}, err
@@ -719,7 +758,7 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 		"entryBarTime":    state.EntryTime,
 		"exitBarTime":     decisionBar.OpenTime,
 		"decisionBarTime": decisionBar.OpenTime,
-		"volumeMode":      "sample_count",
+		"volumeMode":      "gmgn_volume",
 	})
 	if err != nil {
 		return model.TradeSignalMessage{}, err

@@ -47,6 +47,28 @@ func (p *fakePriceProvider) GetTokenPrice(_ context.Context, tokenAddress string
 	return items[index], nil
 }
 
+func (p *fakePriceProvider) GetKlines(_ context.Context, req datasource.KlineQuery) ([]model.Kline, error) {
+	price, err := p.GetTokenPrice(context.Background(), req.TokenAddress)
+	if err != nil {
+		return nil, err
+	}
+	openTime := req.EndTime.UTC().Truncate(time.Minute)
+	if openTime.IsZero() {
+		openTime = time.Now().UTC().Truncate(time.Minute)
+	}
+	return []model.Kline{{
+		TokenAddress: req.TokenAddress,
+		Interval:     req.Interval,
+		OpenTime:     openTime,
+		CloseTime:    openTime.Add(time.Minute),
+		Open:         price,
+		High:         price,
+		Low:          price,
+		Close:        price,
+		Volume:       100,
+	}}, nil
+}
+
 type fakeCandidateStore struct {
 	states   map[string]candidateMonitorState
 	emitted  map[string]bool
@@ -130,6 +152,7 @@ func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, price
 	priceProvider := &fakePriceProvider{sequences: prices, calls: map[string]int{}}
 	return &CandidateMonitor{
 		priceProvider:  priceProvider,
+		klineSource:    priceProvider,
 		publisher:      pub,
 		store:          store,
 		supplyProvider: fakeSupplyProvider{supply: 1},
@@ -145,6 +168,7 @@ func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, price
 			BreakoutFollow: backtest.DefaultBreakoutBandFollowConfig(),
 			SupplyProvider: fakeSupplyProvider{supply: 1},
 			PriceProvider:  priceProvider,
+			KlineSource:    priceProvider,
 			SystemKlines:   systemStore,
 			Now:            func() time.Time { return now },
 		},
@@ -204,6 +228,31 @@ func TestCandidateMonitorStopsWatchingLowMarketCap(t *testing.T) {
 	}
 	if len(pub.tradeSignals) != 0 {
 		t.Fatalf("expected no trade signal, got %#v", pub.tradeSignals)
+	}
+}
+
+func TestCandidateMonitorUsesRealGMGNVolumeForRealtimeBars(t *testing.T) {
+	base := time.Date(2026, 6, 29, 10, 7, 30, 0, time.UTC)
+	store := newFakeCandidateStore()
+	pub := &capturePublisher{}
+	monitor := testCandidateMonitor(store, nil, map[string][]float64{"token-a": {10.95}}, base, pub)
+	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
+	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
+	monitor.preloadActiveKlines(context.Background())
+
+	klines, err := monitor.loadLatestKlines(context.Background(), candidateMonitorState{TokenAddress: "token-a"})
+	if err != nil {
+		t.Fatalf("load latest klines: %v", err)
+	}
+	if len(klines) == 0 {
+		t.Fatalf("expected realtime klines")
+	}
+	last := klines[len(klines)-1]
+	if last.Volume != 100 {
+		t.Fatalf("expected realtime bar to keep GMGN volume, got %#v", last)
+	}
+	if last.MarketCapClose != 21900 {
+		t.Fatalf("expected market cap close 21900, got %#v", last)
 	}
 }
 
