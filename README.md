@@ -181,6 +181,7 @@ npm run build
 - `database.auto_migrate`：启动时自动建表
 - `datasource.kline_source`：默认 K 线源，支持 `gmgn` / `birdeye` / `sql` / `db`，当前默认 `gmgn`
 - `gmgn.api_key` / `gmgn.max_qps`：GMGN key 与进程内限速；候选池监控当前按轮询实时价格聚合本地 1m 市值 K 线，默认按 8 QPS 留余量
+- GMGN 的 `volume` 直接按上游成交额使用；Birdeye 的原始 `volume` 为 token 成交数量，系统会按 `token volume * close price` 统一折算成成交额后再参与量能判定
 - `birdeye.api_key` / `birdeye.api_keys`：Birdeye key 与 key 池
 - `redis.enabled` / `redis.addr` / `redis.channel`：实时信号发布通道，未配置消费通道时也作为交易消费通道
 - `redis.consumer_channel`：交易模块独立订阅通道；为空时消费 `redis.channel`

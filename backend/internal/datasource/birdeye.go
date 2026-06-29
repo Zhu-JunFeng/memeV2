@@ -109,7 +109,8 @@ func (s *BirdeyeDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]mo
 			MarketCapHigh:  item.High * circulatingSupply,
 			MarketCapLow:   item.Low * circulatingSupply,
 			MarketCapClose: item.Close * circulatingSupply,
-			Volume:         item.Volume,
+			// Birdeye 原始 volume 是 token 成交数量；回测量能统一按成交额口径使用。
+			Volume: item.Volume * item.Close,
 		})
 	}
 	return items, nil

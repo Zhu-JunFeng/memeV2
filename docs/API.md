@@ -85,7 +85,7 @@ Birdeye K 线专用入口。参数同 `/api/market/klines`，但固定使用 Bir
 - `BACKTEST_BIRDEYE_CHAIN`：默认 `solana`。
 - `BACKTEST_DATABASE_DSN`：PostgreSQL 连接串；Birdeye K 线缓存、回测结果、交易模块表统一存储在同一个 PG 库。
 
-说明：未配置 API Key 时直接返回中文错误，不改用 SQL 或其他数据源。Birdeye K 线首次拉取成功后会写入 PostgreSQL cache；同一个 token + interval 只要本地已经缓存过，后续都直接优先读取该项目缓存，不再为了追最新 K 线重复请求 Birdeye。
+说明：未配置 API Key 时直接返回中文错误，不改用 SQL 或其他数据源。Birdeye K 线首次拉取成功后会写入 PostgreSQL cache；同一个 token + interval 只要本地已经缓存过，后续都直接优先读取该项目缓存，不再为了追最新 K 线重复请求 Birdeye。Birdeye 原始 `volume` 为 token 成交数量，系统在回测/结构识别里会按 `token volume * close price` 转成成交额口径，与 GMGN 的 `volume` 语义对齐。
 
 
 ### GET /api/market/support-resistance
