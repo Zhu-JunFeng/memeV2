@@ -337,3 +337,22 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 		t.Fatalf("watching candidate should not expose empty entry time: %#v", items[1].EntryTime)
 	}
 }
+
+func TestCandidateMonitorAddManualCandidate(t *testing.T) {
+	store := newFakeCandidateStore()
+	monitor := testCandidateMonitor(store, nil, &capturePublisher{})
+	item, err := monitor.AddManualCandidate(context.Background(), "manual-token")
+	if err != nil {
+		t.Fatalf("add manual candidate: %v", err)
+	}
+	if item.TokenAddress != "manual-token" || item.Status != candidateStatusWatching {
+		t.Fatalf("unexpected manual candidate: %#v", item)
+	}
+	state, ok := store.states["manual-token"]
+	if !ok {
+		t.Fatalf("expected candidate to be stored")
+	}
+	if state.StrategyName != "manual" || state.RunID == "" || state.CandidateAt.IsZero() {
+		t.Fatalf("unexpected stored state: %#v", state)
+	}
+}

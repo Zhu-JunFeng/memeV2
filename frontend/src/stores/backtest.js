@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ElNotification } from "element-plus";
 import {
+  addCandidateMonitor,
   candidateMonitorStreamURL,
   closeTradePosition,
   createBacktest,
@@ -168,6 +169,27 @@ export const useBacktestStore = defineStore("backtest", {
           orders: this.tradeOrders,
           positions: this.tradePositions,
         };
+      } catch (error) {
+        this.error = error.message;
+        throw error;
+      } finally {
+        this.tradeLoading = false;
+      }
+    },
+    async addCandidateMonitor(tokenAddress) {
+      this.tradeLoading = true;
+      this.error = "";
+      try {
+        const data = await addCandidateMonitor(tokenAddress);
+        if (data.item) {
+          this.candidateMonitorItems = upsertSorted(
+            this.candidateMonitorItems,
+            data.item,
+            "tokenAddress",
+            compareCandidates,
+          );
+        }
+        return data.item;
       } catch (error) {
         this.error = error.message;
         throw error;

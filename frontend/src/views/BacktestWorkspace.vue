@@ -348,12 +348,17 @@
             报价/下单准备，但不会执行链上签名与提交。
           </div>
         </div>
-        <el-button
-          size="small"
-          :loading="store.tradeLoading"
-          @click="refreshTradeDashboard"
-          >刷新</el-button
-        >
+        <div class="trade-panel-actions">
+          <el-button size="small" type="primary" @click="openAddCandidateDialog"
+            >新增 CA</el-button
+          >
+          <el-button
+            size="small"
+            :loading="store.tradeLoading"
+            @click="refreshTradeDashboard"
+            >刷新</el-button
+          >
+        </div>
       </div>
       <div class="trade-runtime-grid">
         <div class="trade-runtime-card">
@@ -468,9 +473,11 @@
               </template>
             </el-table-column>
             <el-table-column label="入池时间" width="168">
-              <template #default="{ row }">{{
-                formatBeijingDateTime(row.candidateAt)
-              }}</template>
+              <template #default="{ row }">
+                <span :title="formatBeijingDateTime(row.candidateAt)">{{
+                  formatCompactRelativeTime(row.candidateAt)
+                }}</span>
+              </template>
             </el-table-column>
             <el-table-column label="买入信号" min-width="150">
               <template #default="{ row }">{{
@@ -674,6 +681,32 @@
         </el-tab-pane>
       </el-tabs>
     </section>
+
+    <el-dialog
+      v-model="addCandidateDialogVisible"
+      title="新增候选 CA"
+      width="420px"
+      class="candidate-add-dialog"
+    >
+      <div class="candidate-add-body">
+        <span>输入 CA 后会直接加入 V2 active 监控池。</span>
+        <el-input
+          v-model="addCandidateTokenAddress"
+          placeholder="输入 token CA"
+          clearable
+          @keyup.enter="submitAddCandidate"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="addCandidateDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="store.tradeLoading"
+          @click="submitAddCandidate"
+          >加入池中</el-button
+        >
+      </template>
+    </el-dialog>
 
     <section v-if="selectedChartRange" class="panel selection-panel">
       <div>
@@ -1145,6 +1178,8 @@ const selectedChartRange = ref(null);
 const loadedRange = ref(null);
 const chartPanelRef = ref(null);
 const levelView = ref("resistance");
+const addCandidateDialogVisible = ref(false);
+const addCandidateTokenAddress = ref("");
 const levelViewOptions = [
   { label: "全部", value: "all" },
   { label: "支撑", value: "support" },
@@ -1402,6 +1437,23 @@ async function loadCandidateSystemKlines(row) {
   ElMessage.success(`已加载 ${result.klines.length} 根系统K线`);
 }
 
+function openAddCandidateDialog() {
+  addCandidateTokenAddress.value = "";
+  addCandidateDialogVisible.value = true;
+}
+
+async function submitAddCandidate() {
+  const tokenAddress = addCandidateTokenAddress.value.trim();
+  if (!tokenAddress) {
+    ElMessage.error("请输入 CA");
+    return;
+  }
+  await store.addCandidateMonitor(tokenAddress);
+  addCandidateDialogVisible.value = false;
+  tradeTab.value = "candidates";
+  ElMessage.success("已加入候选池");
+}
+
 async function refreshTradeDashboard() {
   const params = {
     tradeMode: tradeFilterMode.value,
@@ -1609,6 +1661,27 @@ function formatRelativeTime(value) {
   return `${Math.floor(hours / 24)}d前`;
 }
 
+function formatCompactRelativeTime(value) {
+  if (!value) return "-";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "-";
+  const seconds = Math.max(0, Math.floor((relativeNow.value - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s之前`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m之前`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) {
+    return `${hours}h${remainingMinutes > 0 ? `${remainingMinutes}m` : ""}之前`;
+  }
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  const parts = [`${days}d`];
+  if (remainingHours > 0) parts.push(`${remainingHours}h`);
+  if (remainingMinutes > 0) parts.push(`${remainingMinutes}m`);
+  return `${parts.join("")}之前`;
+}
+
 function formatFixed(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(2) : "0.00";
@@ -1812,6 +1885,24 @@ onUnmounted(() => {
 
 .trade-panel-heading {
   align-items: flex-start;
+}
+
+.trade-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.candidate-add-body {
+  display: grid;
+  gap: 12px;
+}
+
+.candidate-add-body span {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .trade-runtime-grid {

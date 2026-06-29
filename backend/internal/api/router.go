@@ -53,6 +53,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.POST("/market/gmgn/realtime-breakout-signals", h.getGMGNRealtimeSignals)
 	api.POST("/birdeye/api-keys", h.createBirdeyeAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
+	api.POST("/signal/candidate-monitor", h.addCandidateMonitor)
 	api.GET("/signal/candidate-monitor/stream", h.streamCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
 	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
@@ -158,6 +159,10 @@ type realtimeSignalRequest struct {
 
 type createBirdeyeAPIKeyRequest struct {
 	APIKey string `json:"apiKey" binding:"required"`
+}
+
+type addCandidateMonitorRequest struct {
+	TokenAddress string `json:"tokenAddress" binding:"required"`
 }
 
 func (h *Handler) getBirdeyeKlines(c *gin.Context) {
@@ -283,6 +288,29 @@ func (h *Handler) listCandidateMonitor(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) addCandidateMonitor(c *gin.Context) {
+	var req addCandidateMonitorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "CA 不能为空")
+		return
+	}
+	tokenAddress := strings.TrimSpace(req.TokenAddress)
+	if tokenAddress == "" {
+		response.Fail(c, http.StatusBadRequest, "CA 不能为空")
+		return
+	}
+	if h.candidateMonitor == nil {
+		response.Fail(c, http.StatusBadRequest, "候选池监控未启用")
+		return
+	}
+	item, err := h.candidateMonitor.AddManualCandidate(c.Request.Context(), tokenAddress)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"item": item})
 }
 
 func (h *Handler) getDBSupportResistance(c *gin.Context) {

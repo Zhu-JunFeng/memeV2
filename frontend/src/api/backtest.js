@@ -48,6 +48,10 @@ export function listCandidateMonitor() {
   return http.get("/signal/candidate-monitor");
 }
 
+export function addCandidateMonitor(tokenAddress) {
+  return http.post("/signal/candidate-monitor", { tokenAddress });
+}
+
 export function listTradeOrders(params) {
   return http.get("/trade/orders", { params });
 }

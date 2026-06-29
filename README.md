@@ -228,6 +228,7 @@ npm run build
 - `GET /api/market/birdeye/klines` / `GET /api/market/birdeye/support-resistance`（保留切换）
 - `POST /api/strategy-backtests/run`
 - `GET /api/signal/candidate-monitor` / `GET /api/signal/candidate-monitor/stream`
+- `POST /api/signal/candidate-monitor`：手动输入 CA 加入 Candidates active 监控池
 - `GET /api/trade/accounts`
 - `GET /api/trade/runtime`
 - `PUT /api/trade/runtime`

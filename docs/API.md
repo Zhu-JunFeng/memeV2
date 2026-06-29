@@ -426,6 +426,22 @@ Birdeye K 线专用实时突破信号入口。
 
 说明：该接口只读取 Redis active 监控池，不查询历史已停止、已卖出或已被低市值过滤移除的候选项目。
 
+### POST /api/signal/candidate-monitor
+
+手动把一个 CA 加入 V2 active 监控池。请求只需要传 `tokenAddress`，后端会按 `watching` 状态写入 Redis，并通过 Candidates SSE 推送 `upsert`。
+
+请求体：
+
+```json
+{
+  "tokenAddress": "CA"
+}
+```
+
+返回：
+
+- `item`：新增或已存在的候选池项目。
+
 ### GET /api/signal/candidate-monitor/stream
 
 Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ "items": [...] }`；之后候选池状态变化发送 `event: upsert`，数据为 `{ "item": {...} }`；候选移出 active 池发送 `event: delete`，数据为 `{ "id": "<tokenAddress>" }`；每 15 秒发送 `event: heartbeat`。

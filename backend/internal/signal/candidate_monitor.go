@@ -231,6 +231,48 @@ func (m *CandidateMonitor) ListCandidates(ctx context.Context) ([]CandidateMonit
 	return items, nil
 }
 
+func (m *CandidateMonitor) AddManualCandidate(ctx context.Context, tokenAddress string) (CandidateMonitorItem, error) {
+	tokenAddress = strings.TrimSpace(tokenAddress)
+	if tokenAddress == "" {
+		return CandidateMonitorItem{}, errors.New("CA 不能为空")
+	}
+	if m == nil || m.store == nil {
+		return CandidateMonitorItem{}, errors.New("候选池监控未启用")
+	}
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return CandidateMonitorItem{}, err
+	}
+	for _, state := range states {
+		if state.TokenAddress == tokenAddress {
+			return newCandidateMonitorItem(state), nil
+		}
+	}
+	now := time.Now().UTC()
+	rawPayload, err := json.Marshal(map[string]any{
+		"event":        "manual_candidate_added",
+		"tokenAddress": tokenAddress,
+		"publishedAt":  now.UnixMilli(),
+	})
+	if err != nil {
+		return CandidateMonitorItem{}, err
+	}
+	state := candidateMonitorState{
+		TokenAddress: tokenAddress,
+		RunID:        "manual:" + strconv.FormatInt(now.UnixMilli(), 10),
+		StrategyName: "manual",
+		RawPayload:   rawPayload,
+		CandidateAt:  now,
+		Status:       candidateStatusWatching,
+	}
+	if err := m.store.UpsertCandidate(ctx, state); err != nil {
+		return CandidateMonitorItem{}, err
+	}
+	m.publishCandidateUpsert(state)
+	log.Printf("candidate monitor accepted manual candidate: ca=%s", state.TokenAddress)
+	return newCandidateMonitorItem(state), nil
+}
+
 func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
 	var upstream struct {
 		Score     *float64 `json:"score"`
