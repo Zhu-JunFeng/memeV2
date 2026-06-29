@@ -722,3 +722,26 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Global product-shell polish */
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 10% 6%, rgba(20, 184, 106, 0.18), transparent 26rem),
+    radial-gradient(circle at 86% 16%, rgba(59, 130, 246, 0.12), transparent 24rem),
+    linear-gradient(135deg, #061014 0%, #0a1b22 45%, #10251f 100%);
+}
+
+.el-notification.api-error-notification {
+  max-width: min(420px, calc(100vw - 32px));
+}
