@@ -557,9 +557,25 @@ func scanTradePosition(scanner rowScanner) (model.TradePosition, error) {
 	var openSignalTime sql.NullTime
 	var closeSignalTime sql.NullTime
 	var exitReason sql.NullString
+	var signalEntryMarketCap sql.NullFloat64
+	var signalExitMarketCap sql.NullFloat64
+	var entryExecutedPrice sql.NullFloat64
+	var exitExecutedPrice sql.NullFloat64
 	var openSignalPayload []byte
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.SignalEntryMarketCap, &item.SignalExitMarketCap, &item.EntryExecutedPrice, &item.ExitExecutedPrice, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &exitReason, &openSignalPayload); err != nil {
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &signalEntryMarketCap, &signalExitMarketCap, &entryExecutedPrice, &exitExecutedPrice, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &exitReason, &openSignalPayload); err != nil {
 		return model.TradePosition{}, err
+	}
+	if signalEntryMarketCap.Valid {
+		item.SignalEntryMarketCap = signalEntryMarketCap.Float64
+	}
+	if signalExitMarketCap.Valid {
+		item.SignalExitMarketCap = signalExitMarketCap.Float64
+	}
+	if entryExecutedPrice.Valid {
+		item.EntryExecutedPrice = entryExecutedPrice.Float64
+	}
+	if exitExecutedPrice.Valid {
+		item.ExitExecutedPrice = exitExecutedPrice.Float64
 	}
 	if closedAt.Valid {
 		item.ClosedAt = &closedAt.Time

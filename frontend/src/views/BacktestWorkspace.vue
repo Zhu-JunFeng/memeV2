@@ -695,11 +695,15 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="已实现" width="110">
+            <el-table-column label="已实现" width="146">
               <template #default="{ row }">
-                <span :class="profitClass(row.realizedPnl)">{{
-                  formatSignedUsd(row.realizedPnl)
-                }}</span>
+                <div
+                  class="trade-cell-stack trade-cell-stack-profit"
+                  :class="profitClass(row.realizedPnl)"
+                >
+                  <strong>{{ formatSignedUsd(row.realizedPnl) }}</strong>
+                  <span>{{ formatPercent(positionRealizedRate(row)) }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="未实现" width="146">
@@ -1912,6 +1916,12 @@ function positionUnrealizedRate(row) {
   const costAmount = Number(row?.costAmount || 0);
   if (!Number.isFinite(costAmount) || costAmount <= 0) return 0;
   return Number(row?.unrealizedPnl || 0) / costAmount;
+}
+
+function positionRealizedRate(row) {
+  const costAmount = Number(row?.costAmount || 0);
+  if (!Number.isFinite(costAmount) || costAmount <= 0) return 0;
+  return Number(row?.realizedPnl || 0) / costAmount;
 }
 
 function formatOrderIntent(row) {
