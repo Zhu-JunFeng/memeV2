@@ -42,9 +42,13 @@ func main() {
 	if err := birdeyeKeyRepo.EnsureConfigKeys(context.Background(), cfg.Birdeye.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 Birdeye API Key 池失败")
 	}
+	gmgnKeyRepo := repository.NewGMGNAPIKeyRepository(database)
+	if err := gmgnKeyRepo.EnsureConfigKeys(context.Background(), cfg.GMGN.APIKeys); err != nil {
+		logg.Fatal().Err(err).Msg("初始化 GMGN API Key 池失败")
+	}
 	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo)
 	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)
-	gmgnSource := datasource.NewGMGNDataSource(cfg.GMGN.BaseURL, cfg.GMGN.APIKey, cfg.GMGN.Chain, cfg.GMGN.MaxQPS)
+	gmgnSource := datasource.NewGMGNDataSourceWithKeys(cfg.GMGN.BaseURL, cfg.GMGN.APIKeys, cfg.GMGN.Chain, cfg.GMGN.MaxQPS).WithKeyPool(gmgnKeyRepo)
 	supplyProvider := datasource.NewSolanaRPCSupplyProvider(cfg.Trade.SolanaRPCURL)
 	events := eventbus.NewBroker()
 	primaryKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeSource, gmgnSource, systemKlineStore)
@@ -121,7 +125,7 @@ func main() {
 			worker.StartPriceSync(context.Background(), interval)
 		}
 	}
-	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo, events)
+	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo, gmgnKeyRepo, events)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

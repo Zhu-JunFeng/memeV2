@@ -267,6 +267,18 @@ func migrate(database *sql.DB) error {
 			updated_at timestamptz NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_birdeye_api_keys_status_created_at ON birdeye_api_keys (status, created_at ASC)`,
+		`CREATE TABLE IF NOT EXISTS gmgn_api_keys (
+			id varchar(36) PRIMARY KEY,
+			api_key text NOT NULL UNIQUE,
+			key_mask varchar(32) NOT NULL,
+			status varchar(16) NOT NULL,
+			unavailable_reason text NOT NULL DEFAULT '',
+			unavailable_at timestamptz,
+			last_successful_used_at timestamptz,
+			created_at timestamptz NOT NULL,
+			updated_at timestamptz NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_gmgn_api_keys_status_created_at ON gmgn_api_keys (status, created_at ASC)`,
 	}
 	statements = append(statements, commentStatements()...)
 	for _, statement := range statements {
@@ -462,5 +474,15 @@ func commentStatements() []string {
 		`COMMENT ON COLUMN birdeye_api_keys.last_successful_used_at IS '最近成功使用时间'`,
 		`COMMENT ON COLUMN birdeye_api_keys.created_at IS '创建时间'`,
 		`COMMENT ON COLUMN birdeye_api_keys.updated_at IS '更新时间'`,
+		`COMMENT ON TABLE gmgn_api_keys IS 'GMGN API Key池表'`,
+		`COMMENT ON COLUMN gmgn_api_keys.id IS 'Key记录ID'`,
+		`COMMENT ON COLUMN gmgn_api_keys.api_key IS 'GMGN API Key密文原值'`,
+		`COMMENT ON COLUMN gmgn_api_keys.key_mask IS '脱敏Key展示值'`,
+		`COMMENT ON COLUMN gmgn_api_keys.status IS 'Key状态'`,
+		`COMMENT ON COLUMN gmgn_api_keys.unavailable_reason IS '不可用原因'`,
+		`COMMENT ON COLUMN gmgn_api_keys.unavailable_at IS '标记不可用时间'`,
+		`COMMENT ON COLUMN gmgn_api_keys.last_successful_used_at IS '最近成功使用时间'`,
+		`COMMENT ON COLUMN gmgn_api_keys.created_at IS '创建时间'`,
+		`COMMENT ON COLUMN gmgn_api_keys.updated_at IS '更新时间'`,
 	}
 }

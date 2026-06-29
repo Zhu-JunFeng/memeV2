@@ -27,11 +27,13 @@ const defaultGMGNUserAgent = "solana-meme-backtest-v2/1.0"
 type GMGNDataSource struct {
 	client     *http.Client
 	baseURL    string
-	apiKey     string
+	apiKeys    []string
+	keyPool    GMGNKeyPool
 	chain      string
 	userAgent  string
 	limiter    *requestLimiter
 	lastWindow time.Duration
+	cursor     uint32
 }
 
 type gmgnKlineResponse struct {
@@ -63,6 +65,10 @@ type requestLimiter struct {
 }
 
 func NewGMGNDataSource(baseURL string, apiKey string, chain string, maxQPS float64) *GMGNDataSource {
+	return NewGMGNDataSourceWithKeys(baseURL, []string{apiKey}, chain, maxQPS)
+}
+
+func NewGMGNDataSourceWithKeys(baseURL string, apiKeys []string, chain string, maxQPS float64) *GMGNDataSource {
 	trimmed := strings.TrimSpace(baseURL)
 	if trimmed == "" {
 		trimmed = "https://openapi.gmgn.ai"
@@ -74,12 +80,17 @@ func NewGMGNDataSource(baseURL string, apiKey string, chain string, maxQPS float
 	return &GMGNDataSource{
 		client:     httpclient.NewFixedProxyClient(15*time.Second, 15*time.Second),
 		baseURL:    strings.TrimRight(trimmed, "/"),
-		apiKey:     strings.TrimSpace(apiKey),
+		apiKeys:    normalizeGMGNDataSourceKeys(apiKeys),
 		chain:      chain,
 		userAgent:  defaultGMGNUserAgent,
 		limiter:    newRequestLimiter(maxQPS),
 		lastWindow: 3 * time.Minute,
 	}
+}
+
+func (s *GMGNDataSource) WithKeyPool(keyPool GMGNKeyPool) *GMGNDataSource {
+	s.keyPool = keyPool
+	return s
 }
 
 func newRequestLimiter(maxQPS float64) *requestLimiter {
@@ -117,8 +128,9 @@ func (l *requestLimiter) Wait(ctx context.Context) error {
 }
 
 func (s *GMGNDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model.Kline, error) {
-	if strings.TrimSpace(s.apiKey) == "" {
-		return nil, ErrGMGNNotConfigured
+	keys, err := s.availableKeys(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.limiter.Wait(ctx); err != nil {
 		return nil, err
@@ -138,11 +150,45 @@ func (s *GMGNDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model
 	query.Set("client_id", uuid.NewString())
 	endpoint.RawQuery = query.Encode()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	var lastErr error
+	for attempt := 0; attempt < len(keys); attempt++ {
+		key := nextGMGNKey(keys, &s.cursor)
+		items, err := s.fetchKlinesWithKey(ctx, endpoint.String(), req, key)
+		if err == nil {
+			s.markSuccessful(ctx, key)
+			return items, nil
+		}
+		lastErr = err
+		if !shouldRetryGMGN(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func (s *GMGNDataSource) availableKeys(ctx context.Context) ([]string, error) {
+	if s.keyPool == nil {
+		if len(s.apiKeys) == 0 {
+			return nil, ErrGMGNNotConfigured
+		}
+		return s.apiKeys, nil
+	}
+	keys, err := s.keyPool.ListAvailableGMGNKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("X-APIKEY", s.apiKey)
+	if len(keys) == 0 {
+		return nil, ErrGMGNNoAvailableKey
+	}
+	return keys, nil
+}
+
+func (s *GMGNDataSource) fetchKlinesWithKey(ctx context.Context, endpoint string, req KlineQuery, apiKey string) ([]model.Kline, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("X-APIKEY", apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("User-Agent", s.userAgent)
 	resp, err := s.client.Do(httpReq)
@@ -155,7 +201,7 @@ func (s *GMGNDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusTooManyRequests || body.Code == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("GMGN K线接口触发限流: %s", gmgnErrorMessage(body))
+		return nil, &gmgnAPIError{statusCode: resp.StatusCode, code: body.Code, message: fmt.Sprintf("GMGN K线接口触发限流: %s", gmgnErrorMessage(body))}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("GMGN K线接口返回状态码 %d: %s", resp.StatusCode, gmgnErrorMessage(body))
@@ -173,6 +219,30 @@ func (s *GMGNDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].OpenTime.Before(items[j].OpenTime) })
 	return items, nil
+}
+
+func normalizeGMGNDataSourceKeys(keys []string) []string {
+	normalized := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, item := range keys {
+		key := strings.TrimSpace(item)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+	}
+	return normalized
+}
+
+func (s *GMGNDataSource) markSuccessful(ctx context.Context, apiKey string) {
+	if s.keyPool == nil {
+		return
+	}
+	_ = s.keyPool.MarkGMGNKeySuccessful(ctx, apiKey)
 }
 
 func (s *GMGNDataSource) GetTokenPrice(ctx context.Context, tokenAddress string) (float64, error) {

@@ -283,3 +283,35 @@ COMMENT ON COLUMN birdeye_api_keys.updated_at IS '更新时间';
 - `trade_accounts`、`trade_signals`、`trade_orders`、`trade_fills`、`trade_positions`、`trade_order_events`
 
 注释语句随后端启动迁移自动执行，字段含义与当前代码中的业务读写语义保持一致。
+
+## 006-GMGN API Key 池（PostgreSQL）
+
+```sql
+CREATE TABLE gmgn_api_keys (
+  id varchar(36) PRIMARY KEY,
+  api_key text NOT NULL UNIQUE,
+  key_mask varchar(32) NOT NULL,
+  status varchar(16) NOT NULL,
+  unavailable_reason text NOT NULL DEFAULT '',
+  unavailable_at timestamptz,
+  last_successful_used_at timestamptz,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+
+CREATE INDEX idx_gmgn_api_keys_status_created_at
+  ON gmgn_api_keys (status, created_at ASC);
+
+COMMENT ON TABLE gmgn_api_keys IS 'GMGN API Key池表';
+COMMENT ON COLUMN gmgn_api_keys.id IS 'Key记录ID';
+COMMENT ON COLUMN gmgn_api_keys.api_key IS 'GMGN API Key密文原值';
+COMMENT ON COLUMN gmgn_api_keys.key_mask IS '脱敏Key展示值';
+COMMENT ON COLUMN gmgn_api_keys.status IS 'Key状态';
+COMMENT ON COLUMN gmgn_api_keys.unavailable_reason IS '不可用原因';
+COMMENT ON COLUMN gmgn_api_keys.unavailable_at IS '标记不可用时间';
+COMMENT ON COLUMN gmgn_api_keys.last_successful_used_at IS '最近成功使用时间';
+COMMENT ON COLUMN gmgn_api_keys.created_at IS '创建时间';
+COMMENT ON COLUMN gmgn_api_keys.updated_at IS '更新时间';
+```
+
+GMGN K 线和实时价格请求按 `gmgn_api_keys` 中 `available` 状态 key 轮询；配置文件 `gmgn.api_keys` / `gmgn.api_key` 会在启动时导入表内，新增接口 `POST /api/gmgn/api-keys` 支持在线添加 key。

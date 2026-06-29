@@ -28,6 +28,7 @@ type Handler struct {
 	tradeService     *trade.Service
 	candidateMonitor *signal.CandidateMonitor
 	birdeyeKeyStore  birdeyeAPIKeyStore
+	gmgnKeyStore     gmgnAPIKeyStore
 	eventBus         *eventbus.Broker
 }
 
@@ -35,10 +36,14 @@ type birdeyeAPIKeyStore interface {
 	AddKey(ctx context.Context, apiKey string) (model.BirdeyeAPIKey, error)
 }
 
-func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore, bus *eventbus.Broker) *gin.Engine {
+type gmgnAPIKeyStore interface {
+	AddKey(ctx context.Context, apiKey string) (model.GMGNAPIKey, error)
+}
+
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore, gmgnKeyStore gmgnAPIKeyStore, bus *eventbus.Broker) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore, eventBus: bus}
+	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore, gmgnKeyStore: gmgnKeyStore, eventBus: bus}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -52,6 +57,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/market/gmgn/support-resistance", h.getGMGNSupportResistance)
 	api.POST("/market/gmgn/realtime-breakout-signals", h.getGMGNRealtimeSignals)
 	api.POST("/birdeye/api-keys", h.createBirdeyeAPIKey)
+	api.POST("/gmgn/api-keys", h.createGMGNAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
 	api.POST("/signal/candidate-monitor", h.addCandidateMonitor)
 	api.GET("/signal/candidate-monitor/stream", h.streamCandidateMonitor)
@@ -159,6 +165,10 @@ type realtimeSignalRequest struct {
 }
 
 type createBirdeyeAPIKeyRequest struct {
+	APIKey string `json:"apiKey" binding:"required"`
+}
+
+type createGMGNAPIKeyRequest struct {
 	APIKey string `json:"apiKey" binding:"required"`
 }
 
@@ -271,6 +281,29 @@ func (h *Handler) createBirdeyeAPIKey(c *gin.Context) {
 		return
 	}
 	item, err := h.birdeyeKeyStore.AddKey(c.Request.Context(), apiKey)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, item)
+}
+
+func (h *Handler) createGMGNAPIKey(c *gin.Context) {
+	var req createGMGNAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "" {
+		response.Fail(c, http.StatusBadRequest, "GMGN API Key 不能为空")
+		return
+	}
+	if h.gmgnKeyStore == nil {
+		response.Fail(c, http.StatusBadRequest, "GMGN API Key 池未启用")
+		return
+	}
+	item, err := h.gmgnKeyStore.AddKey(c.Request.Context(), apiKey)
 	if err != nil {
 		h.handleError(c, err)
 		return

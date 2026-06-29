@@ -21,6 +21,7 @@ birdeye:
 gmgn:
   base_url: "https://openapi.gmgn.ai"
   api_key: "" # 对应环境变量 BACKTEST_GMGN_API_KEY；GMGN K 线与价格源必填
+  api_keys: [] # 对应环境变量 BACKTEST_GMGN_API_KEYS，可传逗号分隔；请求按池中 key 轮询
   chain: "sol"
   max_qps: 8 # 实测 token_kline 约 10 QPS，线上默认留 20% 余量
 

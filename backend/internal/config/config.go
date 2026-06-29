@@ -45,6 +45,7 @@ type BirdeyeConfig struct {
 type GMGNConfig struct {
 	BaseURL string
 	APIKey  string
+	APIKeys []string
 	Chain   string
 	MaxQPS  float64
 }
@@ -174,6 +175,7 @@ func Load() (Config, error) {
 		GMGN: GMGNConfig{
 			BaseURL: v.GetString("gmgn.base_url"),
 			APIKey:  v.GetString("gmgn.api_key"),
+			APIKeys: normalizeAPIKeys(v.GetStringSlice("gmgn.api_keys"), v.GetString("gmgn.api_key")),
 			Chain:   v.GetString("gmgn.chain"),
 			MaxQPS:  v.GetFloat64("gmgn.max_qps"),
 		},
