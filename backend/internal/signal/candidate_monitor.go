@@ -454,7 +454,7 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 	latest := klines[len(klines)-1]
 	currentMarketCap := latest.MarketCapClose
 	state.CurrentPrice = currentMarketCap
-	state.CurrentAt = latest.OpenTime
+	state.CurrentAt = m.now()
 	state.KlineFetchedAt = m.now()
 	if state.Status == candidateStatusWatching && currentMarketCap < m.minMarketCapThreshold() {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
@@ -511,6 +511,11 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	merged := m.klineCache.MergePreferIncoming(state.TokenAddress, m.cfg.Interval, normalized)
 	if m.systemKlines != nil && len(normalized) > 0 {
 		m.systemKlines.EnqueueUpsert(normalized)
+	}
+	currentPrice, err := m.priceProvider.GetTokenPrice(ctx, state.TokenAddress)
+	if err == nil && currentPrice > 0 {
+		currentMarketCap := currentPrice * supply
+		merged, _ = m.klineCache.ApplyPriceSample(state.TokenAddress, m.cfg.Interval, sampleAt, currentMarketCap)
 	}
 	if len(merged) == 0 {
 		return nil, nil
@@ -585,14 +590,14 @@ func (m *CandidateMonitor) publishCandidateDelete(state candidateMonitorState) {
 }
 
 func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	result, decisionBar, ok := backtest.DetectClosedBarBreakoutSignalsByWindows(klines, m.now(), m.cfg.LevelOptions, backtest.PressureBreakoutDetector())
+	result, decisionBar, ok := backtest.DetectLiveBreakoutSignalsByWindows(klines, m.cfg.LevelOptions, backtest.PressureBreakoutDetector())
 	if !ok {
 		return m.saveState(ctx, state)
 	}
 	if !state.LastDecisionBarTime.IsZero() && !decisionBar.OpenTime.After(state.LastDecisionBarTime) {
 		return m.saveState(ctx, state)
 	}
-	if !decisionBar.CloseTime.After(state.CandidateAt) {
+	if !decisionBar.OpenTime.After(state.CandidateAt) && !decisionBar.CloseTime.After(state.CandidateAt) {
 		state.LastDecisionBarTime = decisionBar.OpenTime
 		return m.saveState(ctx, state)
 	}
@@ -617,7 +622,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	}
 	state.Status = candidateStatusBought
 	state.BuySignalID = message.SignalID
-	state.EntryTime = message.SignalTime
+	state.EntryTime = decisionBar.OpenTime
 	state.EntryPrice = message.TriggerMarketCap
 	state.LastDecisionBarTime = decisionBar.OpenTime
 	state.Level = level
@@ -689,7 +694,7 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, decisionB
 		StrategyCode:     strategyBreakoutFollow,
 		TokenAddress:     state.TokenAddress,
 		Interval:         m.cfg.Interval,
-		SignalTime:       sig.SignalTime,
+		SignalTime:       m.now(),
 		TriggerPrice:     sig.SignalMarketCap,
 		TriggerMarketCap: sig.SignalMarketCap,
 		Reason:           fmt.Sprintf("候选池项目出现突破压力带买入场景: %s", sig.Reason),
@@ -698,7 +703,7 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, decisionB
 }
 
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	decision, decisionBar, ok := backtest.EvaluateClosedBarBandFollowExit(klines, m.now(), state.EntryTime, state.Level, m.cfg.BreakoutFollow)
+	decision, decisionBar, ok := backtest.EvaluateLiveBandFollowExit(klines, state.EntryTime, state.Level, m.cfg.BreakoutFollow)
 	if !ok {
 		return m.saveState(ctx, state)
 	}
@@ -730,7 +735,7 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 		state.EntryPrice = 0
 		state.Level = model.PriceLevel{}
 		state.CurrentPrice = latest.MarketCapClose
-		state.CurrentAt = latest.OpenTime
+		state.CurrentAt = m.now()
 		state.KlineFetchedAt = m.now()
 		if err := m.saveState(ctx, state); err != nil {
 			return err
@@ -770,7 +775,7 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 		StrategyCode:     strategyBreakoutFollow,
 		TokenAddress:     state.TokenAddress,
 		Interval:         m.cfg.Interval,
-		SignalTime:       decision.ExitPoint.Time,
+		SignalTime:       m.now(),
 		TriggerPrice:     decision.ExitPoint.Price,
 		TriggerMarketCap: decision.ExitPoint.Price,
 		Reason:           decision.Reason,

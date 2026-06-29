@@ -65,7 +65,7 @@ func (p *fakePriceProvider) GetKlines(_ context.Context, req datasource.KlineQue
 		High:         price,
 		Low:          price,
 		Close:        price,
-		Volume:       100,
+		Volume:       500,
 	}}, nil
 }
 
@@ -248,7 +248,7 @@ func TestCandidateMonitorUsesRealGMGNVolumeForRealtimeBars(t *testing.T) {
 		t.Fatalf("expected realtime klines")
 	}
 	last := klines[len(klines)-1]
-	if last.Volume != 100 {
+	if last.Volume != 501 {
 		t.Fatalf("expected realtime bar to keep GMGN volume, got %#v", last)
 	}
 	if last.MarketCapClose != 21900 {
@@ -296,7 +296,7 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	}
 }
 
-func TestCandidateMonitorWaitsForClosedBreakoutBar(t *testing.T) {
+func TestCandidateMonitorSkipsImmediateBuyWhenRealtimeVolumeStillWeak(t *testing.T) {
 	base := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	preloaded := []model.Kline{
 		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 18000, MarketCapHigh: 18800, MarketCapLow: 17600, MarketCapClose: 18200, Volume: 100},
@@ -320,7 +320,7 @@ func TestCandidateMonitorWaitsForClosedBreakoutBar(t *testing.T) {
 		t.Fatalf("process candidate: %v", err)
 	}
 	if len(pub.tradeSignals) != 0 {
-		t.Fatalf("expected no buy signal before breakout bar closes, got %#v", pub.tradeSignals)
+		t.Fatalf("expected no buy signal when realtime breakout volume is still weak, got %#v", pub.tradeSignals)
 	}
 }
 
@@ -347,8 +347,8 @@ func TestCandidateMonitorSkipsSameBarReentryAfterSell(t *testing.T) {
 		ScanNo:              7,
 		CandidateAt:         base.Add(4 * time.Minute),
 		Status:              candidateStatusWatching,
-		LastDecisionBarTime: base.Add(6 * time.Minute),
-		LastExitBarTime:     base.Add(6 * time.Minute),
+		LastDecisionBarTime: base.Add(7 * time.Minute),
+		LastExitBarTime:     base.Add(7 * time.Minute),
 		RawPayload:          json.RawMessage(`{"event":"candidate_score_passed"}`),
 	}
 	store.states[state.TokenAddress] = state

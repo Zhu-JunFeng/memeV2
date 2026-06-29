@@ -82,7 +82,7 @@ type TradeConfig struct {
 	WalletAddress     string
 	WalletPrivateKey  string
 	AccountName       string
-	BuyAmountUSD      float64
+	BuyAmountSOL      float64
 	SlippageBPS       int
 	PriorityFee       int64
 	SolanaRPCURL      string
@@ -137,7 +137,7 @@ func Load() (Config, error) {
 	v.SetDefault("trade.price_sync_enabled", false)
 	v.SetDefault("trade.price_sync_interval", 15)
 	v.SetDefault("trade.account_name", "default")
-	v.SetDefault("trade.buy_amount_usd", 10)
+	v.SetDefault("trade.buy_amount_sol", 0.1)
 	v.SetDefault("trade.slippage_bps", 500)
 	v.SetDefault("trade.priority_fee", 0)
 	v.SetDefault("trade.solana_rpc_url", "https://api.mainnet-beta.solana.com")
@@ -208,7 +208,7 @@ func Load() (Config, error) {
 			WalletAddress:     v.GetString("trade.wallet_address"),
 			WalletPrivateKey:  v.GetString("trade.wallet_private_key"),
 			AccountName:       v.GetString("trade.account_name"),
-			BuyAmountUSD:      v.GetFloat64("trade.buy_amount_usd"),
+			BuyAmountSOL:      v.GetFloat64("trade.buy_amount_sol"),
 			SlippageBPS:       v.GetInt("trade.slippage_bps"),
 			PriorityFee:       v.GetInt64("trade.priority_fee"),
 			SolanaRPCURL:      v.GetString("trade.solana_rpc_url"),

@@ -77,7 +77,7 @@ func TestPaperModeUsesQuoteWithoutWalletBalance(t *testing.T) {
 		walletAddress: privateKey.PublicKey().String(),
 	}
 	req := ExecutionRequest{
-		Account: model.TradeAccount{BuyAmountUSD: 10},
+		Account: model.TradeAccount{BuyAmountSOL: 0.1},
 		Signal: model.TradeSignal{
 			TokenAddress: "token-a",
 			SignalType:   model.TradeSignalTypeBuy,

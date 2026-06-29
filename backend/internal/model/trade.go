@@ -40,6 +40,7 @@ type TradeAccount struct {
 	WalletAddress       string    `json:"walletAddress"`
 	Status              string    `json:"status"`
 	BuyAmountUSD        float64   `json:"buyAmountUsd"`
+	BuyAmountSOL        float64   `json:"buyAmountSol"`
 	SlippageBPS         int       `json:"slippageBps"`
 	PriorityFeeLamports int64     `json:"priorityFeeLamports"`
 	CreatedAt           time.Time `json:"createdAt"`
@@ -72,6 +73,7 @@ type TradeOrder struct {
 	TokenAddress        string           `json:"tokenAddress"`
 	Side                TradeSignalType  `json:"side"`
 	IntentAmountUSD     float64          `json:"intentAmountUsd"`
+	IntentAmountSOL     float64          `json:"intentAmountSol"`
 	IntentTokenAmount   float64          `json:"intentTokenAmount"`
 	Status              TradeOrderStatus `json:"status"`
 	JupiterRequestJSON  json.RawMessage  `json:"jupiterRequestJson,omitempty"`

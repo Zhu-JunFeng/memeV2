@@ -32,7 +32,7 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		account:       model.TradeAccount{ID: "acc-1", Name: "default", BuyAmountUSD: 10, SlippageBPS: 500},
+		account:       model.TradeAccount{ID: "acc-1", Name: "default", BuyAmountSOL: 0.1, SlippageBPS: 500},
 		positions:     map[string]model.TradePosition{},
 		updatedSignal: map[string]string{},
 		positionByID:  map[string]model.TradePosition{},
@@ -87,15 +87,10 @@ func (r *fakeRepo) ListTradeSummaries(context.Context) ([]model.TradeSummaryItem
 func (r *fakeRepo) ListSignals(context.Context, model.TradeMode, int) ([]model.TradeSignal, error) {
 	return r.signals, nil
 }
-func (r *fakeRepo) GetOpenPosition(_ context.Context, accountID string, tokenAddress string) (model.TradePosition, error) {
-	item, ok := r.positions[accountID+":"+tokenAddress]
-	if !ok {
-		return model.TradePosition{}, sql.ErrNoRows
-	}
-	return item, nil
-}
 func (r *fakeRepo) CreateOrder(_ context.Context, order model.TradeOrder) (model.TradeOrder, error) {
-	order.ID = "order-" + string(rune('0'+r.nextOrderID))
+	if order.ID == "" {
+		order.ID = "order-" + string(rune('0'+r.nextOrderID))
+	}
 	r.nextOrderID++
 	r.orders = append(r.orders, order)
 	return order, nil
@@ -104,21 +99,18 @@ func (r *fakeRepo) UpdateOrderExecution(context.Context, string, model.TradeOrde
 	return nil
 }
 func (r *fakeRepo) AddOrderEvent(context.Context, string, string, any) error { return nil }
-func (r *fakeRepo) SaveFilledBuy(_ context.Context, order model.TradeOrder, fill model.TradeFill) error {
+func (r *fakeRepo) SaveFilledBuy(_ context.Context, position model.TradePosition, order model.TradeOrder, fill model.TradeFill) error {
 	storedFill := fill
 	r.lastBuyFill = &storedFill
-	position := model.TradePosition{
-		ID:           "pos-1",
-		AccountID:    r.account.ID,
-		TradeMode:    order.TradeMode,
-		TokenAddress: order.TokenAddress,
-		Status:       model.TradePositionStatusOpen,
-		Quantity:     fill.FilledTokenAmount,
-		CostAmount:   fill.FilledQuoteAmount + fill.FeeAmount,
-		AvgCostPrice: fill.AvgPrice,
-		LastPrice:    fill.AvgPrice,
-		MarketValue:  fill.FilledQuoteAmount,
-	}
+	position.AccountID = r.account.ID
+	position.TradeMode = order.TradeMode
+	position.TokenAddress = order.TokenAddress
+	position.Status = model.TradePositionStatusOpen
+	position.Quantity = fill.FilledTokenAmount
+	position.CostAmount = fill.FilledQuoteAmount + fill.FeeAmount
+	position.AvgCostPrice = fill.AvgPrice
+	position.LastPrice = fill.AvgPrice
+	position.MarketValue = fill.FilledQuoteAmount
 	r.positions[r.account.ID+":"+order.TokenAddress] = position
 	r.positionByID[position.ID] = position
 	return nil
@@ -192,10 +184,22 @@ func testTradeConfig(t *testing.T) config.TradeConfig {
 	return config.TradeConfig{
 		Enabled:          true,
 		AccountName:      "default",
-		BuyAmountUSD:     10,
+		BuyAmountSOL:     0.1,
 		SlippageBPS:      500,
 		WalletPrivateKey: privateKey.String(),
 	}
+}
+
+func waitFor(t *testing.T, check func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("condition not met before timeout")
 }
 
 func TestNewServiceDefaultsTradeModeToPaper(t *testing.T) {
@@ -243,6 +247,7 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{SignalID: "sig-1", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a", Interval: "1m", SignalTime: signalTime, TriggerMarketCap: 123, Reason: "buy"}); err != nil {
 		t.Fatalf("process signal: %v", err)
 	}
+	waitFor(t, func() bool { return len(repo.orders) == 1 && repo.lastBuyFill != nil })
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected 1 order, got %d", len(repo.orders))
 	}
@@ -262,6 +267,7 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{SignalID: "sig-2", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a", Interval: "1m", SignalTime: signalTime.Add(time.Minute), TriggerMarketCap: 124, Reason: "buy again"}); err != nil {
 		t.Fatalf("second process signal: %v", err)
 	}
+	time.Sleep(50 * time.Millisecond)
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected duplicate open-position buy to be skipped, orders=%d", len(repo.orders))
 	}
@@ -298,6 +304,7 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	if _, err := svc.ClosePosition(context.Background(), "pos-1"); err != nil {
 		t.Fatalf("close position: %v", err)
 	}
+	waitFor(t, func() bool { return repo.manualSignalSeen && len(repo.orders) == 1 })
 	if !repo.manualSignalSeen {
 		t.Fatalf("expected manual close to persist a trade signal before creating sell order")
 	}
@@ -318,6 +325,7 @@ func TestProcessSignalUsesCurrentTradeMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process signal: %v", err)
 	}
+	waitFor(t, func() bool { return len(repo.orders) == 1 })
 	if executor.lastRequest.Mode != model.TradeModeLive {
 		t.Fatalf("expected executor to receive live mode, got %s", executor.lastRequest.Mode)
 	}

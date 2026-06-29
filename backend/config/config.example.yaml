@@ -54,7 +54,7 @@ trade:
   account_name: "default"
   wallet_address: ""
   wallet_private_key: ""
-  buy_amount_usd: 10
+  buy_amount_sol: 0.1
   slippage_bps: 500
   priority_fee: 0
   solana_rpc_url: "https://api.mainnet-beta.solana.com"

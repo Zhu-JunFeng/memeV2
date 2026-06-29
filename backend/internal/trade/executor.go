@@ -352,17 +352,9 @@ func (e *JupiterExecutor) signTransaction(encoded string) (string, error) {
 func (e *JupiterExecutor) resolveOrderAmount(ctx context.Context, req ExecutionRequest) (amount string, inputMint string, outputMint string, err error) {
 	switch req.Order.Side {
 	case model.TradeSignalTypeBuy:
-		solPriceUSD, err := e.priceProvider.GetTokenPrice(ctx, wrappedSOLMint)
-		if err != nil {
-			return "", "", "", fmt.Errorf("获取 SOL 美元价格失败: %w", err)
-		}
-		if solPriceUSD <= 0 {
-			return "", "", "", fmt.Errorf("SOL 美元价格无效: %f", solPriceUSD)
-		}
-		solAmount := req.Account.BuyAmountUSD / solPriceUSD
-		lamports := uint64(math.Round(solAmount * lamportsPerSOL))
+		lamports := uint64(math.Round(req.Account.BuyAmountSOL * lamportsPerSOL))
 		if lamports == 0 {
-			return "", "", "", fmt.Errorf("按 %.4f USD 折算的 SOL 数量过小", req.Account.BuyAmountUSD)
+			return "", "", "", fmt.Errorf("买入 SOL 数量过小: %.8f", req.Account.BuyAmountSOL)
 		}
 		return strconv.FormatUint(lamports, 10), wrappedSOLMint, req.Signal.TokenAddress, nil
 	case model.TradeSignalTypeSell:

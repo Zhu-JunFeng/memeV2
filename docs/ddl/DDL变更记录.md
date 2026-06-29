@@ -315,3 +315,39 @@ COMMENT ON COLUMN gmgn_api_keys.updated_at IS '更新时间';
 ```
 
 GMGN K 线和实时价格请求按 `gmgn_api_keys` 中 `available` 状态 key 轮询；配置文件 `gmgn.api_keys` / `gmgn.api_key` 会在启动时导入表内，新增接口 `POST /api/gmgn/api-keys` 支持在线添加 key。
+
+## 007-交易买入数量切到 SOL（PostgreSQL）
+
+```sql
+ALTER TABLE trade_accounts
+  ADD COLUMN IF NOT EXISTS buy_amount_sol double precision;
+
+UPDATE trade_accounts
+SET buy_amount_sol = 0.1
+WHERE buy_amount_sol IS NULL OR buy_amount_sol <= 0;
+
+ALTER TABLE trade_accounts
+  ALTER COLUMN buy_amount_sol SET DEFAULT 0.1;
+
+ALTER TABLE trade_accounts
+  ALTER COLUMN buy_amount_sol SET NOT NULL;
+
+ALTER TABLE trade_orders
+  ADD COLUMN IF NOT EXISTS intent_amount_sol double precision;
+
+UPDATE trade_orders
+SET intent_amount_sol = 0
+WHERE intent_amount_sol IS NULL;
+
+ALTER TABLE trade_orders
+  ALTER COLUMN intent_amount_sol SET DEFAULT 0;
+
+ALTER TABLE trade_orders
+  ALTER COLUMN intent_amount_sol SET NOT NULL;
+```
+
+说明：
+
+- `trade_accounts.buy_amount_sol` 作为新的固定买入数量字段，当前默认 `0.1 SOL`
+- `trade_orders.intent_amount_sol` 用于记录买单计划投入的 SOL 数量
+- `buy_amount_usd`、`intent_amount_usd` 保留为历史兼容字段，不再作为新交易主语义

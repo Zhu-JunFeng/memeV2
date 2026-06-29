@@ -401,12 +401,12 @@ Birdeye K 线专用实时突破信号入口。
 - 交易消费只处理标准 `TradeSignalMessage`；老版候选池 `candidate_score_passed` 由信号模块订阅后进入二次监控，不再直接买入
 - 候选池二次监控每 2 秒调用 GMGN 最近 1m K 线，保留上游真实 `volume`，并按价格乘 Solana RPC `getTokenSupply` 换算出本地 1m 市值 K 线；重启时会先从 `system_kline_cache` 预加载近 200 根，再继续增量维护，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
 - 未买入候选在最新市值低于阈值时从监控池移除；默认阈值为 `10_000`，配置了正数 `signal.min_market_cap` 时按配置值覆盖，已买入候选继续监控卖点
-- 候选池监控只用“最后一根已收盘 bar”做突破与卖点判定；未收盘 bar 只更新当前市值，不直接触发买卖信号
+- 候选池监控会把最新价格实时合并进当前 forming bar；一旦满足突破/止盈/止损条件，就立即发出买卖信号
 - 候选池自维护 K 线的 `volume` 直接使用 GMGN 返回的真实成交额，用这组量能执行试压/突破量能过滤
 - 候选池卖出后如果市值仍高于阈值会重新进入 `watching`，但同一根已卖出的 bar 不允许再次买入，实时语义与回测的单持仓约束保持一致
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
-- `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单
+- `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并按固定 `trade.buy_amount_sol` 数量直接向 Jupiter 下单
 - GMGN、Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`；DexScreener 仅在 `trade.price_source=dexscreener` 时使用。
 
 ### GET /api/signal/candidate-monitor
@@ -537,7 +537,7 @@ Signals 实时 SSE 流。参数同 `/api/trade/signals`。连接后先推 `snaps
 - `tradeMode`
 - `executionChannel`：当前为 `jupiter_paper` 或 `jupiter_live`
 - `side`：买/卖方向
-- `intentAmountUsd` / `intentTokenAmount`：下单意图金额
+- `intentAmountSol` / `intentTokenAmount`：下单意图数量；买单默认展示固定 `0.1 SOL`，卖单展示待卖出的 token 数量
 - `status`：`pending` / `submitted` / `filled` / `failed`
 - `submitTxHash`
 - `failReason`

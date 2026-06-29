@@ -104,7 +104,7 @@
 
 - 当前交易模块支持全局 `模拟盘 / 实盘` 两种模式，模式值落库到 `system_runtime_settings`，服务重启后继续生效。
 - 模拟盘只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行链上交易；系统会基于报价结果模拟 fill，并把相关订单、成交、持仓都打上 `paper` 标记。
-- 实盘保持原链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按实时 SOL/USD 价格把 `trade.buy_amount_usd` 折算成 SOL 数量后下单。
+- 实盘保持原链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按固定 `trade.buy_amount_sol` 数量下单。
 - GMGN、DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
 
 ## 本地开发
@@ -187,13 +187,13 @@ npm run build
 - `redis.consumer_channel`：交易模块独立订阅通道；为空时消费 `redis.channel`
 - `signal.candidate_monitor_enabled` / `signal.candidate_channel`：是否启用候选池后二次压力突破监控及上游候选池通道
 - `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值；候选池当前默认阈值为 `10_000`，配置 `>0` 时按配置值覆盖
-- 候选池监控只对“最后一根已收盘 1m 市值 K 线”做买卖判定，避免把未收盘 bar 当成突破/止损输入
+- 候选池监控会把最新价格实时写入当前 forming bar；一旦满足突破/止盈/止损条件，就立即发出买卖信号并进入交易执行
 - 候选池自维护 K 线的 `volume` 表示该分钟内的系统采样次数，用来执行实时量能过滤，不再固定为 `0`
 - 候选池卖出后若市值仍高于阈值会 rearm，但同一根已卖出的 bar 不允许立刻重新买入
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
-- `trade.buy_amount_usd`：固定买入金额
+- `trade.buy_amount_sol`：固定买入数量，默认 `0.1 SOL`
 - `trade.wallet_private_key`：Solana 钱包私钥（base58）
 - `trade.solana_rpc_url`：用于查询 token decimals 的 Solana RPC
 - `trade.price_source`：持仓估值和 SOL/USD 折算价格源，支持 `gmgn` / `dexscreener`，当前默认 `gmgn`

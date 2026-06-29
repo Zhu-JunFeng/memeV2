@@ -598,11 +598,7 @@
               </template>
             </el-table-column>
             <el-table-column label="计划金额" width="92">
-              <template #default="{ row }">{{
-                row.intentAmountUsd
-                  ? formatUsd(row.intentAmountUsd).replace("+", "")
-                  : formatTokenAmount(row.intentTokenAmount)
-              }}</template>
+              <template #default="{ row }">{{ formatOrderIntent(row) }}</template>
             </el-table-column>
             <el-table-column prop="status" label="状态" width="84" />
             <el-table-column label="Tx" width="88">
@@ -1786,6 +1782,16 @@ function formatTokenAmount(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   return number.toFixed(4).replace(/\.?0+$/, "");
+}
+
+function formatOrderIntent(row) {
+  if (Number(row?.intentAmountSol) > 0) {
+    return `${formatTokenAmount(row.intentAmountSol)} SOL`;
+  }
+  if (Number(row?.intentAmountUsd) > 0) {
+    return formatUsd(row.intentAmountUsd).replace("+", "");
+  }
+  return formatTokenAmount(row?.intentTokenAmount);
 }
 
 function tradeModeText(value) {
