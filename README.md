@@ -186,6 +186,9 @@ npm run build
 - `redis.consumer_channel`：交易模块独立订阅通道；为空时消费 `redis.channel`
 - `signal.candidate_monitor_enabled` / `signal.candidate_channel`：是否启用候选池后二次压力突破监控及上游候选池通道
 - `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值；候选池当前默认阈值为 `10_000`，配置 `>0` 时按配置值覆盖
+- 候选池监控只对“最后一根已收盘 1m 市值 K 线”做买卖判定，避免把未收盘 bar 当成突破/止损输入
+- 候选池自维护 K 线的 `volume` 表示该分钟内的系统采样次数，用来执行实时量能过滤，不再固定为 `0`
+- 候选池卖出后若市值仍高于阈值会 rearm，但同一根已卖出的 bar 不允许立刻重新买入
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值

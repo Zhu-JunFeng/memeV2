@@ -92,10 +92,11 @@ func (c *candidateKlineCache) ApplyPriceSample(tokenAddress string, interval str
 		last.MarketCapClose = marketCap
 		last.Close = marketCap
 		last.CloseTime = bar.CloseTime
-		last.Volume = 0
+		last.Volume++
 		items[len(items)-1] = last
 		bar = last
 	case last.OpenTime.Before(bar.OpenTime):
+		bar.Volume = 1
 		items = append(items, bar)
 	default:
 		items = mergeKlinesByOpenTime(items, []model.Kline{bar}, c.limit)
@@ -128,7 +129,7 @@ func buildCandidateBar(sampleAt time.Time, tokenAddress string, interval string,
 		MarketCapHigh:  marketCap,
 		MarketCapLow:   marketCap,
 		MarketCapClose: marketCap,
-		Volume:         0,
+		Volume:         1,
 	}
 }
 

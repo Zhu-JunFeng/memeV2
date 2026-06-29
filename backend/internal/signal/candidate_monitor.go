@@ -108,21 +108,23 @@ type candidateScorePassedMessage struct {
 }
 
 type candidateMonitorState struct {
-	TokenAddress   string
-	Symbol         string
-	RunID          string
-	StrategyName   string
-	ScanNo         int64
-	RawPayload     json.RawMessage
-	CandidateAt    time.Time
-	Status         string
-	BuySignalID    string
-	EntryTime      time.Time
-	EntryPrice     float64
-	CurrentPrice   float64
-	CurrentAt      time.Time
-	KlineFetchedAt time.Time
-	Level          model.PriceLevel
+	TokenAddress        string
+	Symbol              string
+	RunID               string
+	StrategyName        string
+	ScanNo              int64
+	RawPayload          json.RawMessage
+	CandidateAt         time.Time
+	Status              string
+	BuySignalID         string
+	EntryTime           time.Time
+	EntryPrice          float64
+	CurrentPrice        float64
+	CurrentAt           time.Time
+	KlineFetchedAt      time.Time
+	LastDecisionBarTime time.Time
+	LastExitBarTime     time.Time
+	Level               model.PriceLevel
 }
 
 type candidateMonitorStore interface {
@@ -215,7 +217,7 @@ func (m *CandidateMonitor) preloadActiveKlines(ctx context.Context) {
 			log.Printf("candidate monitor preload klines failed: ca=%s err=%v", item.TokenAddress, err)
 			continue
 		}
-		// 候选池监控统一使用本地维护的市值K线，成交量固定为 0，避免混入上游原始 volume 干扰量能判定。
+		// 候选池监控统一使用本地维护的市值K线，并保留系统内累计出来的样本量能。
 		m.klineCache.Set(item.TokenAddress, m.cfg.Interval, sanitizeMonitorKlines(klines))
 	}
 }
@@ -544,26 +546,25 @@ func (m *CandidateMonitor) publishCandidateDelete(state candidateMonitorState) {
 }
 
 func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	if len(klines) < 2 {
+	result, decisionBar, ok := backtest.DetectClosedBarBreakoutSignalsByWindows(klines, m.now(), m.cfg.LevelOptions, backtest.PressureBreakoutDetector())
+	if !ok {
 		return m.saveState(ctx, state)
 	}
-	history := klines[:len(klines)-1]
-	current := klines[len(klines)-1]
-	windowSize := m.cfg.LevelOptions.WindowSize
-	if windowSize <= 0 || windowSize > len(history) {
-		windowSize = len(history)
+	if !state.LastDecisionBarTime.IsZero() && !decisionBar.OpenTime.After(state.LastDecisionBarTime) {
+		return m.saveState(ctx, state)
 	}
-	windowStep := m.cfg.LevelOptions.WindowStep
-	if windowStep <= 0 {
-		windowStep = 1
+	if !decisionBar.CloseTime.After(state.CandidateAt) {
+		state.LastDecisionBarTime = decisionBar.OpenTime
+		return m.saveState(ctx, state)
 	}
-	result := backtest.CalculateRealtimeScenarioSignalsByWindows(history, current, m.cfg.LevelOptions, windowSize, windowStep, backtest.PressureBreakoutDetector())
-	signals := candidateSignalsAfter(result.Signals, state.CandidateAt)
+	signals := candidateSignalsAfter(result.Signals, state.CandidateAt, decisionBar)
+	signals = candidateSignalsAfterExit(signals, state.LastExitBarTime)
 	if len(signals) == 0 {
+		state.LastDecisionBarTime = decisionBar.OpenTime
 		return m.saveState(ctx, state)
 	}
 	sig := signals[0]
-	message, level, err := m.buildBuySignal(state, sig)
+	message, level, err := m.buildBuySignal(state, decisionBar, sig)
 	if err != nil {
 		return err
 	}
@@ -579,6 +580,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	state.BuySignalID = message.SignalID
 	state.EntryTime = message.SignalTime
 	state.EntryPrice = message.TriggerMarketCap
+	state.LastDecisionBarTime = decisionBar.OpenTime
 	state.Level = level
 	if err := m.saveState(ctx, state); err != nil {
 		return err
@@ -587,12 +589,13 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	return nil
 }
 
-func candidateSignalsAfter(signals []backtest.RealtimeScenarioSignal, at time.Time) []backtest.RealtimeScenarioSignal {
+func candidateSignalsAfter(signals []backtest.RealtimeScenarioSignal, at time.Time, decisionBar model.Kline) []backtest.RealtimeScenarioSignal {
+	if !decisionBar.CloseTime.After(at) {
+		return nil
+	}
 	items := make([]backtest.RealtimeScenarioSignal, 0, len(signals))
 	for _, signal := range signals {
-		if signal.SignalTime.After(at) {
-			items = append(items, signal)
-		}
+		items = append(items, signal)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].SignalTime.Equal(items[j].SignalTime) {
@@ -603,7 +606,20 @@ func candidateSignalsAfter(signals []backtest.RealtimeScenarioSignal, at time.Ti
 	return items
 }
 
-func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, sig backtest.RealtimeScenarioSignal) (model.TradeSignalMessage, model.PriceLevel, error) {
+func candidateSignalsAfterExit(signals []backtest.RealtimeScenarioSignal, lastExitBarTime time.Time) []backtest.RealtimeScenarioSignal {
+	if lastExitBarTime.IsZero() {
+		return signals
+	}
+	items := make([]backtest.RealtimeScenarioSignal, 0, len(signals))
+	for _, signal := range signals {
+		if signal.SignalTime.After(lastExitBarTime) {
+			items = append(items, signal)
+		}
+	}
+	return items
+}
+
+func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, decisionBar model.Kline, sig backtest.RealtimeScenarioSignal) (model.TradeSignalMessage, model.PriceLevel, error) {
 	if sig.Breakout == nil || sig.Breakout.BuyPoint == nil {
 		return model.TradeSignalMessage{}, model.PriceLevel{}, errors.New("breakout signal missing buy point")
 	}
@@ -616,10 +632,13 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, sig backt
 		Breakout:    sig.Breakout,
 	}
 	metadata, err := json.Marshal(map[string]any{
-		"source":       "candidate_monitor",
-		"upstream":     json.RawMessage(state.RawPayload),
-		"realtime":     sig,
-		"strategyCode": strategyBreakoutFollow,
+		"source":          "candidate_monitor",
+		"upstream":        json.RawMessage(state.RawPayload),
+		"realtime":        sig,
+		"strategyCode":    strategyBreakoutFollow,
+		"decisionBarTime": decisionBar.OpenTime,
+		"entryBarTime":    sig.SignalTime,
+		"volumeMode":      "sample_count",
 	})
 	if err != nil {
 		return model.TradeSignalMessage{}, model.PriceLevel{}, err
@@ -640,15 +659,18 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, sig backt
 }
 
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	entryIndex := findKlineIndex(klines, state.EntryTime)
-	if entryIndex < 0 {
+	decision, decisionBar, ok := backtest.EvaluateClosedBarBandFollowExit(klines, m.now(), state.EntryTime, state.Level, m.cfg.BreakoutFollow)
+	if !ok {
 		return m.saveState(ctx, state)
 	}
-	decision := backtest.EvaluateRealtimeBandFollowExit(klines, entryIndex, state.Level, m.cfg.BreakoutFollow)
+	if !state.LastDecisionBarTime.IsZero() && !decisionBar.OpenTime.After(state.LastDecisionBarTime) {
+		return m.saveState(ctx, state)
+	}
+	state.LastDecisionBarTime = decisionBar.OpenTime
 	if !decision.Triggered || decision.ExitPoint == nil {
 		return m.saveState(ctx, state)
 	}
-	message, err := m.buildSellSignal(state, decision)
+	message, err := m.buildSellSignal(state, decisionBar, decision)
 	if err != nil {
 		return err
 	}
@@ -661,6 +683,7 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 		return err
 	}
 	latest := klines[len(klines)-1]
+	state.LastExitBarTime = decisionBar.OpenTime
 	if latest.MarketCapClose > m.minMarketCapThreshold() {
 		state.Status = candidateStatusWatching
 		state.BuySignalID = ""
@@ -684,24 +707,19 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	return nil
 }
 
-func findKlineIndex(klines []model.Kline, target time.Time) int {
-	for index, item := range klines {
-		if item.OpenTime.Equal(target) {
-			return index
-		}
-	}
-	return -1
-}
-
-func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision backtest.BandFollowExitDecision) (model.TradeSignalMessage, error) {
+func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decisionBar model.Kline, decision backtest.BandFollowExitDecision) (model.TradeSignalMessage, error) {
 	metadata, err := json.Marshal(map[string]any{
-		"source":       "candidate_monitor",
-		"upstream":     json.RawMessage(state.RawPayload),
-		"buySignalId":  state.BuySignalID,
-		"outcome":      decision.Outcome,
-		"holdingBars":  decision.HoldingBars,
-		"profitRate":   decision.ProfitRate,
-		"strategyCode": strategyBreakoutFollow,
+		"source":          "candidate_monitor",
+		"upstream":        json.RawMessage(state.RawPayload),
+		"buySignalId":     state.BuySignalID,
+		"outcome":         decision.Outcome,
+		"holdingBars":     decision.HoldingBars,
+		"profitRate":      decision.ProfitRate,
+		"strategyCode":    strategyBreakoutFollow,
+		"entryBarTime":    state.EntryTime,
+		"exitBarTime":     decisionBar.OpenTime,
+		"decisionBarTime": decisionBar.OpenTime,
+		"volumeMode":      "sample_count",
 	})
 	if err != nil {
 		return model.TradeSignalMessage{}, err
@@ -774,7 +792,9 @@ func sanitizeMonitorKlines(klines []model.Kline) []model.Kline {
 		current.MarketCapHigh = highValue
 		current.MarketCapLow = lowValue
 		current.MarketCapClose = closeValue
-		current.Volume = 0
+		if current.Volume < 0 {
+			current.Volume = 0
+		}
 		items = append(items, current)
 	}
 	return items
@@ -901,21 +921,23 @@ func encodeCandidateState(state candidateMonitorState) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"tokenAddress":   state.TokenAddress,
-		"symbol":         state.Symbol,
-		"runId":          state.RunID,
-		"strategyName":   state.StrategyName,
-		"scanNo":         strconv.FormatInt(state.ScanNo, 10),
-		"rawPayload":     string(state.RawPayload),
-		"candidateAt":    strconv.FormatInt(state.CandidateAt.UnixMilli(), 10),
-		"status":         state.Status,
-		"buySignalId":    state.BuySignalID,
-		"entryTime":      strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
-		"entryPrice":     strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
-		"currentPrice":   strconv.FormatFloat(state.CurrentPrice, 'f', -1, 64),
-		"currentAt":      strconv.FormatInt(state.CurrentAt.UnixMilli(), 10),
-		"klineFetchedAt": strconv.FormatInt(state.KlineFetchedAt.UnixMilli(), 10),
-		"level":          string(levelJSON),
+		"tokenAddress":        state.TokenAddress,
+		"symbol":              state.Symbol,
+		"runId":               state.RunID,
+		"strategyName":        state.StrategyName,
+		"scanNo":              strconv.FormatInt(state.ScanNo, 10),
+		"rawPayload":          string(state.RawPayload),
+		"candidateAt":         strconv.FormatInt(state.CandidateAt.UnixMilli(), 10),
+		"status":              state.Status,
+		"buySignalId":         state.BuySignalID,
+		"entryTime":           strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
+		"entryPrice":          strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
+		"currentPrice":        strconv.FormatFloat(state.CurrentPrice, 'f', -1, 64),
+		"currentAt":           strconv.FormatInt(state.CurrentAt.UnixMilli(), 10),
+		"klineFetchedAt":      strconv.FormatInt(state.KlineFetchedAt.UnixMilli(), 10),
+		"lastDecisionBarTime": strconv.FormatInt(state.LastDecisionBarTime.UnixMilli(), 10),
+		"lastExitBarTime":     strconv.FormatInt(state.LastExitBarTime.UnixMilli(), 10),
+		"level":               string(levelJSON),
 	}, nil
 }
 
@@ -988,6 +1010,24 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 		}
 		if value > 0 {
 			state.KlineFetchedAt = time.UnixMilli(value).UTC()
+		}
+	}
+	if fields["lastDecisionBarTime"] != "" {
+		value, err := strconv.ParseInt(fields["lastDecisionBarTime"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		if value > 0 {
+			state.LastDecisionBarTime = time.UnixMilli(value).UTC()
+		}
+	}
+	if fields["lastExitBarTime"] != "" {
+		value, err := strconv.ParseInt(fields["lastExitBarTime"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		if value > 0 {
+			state.LastExitBarTime = time.UnixMilli(value).UTC()
 		}
 	}
 	if fields["level"] != "" {

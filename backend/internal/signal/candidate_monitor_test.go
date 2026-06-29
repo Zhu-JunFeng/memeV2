@@ -181,8 +181,8 @@ func TestCandidateMonitorPreloadSanitizesSystemKlines(t *testing.T) {
 	if len(cached) != 1 {
 		t.Fatalf("expected one cached kline, got %d", len(cached))
 	}
-	if cached[0].Volume != 0 {
-		t.Fatalf("expected preload volume to be sanitized to 0, got %#v", cached[0])
+	if cached[0].Volume != 123 {
+		t.Fatalf("expected preload volume to be preserved, got %#v", cached[0])
 	}
 	if cached[0].Open != 20000 || cached[0].High != 22000 || cached[0].Low != 19000 || cached[0].Close != 21000 {
 		t.Fatalf("expected preload to use market cap values, got %#v", cached[0])
@@ -216,10 +216,11 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 18800, MarketCapHigh: 20900, MarketCapLow: 18600, MarketCapClose: 19700, Volume: 240},
 		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 19700, MarketCapHigh: 19900, MarketCapLow: 18800, MarketCapClose: 19000, Volume: 140},
 		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 19000, MarketCapHigh: 21000, MarketCapLow: 18900, MarketCapClose: 19800, Volume: 280},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 19800, MarketCapHigh: 22500, MarketCapLow: 19600, MarketCapClose: 21900, Volume: 320},
 	}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	now := base.Add(6*time.Minute + 30*time.Second)
+	now := base.Add(7*time.Minute + 30*time.Second)
 	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.95}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
@@ -246,6 +247,72 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	}
 }
 
+func TestCandidateMonitorWaitsForClosedBreakoutBar(t *testing.T) {
+	base := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
+	preloaded := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 18000, MarketCapHigh: 18800, MarketCapLow: 17600, MarketCapClose: 18200, Volume: 100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 18200, MarketCapHigh: 20800, MarketCapLow: 18000, MarketCapClose: 19600, Volume: 200},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 19600, MarketCapHigh: 19800, MarketCapLow: 18400, MarketCapClose: 18800, Volume: 120},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 18800, MarketCapHigh: 20900, MarketCapLow: 18600, MarketCapClose: 19700, Volume: 240},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 19700, MarketCapHigh: 19900, MarketCapLow: 18800, MarketCapClose: 19000, Volume: 140},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 19000, MarketCapHigh: 21000, MarketCapLow: 18900, MarketCapClose: 19800, Volume: 280},
+	}
+	store := newFakeCandidateStore()
+	pub := &capturePublisher{}
+	now := base.Add(5*time.Minute + 30*time.Second)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.95}}, now, pub)
+	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
+	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
+	state := candidateMonitorState{TokenAddress: "token-a", RunID: "run-1", ScanNo: 7, CandidateAt: base.Add(4*time.Minute + 30*time.Second), Status: candidateStatusWatching, RawPayload: json.RawMessage(`{"event":"candidate_score_passed"}`)}
+	store.states[state.TokenAddress] = state
+	monitor.preloadActiveKlines(context.Background())
+
+	if err := monitor.processCandidate(context.Background(), state); err != nil {
+		t.Fatalf("process candidate: %v", err)
+	}
+	if len(pub.tradeSignals) != 0 {
+		t.Fatalf("expected no buy signal before breakout bar closes, got %#v", pub.tradeSignals)
+	}
+}
+
+func TestCandidateMonitorSkipsSameBarReentryAfterSell(t *testing.T) {
+	base := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
+	preloaded := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 18000, MarketCapHigh: 18800, MarketCapLow: 17600, MarketCapClose: 18200, Volume: 100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 18200, MarketCapHigh: 20800, MarketCapLow: 18000, MarketCapClose: 19600, Volume: 200},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 19600, MarketCapHigh: 19800, MarketCapLow: 18400, MarketCapClose: 18800, Volume: 120},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 18800, MarketCapHigh: 20900, MarketCapLow: 18600, MarketCapClose: 19700, Volume: 240},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 19700, MarketCapHigh: 19900, MarketCapLow: 18800, MarketCapClose: 19000, Volume: 140},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 19000, MarketCapHigh: 21000, MarketCapLow: 18900, MarketCapClose: 19800, Volume: 280},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 19800, MarketCapHigh: 22500, MarketCapLow: 19600, MarketCapClose: 21900, Volume: 320},
+	}
+	store := newFakeCandidateStore()
+	pub := &capturePublisher{}
+	now := base.Add(7*time.Minute + 30*time.Second)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.95}}, now, pub)
+	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
+	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
+	state := candidateMonitorState{
+		TokenAddress:        "token-a",
+		RunID:               "run-1",
+		ScanNo:              7,
+		CandidateAt:         base.Add(4 * time.Minute),
+		Status:              candidateStatusWatching,
+		LastDecisionBarTime: base.Add(6 * time.Minute),
+		LastExitBarTime:     base.Add(6 * time.Minute),
+		RawPayload:          json.RawMessage(`{"event":"candidate_score_passed"}`),
+	}
+	store.states[state.TokenAddress] = state
+	monitor.preloadActiveKlines(context.Background())
+
+	if err := monitor.processCandidate(context.Background(), state); err != nil {
+		t.Fatalf("process candidate: %v", err)
+	}
+	if len(pub.tradeSignals) != 0 {
+		t.Fatalf("expected same closed bar reentry to be skipped, got %#v", pub.tradeSignals)
+	}
+}
+
 func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 	base := time.Date(2026, 6, 29, 11, 0, 0, 0, time.UTC)
 	entry := model.LevelAnchorPoint{Time: base, Price: 10000}
@@ -260,10 +327,13 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed"}`),
 		Level:        model.PriceLevel{Price: 9800, Upper: 9800, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
 	}
-	preloaded := []model.Kline{{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100}}
+	preloaded := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10000, MarketCapHigh: 11000, MarketCapLow: 9950, MarketCapClose: 10800, Volume: 120},
+	}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	now := base.Add(time.Minute + 30*time.Second)
+	now := base.Add(2*time.Minute + 30*time.Second)
 	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.8}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
@@ -339,10 +409,13 @@ func TestCandidateMonitorSellStopsWhenMarketCapNotAboveTenK(t *testing.T) {
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed"}`),
 		Level:        model.PriceLevel{Price: 9500, Upper: 9500, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
 	}
-	preloaded := []model.Kline{{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100}}
+	preloaded := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10000, MarketCapHigh: 11000, MarketCapLow: 9950, MarketCapClose: 10800, Volume: 120},
+	}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	now := base.Add(time.Minute + 30*time.Second)
+	now := base.Add(2*time.Minute + 30*time.Second)
 	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {9.0}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
