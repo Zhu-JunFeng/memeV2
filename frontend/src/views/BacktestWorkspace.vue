@@ -344,8 +344,8 @@
         <div>
           <div class="panel-title">交易模式与执行看板</div>
           <div class="panel-subtitle">
-            全局模式落库保存。模拟盘仍走 Jupiter
-            报价/下单准备，但不会执行链上签名与提交。
+            全局模式落库保存。模拟盘只走 Jupiter
+            报价，不依赖钱包余额，也不会执行链上签名与提交。
           </div>
         </div>
         <div class="trade-panel-actions">

@@ -402,7 +402,7 @@ Birdeye K 线专用实时突破信号入口。
 - 候选池二次监控每 2 秒调用 GMGN 实时价格接口，按最新 USD 价格乘 Solana RPC `getTokenSupply` 聚合本地 1m 市值 K 线；重启时会先从 `system_kline_cache` 预加载近 200 根，再继续增量维护，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
 - 未买入候选在最新市值低于阈值时从监控池移除；默认阈值为 `10_000`，配置了正数 `signal.min_market_cap` 时按配置值覆盖，已买入候选继续监控卖点
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
-- `paper` 模式仍调用 Jupiter `order` / 报价准备链路，但不会签名和执行；系统会基于 Jupiter 响应生成模拟成交
+- `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单
 - GMGN、Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`；DexScreener 仅在 `trade.price_source=dexscreener` 时使用。
 
@@ -473,7 +473,7 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 
 说明：
 
-- `paper`：仍请求 Jupiter `order`，但不会执行签名和链上提交
+- `paper`：只请求 Jupiter `quote`，不依赖真实钱包余额，也不会执行签名和链上提交
 - `live`：恢复真实下单执行
 - 切换后新进来的信号、订单、成交、持仓都会记录对应 `tradeMode`
 

@@ -50,6 +50,17 @@ type jupiterOrderResponse struct {
 	RentFeeLamports           int64  `json:"rentFeeLamports"`
 }
 
+type jupiterQuoteResponse struct {
+	InputMint            string `json:"inputMint"`
+	InAmount             string `json:"inAmount"`
+	OutputMint           string `json:"outputMint"`
+	OutAmount            string `json:"outAmount"`
+	OtherAmountThreshold string `json:"otherAmountThreshold"`
+	SwapMode             string `json:"swapMode"`
+	SlippageBps          int    `json:"slippageBps"`
+	PriceImpactPct       string `json:"priceImpactPct"`
+}
+
 type jupiterExecuteRequest struct {
 	SignedTransaction string `json:"signedTransaction"`
 	RequestID         string `json:"requestId"`
@@ -105,15 +116,19 @@ func NewJupiterExecutor(cfg config.TradeConfig, priceProvider datasource.TokenPr
 // Execute 按“下订单 -> 本地签名 -> 提交执行”三步走，
 // 这样交易事实只以 Jupiter 的真实成交结果为准，不复用计划值充当 fill。
 func (e *JupiterExecutor) Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error) {
+	if req.Mode == model.TradeModePaper {
+		quoteResp, err := e.getQuote(ctx, req)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		return e.buildPaperExecutionResult(ctx, req, quoteResp)
+	}
 	orderResp, err := e.getOrder(ctx, req)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
 	if strings.TrimSpace(orderResp.Transaction) == "" {
 		return ExecutionResult{}, fmt.Errorf("Jupiter 下单未返回交易数据: %s", defaultString(orderResp.ErrorMessage, "unknown error"))
-	}
-	if req.Mode == model.TradeModePaper {
-		return e.buildPaperExecutionResult(ctx, req, orderResp)
 	}
 	signedTransaction, err := e.signTransaction(orderResp.Transaction)
 	if err != nil {
@@ -133,25 +148,25 @@ func (e *JupiterExecutor) Execute(ctx context.Context, req ExecutionRequest) (Ex
 	return result, nil
 }
 
-func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req ExecutionRequest, orderResp jupiterOrderResponse) (ExecutionResult, error) {
+func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req ExecutionRequest, quoteResp jupiterQuoteResponse) (ExecutionResult, error) {
 	solPriceUSD, err := e.priceProvider.GetTokenPrice(ctx, wrappedSOLMint)
 	if err != nil {
 		return ExecutionResult{}, fmt.Errorf("获取 SOL 美元价格失败: %w", err)
 	}
 	requestPayload, err := json.Marshal(map[string]any{
 		"walletAddress": e.walletAddress,
-		"requestId":     orderResp.RequestID,
 		"side":          req.Order.Side,
 		"mode":          req.Mode,
+		"simulatedBy":   "jupiter_quote",
 	})
 	if err != nil {
 		return ExecutionResult{}, err
 	}
 	responsePayload, err := json.Marshal(map[string]any{
-		"order": orderResp,
+		"quote": quoteResp,
 		"paper": map[string]any{
 			"simulated": true,
-			"reason":    "paper mode skips Jupiter execute",
+			"reason":    "paper mode uses Jupiter quote only",
 		},
 	})
 	if err != nil {
@@ -161,7 +176,7 @@ func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req Exe
 		RequestPayload:   requestPayload,
 		ResponsePayload:  responsePayload,
 		TxHash:           "paper_" + uuid.NewString(),
-		FeeAmount:        e.feeUSD(solPriceUSD, orderResp),
+		FeeAmount:        0,
 		FeeAsset:         "USD",
 		ExecutedAt:       time.Now().UTC(),
 		Simulated:        true,
@@ -173,11 +188,11 @@ func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req Exe
 		if err != nil {
 			return ExecutionResult{}, err
 		}
-		filledToken, err := rawAmountToDecimal(orderResp.OutAmount, decimals)
+		filledToken, err := rawAmountToDecimal(quoteResp.OutAmount, decimals)
 		if err != nil {
 			return ExecutionResult{}, err
 		}
-		spentSOL, err := rawAmountToDecimal(orderResp.InAmount, 9)
+		spentSOL, err := rawAmountToDecimal(quoteResp.InAmount, 9)
 		if err != nil {
 			return ExecutionResult{}, err
 		}
@@ -191,11 +206,11 @@ func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req Exe
 		if err != nil {
 			return ExecutionResult{}, err
 		}
-		soldToken, err := rawAmountToDecimal(orderResp.InAmount, decimals)
+		soldToken, err := rawAmountToDecimal(quoteResp.InAmount, decimals)
 		if err != nil {
 			return ExecutionResult{}, err
 		}
-		receivedSOL, err := rawAmountToDecimal(orderResp.OutAmount, 9)
+		receivedSOL, err := rawAmountToDecimal(quoteResp.OutAmount, 9)
 		if err != nil {
 			return ExecutionResult{}, err
 		}
@@ -208,6 +223,41 @@ func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req Exe
 		return ExecutionResult{}, fmt.Errorf("不支持的交易方向: %s", req.Order.Side)
 	}
 	return result, nil
+}
+
+func (e *JupiterExecutor) getQuote(ctx context.Context, req ExecutionRequest) (jupiterQuoteResponse, error) {
+	amount, inputMint, outputMint, err := e.resolveOrderAmount(ctx, req)
+	if err != nil {
+		return jupiterQuoteResponse{}, err
+	}
+	endpoint := strings.TrimRight(defaultString(e.cfg.Jupiter.BaseURL, "https://lite-api.jup.ag"), "/") + "/swap/v1/quote"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return jupiterQuoteResponse{}, err
+	}
+	query := httpReq.URL.Query()
+	query.Set("inputMint", inputMint)
+	query.Set("outputMint", outputMint)
+	query.Set("amount", amount)
+	query.Set("slippageBps", strconv.Itoa(maxInt(req.Config.SlippageBPS, 1)))
+	httpReq.URL.RawQuery = query.Encode()
+	httpReq.Header.Set("accept", "application/json")
+	resp, err := e.client.Do(httpReq)
+	if err != nil {
+		return jupiterQuoteResponse{}, err
+	}
+	defer resp.Body.Close()
+	var body jupiterQuoteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return jupiterQuoteResponse{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return jupiterQuoteResponse{}, fmt.Errorf("Jupiter 报价返回状态码 %d", resp.StatusCode)
+	}
+	if strings.TrimSpace(body.InAmount) == "" || strings.TrimSpace(body.OutAmount) == "" {
+		return jupiterQuoteResponse{}, fmt.Errorf("Jupiter 模拟报价失败: 未返回有效数量")
+	}
+	return body, nil
 }
 
 func (e *JupiterExecutor) getOrder(ctx context.Context, req ExecutionRequest) (jupiterOrderResponse, error) {
@@ -239,10 +289,10 @@ func (e *JupiterExecutor) getOrder(ctx context.Context, req ExecutionRequest) (j
 		return jupiterOrderResponse{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return jupiterOrderResponse{}, fmt.Errorf("Jupiter 下单返回状态码 %d: %s", resp.StatusCode, defaultString(body.ErrorMessage, "request failed"))
+		return jupiterOrderResponse{}, fmt.Errorf("Jupiter 下单返回状态码 %d: %s", resp.StatusCode, localizeJupiterMessage(defaultString(body.ErrorMessage, "request failed")))
 	}
 	if body.ErrorMessage != "" {
-		return jupiterOrderResponse{}, fmt.Errorf("Jupiter 下单失败: %s", body.ErrorMessage)
+		return jupiterOrderResponse{}, fmt.Errorf("Jupiter 下单失败: %s", localizeJupiterMessage(body.ErrorMessage))
 	}
 	return body, nil
 }
@@ -270,7 +320,7 @@ func (e *JupiterExecutor) executeOrder(ctx context.Context, signedTransaction st
 		return jupiterExecuteResponse{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return jupiterExecuteResponse{}, fmt.Errorf("Jupiter 执行返回状态码 %d: %s", resp.StatusCode, defaultString(body.Error, "request failed"))
+		return jupiterExecuteResponse{}, fmt.Errorf("Jupiter 执行返回状态码 %d: %s", resp.StatusCode, localizeJupiterMessage(defaultString(body.Error, "request failed")))
 	}
 	return body, nil
 }
@@ -481,4 +531,22 @@ func maxInt64(value int64, fallback int64) int64 {
 		return fallback
 	}
 	return value
+}
+
+func localizeJupiterMessage(message string) string {
+	normalized := strings.TrimSpace(message)
+	if normalized == "" {
+		return "请求失败"
+	}
+	lower := strings.ToLower(normalized)
+	switch {
+	case strings.Contains(lower, "insufficient funds"):
+		return "余额不足"
+	case strings.Contains(lower, "slippage"):
+		return "滑点超出限制"
+	case strings.Contains(lower, "route not found"):
+		return "未找到可执行的交易路径"
+	default:
+		return normalized
+	}
 }
