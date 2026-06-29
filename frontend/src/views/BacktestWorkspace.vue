@@ -2472,19 +2472,31 @@ onUnmounted(() => {
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(143, 178, 168, 0.2);
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.02));
+  background: linear-gradient(
+    180deg,
+    rgba(11, 27, 42, 0.86),
+    rgba(10, 25, 31, 0.7)
+  );
 }
 
 .positions-strip-item span {
-  color: #64748b;
+  color: rgba(216, 233, 226, 0.72);
   font-size: 12px;
 }
 
 .positions-strip-item strong {
-  color: #0f172a;
+  color: #f8fafc;
   font-size: 14px;
+}
+
+.positions-strip-item strong.profit {
+  color: #34d399;
+}
+
+.positions-strip-item strong.loss {
+  color: #f87171;
 }
 
 .positions-table-shell {
