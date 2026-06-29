@@ -713,6 +713,11 @@
                 </div>
               </template>
             </el-table-column>
+            <el-table-column label="卖出原因" min-width="180">
+              <template #default="{ row }">
+                <span>{{ row.exitReason || "-" }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="更新时间" width="168">
               <template #default="{ row }">{{
                 formatBeijingDateTime(row.updatedAt)

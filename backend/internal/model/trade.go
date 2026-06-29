@@ -129,6 +129,7 @@ type TradePosition struct {
 	CandidateAt          *time.Time          `json:"candidateAt,omitempty"`
 	OpenSignalTime       *time.Time          `json:"openSignalTime,omitempty"`
 	CloseSignalTime      *time.Time          `json:"closeSignalTime,omitempty"`
+	ExitReason           string              `json:"exitReason"`
 	OpenedAt             time.Time           `json:"openedAt"`
 	ClosedAt             *time.Time          `json:"closedAt,omitempty"`
 	UpdatedAt            time.Time           `json:"updatedAt"`
