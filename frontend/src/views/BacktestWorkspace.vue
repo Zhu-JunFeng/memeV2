@@ -1,13 +1,24 @@
 <template>
   <main class="workspace">
     <header class="hero compact-hero">
-      <el-button
-        type="primary"
-        size="large"
-        :loading="store.loading"
-        @click="loadKlineLevels"
-        >加载 K 线并计算</el-button
-      >
+      <div class="load-action-group">
+        <el-button
+          type="primary"
+          size="large"
+          :loading="store.loading"
+          @click="loadKlineLevels"
+          >加载 K 线并计算</el-button
+        >
+        <el-select
+          v-model="form.dataSource"
+          class="load-source-select"
+          size="small"
+          aria-label="K 线数据源"
+        >
+          <el-option label="GMGN" value="gmgn" />
+          <el-option label="Birdeye" value="birdeye" />
+        </el-select>
+      </div>
       <el-button
         size="large"
         :disabled="!selectedChartRange"
@@ -77,15 +88,6 @@
                 <el-option label="5m" value="5m" />
                 <el-option label="15m" value="15m" />
                 <el-option label="1h" value="1h" />
-              </el-select>
-            </label>
-            <label class="query-field">
-              <span class="query-label">数据源</span>
-              <el-select v-model="form.dataSource">
-                <el-option label="GMGN" value="gmgn" />
-                <el-option label="Birdeye" value="birdeye" />
-                <el-option label="SQL" value="sql" />
-                <el-option label="DB" value="db" />
               </el-select>
             </label>
           </div>

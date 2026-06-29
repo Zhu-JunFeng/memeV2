@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { ElNotification } from "element-plus";
 import {
   candidateMonitorStreamURL,
   closeTradePosition,
@@ -19,6 +20,8 @@ import {
   runStrategyBacktest,
   updateTradeRuntime,
 } from "../api/backtest.js";
+
+let lastStreamAlertAt = 0;
 
 export const useBacktestStore = defineStore("backtest", {
   state: () => ({
@@ -243,7 +246,9 @@ export const useBacktestStore = defineStore("backtest", {
         this[stateKey] = this[stateKey].filter((item) => String(item[idKey]) !== String(data.id));
       });
       source.onerror = () => {
-        this.error = "实时数据连接异常，浏览器会自动重连";
+        const message = "实时数据连接异常，浏览器会自动重连";
+        this.error = message;
+        notifyStreamError(message);
       };
       this.tradeStreamSources.push(source);
     },
@@ -277,6 +282,20 @@ export const useBacktestStore = defineStore("backtest", {
     },
   },
 });
+
+function notifyStreamError(message) {
+  const now = Date.now();
+  if (now - lastStreamAlertAt < 5000) return;
+  lastStreamAlertAt = now;
+  ElNotification({
+    title: "实时接口异常",
+    message,
+    type: "error",
+    position: "top-right",
+    duration: 7000,
+    customClass: "api-error-notification",
+  });
+}
 
 function parseStreamData(event) {
   try {

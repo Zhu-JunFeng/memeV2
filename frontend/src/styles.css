@@ -12,6 +12,22 @@ body {
     linear-gradient(135deg, #071013 0%, #0e1f22 46%, #132a25 100%);
 }
 
+.api-error-notification {
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fff8f8 0%, #fff 72%);
+  box-shadow: 0 14px 34px rgba(127, 29, 29, 0.16);
+}
+
+.api-error-notification .el-notification__title {
+  color: #7f1d1d;
+}
+
+.api-error-notification .el-notification__content {
+  color: #991b1b;
+  line-height: 1.45;
+}
+
 .workspace {
   max-width: 1280px;
   margin: 0 auto;
@@ -204,6 +220,10 @@ body {
   .metrics-grid {
     grid-template-columns: 1fr;
   }
+  .load-action-group {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 
@@ -217,6 +237,33 @@ body {
 
 .compact-hero {
   padding: 22px 0 10px;
+}
+
+.load-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid rgba(143, 178, 168, 0.18);
+  border-radius: 12px;
+  background: rgba(7, 16, 19, 0.42);
+}
+
+.load-source-select {
+  width: 104px;
+  flex: 0 0 auto;
+}
+
+.load-source-select .el-select__wrapper {
+  min-height: 30px;
+  border-radius: 8px;
+  background: rgba(216, 233, 226, 0.08);
+  box-shadow: 0 0 0 1px rgba(143, 178, 168, 0.2) inset;
+}
+
+.load-source-select .el-select__placeholder,
+.load-source-select .el-select__selected-item {
+  font-weight: 700;
 }
 
 .compact-hero h1 {

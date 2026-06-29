@@ -40,7 +40,7 @@
 ### 1. K 线数据源
 
 - 默认 K 线源为 GMGN：`datasource.kline_source=gmgn`，覆盖回测、实时信号、候选池二次监控等 K 线读取入口
-- 前端和接口可通过 `source` / `dataSource` 切换 `gmgn`、`birdeye`、`sql`、`db`
+- 前端“加载 K 线并计算”按钮右侧提供小型数据源选择框，可直接在 `gmgn` / `birdeye` 之间切换；接口仍可通过 `source` / `dataSource` 指定数据源
 - GMGN 返回 USD 价格 K 线；为复用现有算法，后端同时填充 `open/high/low/close` 与算法沿用的 `marketCap*` 字段
 - Birdeye 原数据源继续保留，首次调用成功后仍写入 PostgreSQL cache，并支持 API key 池轮换
 
