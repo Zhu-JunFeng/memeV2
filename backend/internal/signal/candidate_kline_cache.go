@@ -11,6 +11,7 @@ import (
 
 // candidateKlineCache 只保留候选池判定需要的最近 N 根真实K线，
 // 用于在 GMGN 单次返回不完整时补回历史已经抓到过的分钟数据。
+// 当 limit <= 0 时，表示对活跃候选项目保留“入池后全量累计K线”。
 type candidateKlineCache struct {
 	mu     sync.RWMutex
 	limit  int
@@ -18,9 +19,6 @@ type candidateKlineCache struct {
 }
 
 func newCandidateKlineCache(limit int) *candidateKlineCache {
-	if limit <= 0 {
-		limit = 200
-	}
 	return &candidateKlineCache{limit: limit, series: map[string][]model.Kline{}}
 }
 

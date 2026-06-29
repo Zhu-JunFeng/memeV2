@@ -85,8 +85,8 @@ func newFakeMonitorKlineStore() *fakeMonitorKlineStore {
 	return &fakeMonitorKlineStore{recent: map[string][]model.Kline{}}
 }
 
-func (s *fakeMonitorKlineStore) GetKlines(context.Context, datasource.KlineQuery) ([]model.Kline, error) {
-	return nil, nil
+func (s *fakeMonitorKlineStore) GetKlines(_ context.Context, req datasource.KlineQuery) ([]model.Kline, error) {
+	return append([]model.Kline(nil), s.recent[req.TokenAddress+"|"+req.Interval]...), nil
 }
 
 func (s *fakeMonitorKlineStore) GetRecentKlines(_ context.Context, tokenAddress string, interval string, limit int) ([]model.Kline, error) {
@@ -157,7 +157,7 @@ func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, price
 		store:          store,
 		supplyProvider: fakeSupplyProvider{supply: 1},
 		systemKlines:   systemStore,
-		klineCache:     newCandidateKlineCache(monitorKlineCacheLimit),
+		klineCache:     newCandidateKlineCache(0),
 		supplyCache:    map[string]float64{},
 		cfg: CandidateMonitorConfig{
 			Enabled:        true,
@@ -273,7 +273,8 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.95}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
-	state := candidateMonitorState{TokenAddress: "token-a", RunID: "run-1", ScanNo: 7, CandidateAt: base.Add(5*time.Minute + 30*time.Second), Status: candidateStatusWatching, RawPayload: json.RawMessage(`{"event":"candidate_score_passed"}`)}
+	// 实时监控现在只会使用入池后的累计K线，因此测试要保证试压窗口也发生在入池之后。
+	state := candidateMonitorState{TokenAddress: "token-a", RunID: "run-1", ScanNo: 7, CandidateAt: base, Status: candidateStatusWatching, RawPayload: json.RawMessage(`{"event":"candidate_score_passed"}`)}
 	store.states[state.TokenAddress] = state
 	monitor.preloadActiveKlines(context.Background())
 

@@ -1189,9 +1189,9 @@ const form = reactive({
   windowSize: 120,
   levelWindowSize: 120,
   levelWindowStep: 20,
-  bandRangePercent: 0.5,
+  bandRangePercent: 2,
   minTouches: 3,
-  confirmBars: 1,
+  confirmBars: 2,
 });
 const strategyForm = reactive({
   methodCode: "breakout_band_follow",

@@ -283,6 +283,42 @@ func TestBreakoutBandFollowMethodOnlyKeepsOnePositionOpenAtATime(t *testing.T) {
 	}
 }
 
+func TestBreakoutBandFollowMethodReplaysRealtimeEntrySignals(t *testing.T) {
+	base := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 18000, MarketCapHigh: 18800, MarketCapLow: 17600, MarketCapClose: 18200, Volume: 100},
+		{OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 18200, MarketCapHigh: 20800, MarketCapLow: 18000, MarketCapClose: 19600, Volume: 200},
+		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 19600, MarketCapHigh: 19800, MarketCapLow: 18400, MarketCapClose: 18800, Volume: 120},
+		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 18800, MarketCapHigh: 20900, MarketCapLow: 18600, MarketCapClose: 19700, Volume: 240},
+		{OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 19700, MarketCapHigh: 19900, MarketCapLow: 18800, MarketCapClose: 19000, Volume: 140},
+		{OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 19000, MarketCapHigh: 21000, MarketCapLow: 18900, MarketCapClose: 19800, Volume: 280},
+		{OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 19800, MarketCapHigh: 22500, MarketCapLow: 19600, MarketCapClose: 21900, Volume: 320},
+	}
+	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
+		Klines:       klines,
+		LevelOptions: LevelOptions{PivotWindow: 1, PriceTolerance: 0.02, BreakTolerance: 0.01, ConfirmBars: 1, VolumeWindow: 3, VolumeMultiplier: 1.2, MaxLevels: 4, WindowSize: 6, WindowStep: 1, MinTouches: 3},
+	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
+		TakeProfitRate:       0.08,
+		PositionSizeUSD:      10,
+		HardStopLossRate:     0.05,
+		ActivationProfitRate: 0.05,
+		LockedProfitRate:     0.03,
+		FeeRate:              0.015,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(result.Trades) != 1 {
+		t.Fatalf("expected one replayed trade, got %#v", result.Trades)
+	}
+	if !result.Trades[0].BuyPoint.Time.Equal(base.Add(6 * time.Minute)) {
+		t.Fatalf("expected replay buy at realtime breakout bar, got %#v", result.Trades[0])
+	}
+	if len(result.Windows) == 0 {
+		t.Fatalf("expected replay windows for chart explanation")
+	}
+}
+
 func mustStrategyConfig(t *testing.T, config BreakoutBandFollowConfig) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(config)

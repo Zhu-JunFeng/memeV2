@@ -28,7 +28,7 @@ const (
 	candidateStatusStopped  = "stopped"
 	candidateStatusSold     = "sold"
 	strategyBreakoutFollow  = "breakout_band_follow"
-	monitorKlineCacheLimit  = 200
+	monitorIncrementalBars  = 5
 	monitorMinMarketCap     = 10000
 )
 
@@ -164,7 +164,7 @@ func NewCandidateMonitor(redisClient *redis.Client, priceProvider datasource.Tok
 		cfg:            cfg,
 		supplyProvider: cfg.SupplyProvider,
 		systemKlines:   cfg.SystemKlines,
-		klineCache:     newCandidateKlineCache(monitorKlineCacheLimit),
+		klineCache:     newCandidateKlineCache(0),
 		supplyCache:    map[string]float64{},
 		eventBus:       cfg.EventBus,
 	}
@@ -220,7 +220,12 @@ func (m *CandidateMonitor) preloadActiveKlines(ctx context.Context) {
 		return
 	}
 	for _, item := range items {
-		klines, err := m.systemKlines.GetRecentKlines(ctx, item.TokenAddress, m.cfg.Interval, monitorKlineCacheLimit)
+		klines, err := m.systemKlines.GetKlines(ctx, datasource.KlineQuery{
+			TokenAddress: item.TokenAddress,
+			Interval:     m.cfg.Interval,
+			StartTime:    item.CandidateAt,
+			EndTime:      m.now(),
+		})
 		if err != nil {
 			log.Printf("candidate monitor preload klines failed: ca=%s err=%v", item.TokenAddress, err)
 			continue
@@ -483,21 +488,17 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	if err != nil {
 		return nil, err
 	}
-	lookbackBars := m.cfg.LookbackBars
-	if lookbackBars < monitorKlineCacheLimit {
-		lookbackBars = monitorKlineCacheLimit
-	}
 	supply, err := m.tokenSupply(ctx, state.TokenAddress)
 	if err != nil {
 		return nil, err
 	}
-	// 首次进入缓存时补足回测所需窗口，后续轮询只增量拉最近几根 GMGN K 线。
-	fetchBars := 5
+	// 首次加载从入池开始回补，后续仅增量拉最近几根K线并持续追加到累计序列里。
+	fetchBars := monitorIncrementalBars
 	existing := m.klineCache.Get(state.TokenAddress, m.cfg.Interval)
-	if len(existing) == 0 {
-		fetchBars = lookbackBars
-	}
 	start := sampleAt.Add(-time.Duration(fetchBars) * interval)
+	if len(existing) == 0 {
+		start = state.CandidateAt
+	}
 	incoming, err := m.klineSource.GetKlines(ctx, datasource.KlineQuery{
 		TokenAddress: state.TokenAddress,
 		Interval:     m.cfg.Interval,
@@ -524,8 +525,7 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	if latest.MarketCapClose <= 0 {
 		return nil, fmt.Errorf("candidate monitor invalid market cap kline: ca=%s", state.TokenAddress)
 	}
-	lookbackStart := sampleAt.Add(-time.Duration(lookbackBars) * interval)
-	return filterKlinesAfter(merged, lookbackStart), nil
+	return filterKlinesAfter(merged, state.CandidateAt), nil
 }
 
 func scalePriceKlinesToMarketCap(klines []model.Kline, supply float64) []model.Kline {
@@ -590,10 +590,11 @@ func (m *CandidateMonitor) publishCandidateDelete(state candidateMonitorState) {
 }
 
 func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	result, decisionBar, ok := backtest.DetectLiveBreakoutSignalsByWindows(klines, m.cfg.LevelOptions, backtest.PressureBreakoutDetector())
+	entry, ok := backtest.DetectBandFollowEntryAtCurrentBar(klines, m.cfg.LevelOptions)
 	if !ok {
 		return m.saveState(ctx, state)
 	}
+	decisionBar := klines[len(klines)-1]
 	if !state.LastDecisionBarTime.IsZero() && !decisionBar.OpenTime.After(state.LastDecisionBarTime) {
 		return m.saveState(ctx, state)
 	}
@@ -601,14 +602,11 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 		state.LastDecisionBarTime = decisionBar.OpenTime
 		return m.saveState(ctx, state)
 	}
-	signals := candidateSignalsAfter(result.Signals, state.CandidateAt, decisionBar)
-	signals = candidateSignalsAfterExit(signals, state.LastExitBarTime)
-	if len(signals) == 0 {
+	if !entry.Signal.SignalTime.After(state.LastExitBarTime) && !state.LastExitBarTime.IsZero() {
 		state.LastDecisionBarTime = decisionBar.OpenTime
 		return m.saveState(ctx, state)
 	}
-	sig := signals[0]
-	message, level, err := m.buildBuySignal(state, decisionBar, sig)
+	message, level, err := m.buildBuySignal(state, decisionBar, entry.Signal)
 	if err != nil {
 		return err
 	}
