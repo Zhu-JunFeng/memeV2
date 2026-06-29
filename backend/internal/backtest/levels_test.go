@@ -246,7 +246,7 @@ func TestCalculateSupportResistanceByWindowsSkipsScenarioWithMultipleUpperPierce
 	}
 }
 
-func TestCalculateSupportResistanceByWindowsSkipsScenarioWithTooManyClosesAboveUpperDuringRetests(t *testing.T) {
+func TestCalculateSupportResistanceByWindowsSkipsScenarioWithTooManyClosesAboveUpperBetweenFirstTouchAndBreakout(t *testing.T) {
 	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
 	klines := []model.Kline{
 		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
@@ -280,9 +280,32 @@ func TestCalculateSupportResistanceByWindowsSkipsScenarioWithTooManyClosesAboveU
 	for _, result := range results {
 		for _, level := range result.Levels {
 			if level.Breakout != nil {
-				t.Fatalf("expected scenario with more than 3 closes above upper during retests to be skipped, got %#v", level.Breakout)
+				t.Fatalf("expected scenario with more than 2 closes above upper between first touch and breakout to be skipped, got %#v", level.Breakout)
 			}
 		}
+	}
+}
+
+func TestHasTooManyClosesAboveUpperUntilBreakout(t *testing.T) {
+	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+	series := []model.Kline{
+		{OpenTime: base.Add(0 * time.Minute), MarketCapClose: 9.8},
+		{OpenTime: base.Add(1 * time.Minute), MarketCapClose: 10.1},
+		{OpenTime: base.Add(2 * time.Minute), MarketCapClose: 10.3},
+		{OpenTime: base.Add(3 * time.Minute), MarketCapClose: 10.25},
+		{OpenTime: base.Add(4 * time.Minute), MarketCapClose: 10.5},
+	}
+	group := breakoutTouchGroup{
+		touches: []indexedTouch{
+			{index: 0},
+			{index: 1},
+			{index: 2},
+		},
+		lastTouchIndex: 2,
+	}
+	level := model.PriceLevel{Upper: 10.0}
+	if !hasTooManyClosesAboveUpperUntilBreakout(series, level, group, 4, 2) {
+		t.Fatal("expected more than 2 closes above upper between first touch and breakout")
 	}
 }
 

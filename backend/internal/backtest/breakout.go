@@ -18,6 +18,8 @@ type breakoutTouchGroup struct {
 	consolidation  *model.ConsolidationZone
 }
 
+const maxAllowedClosesAboveUpperBeforeBreakout = 2
+
 func annotateBreakoutSetups(levels []model.PriceLevel, window []model.Kline, future []model.Kline, options LevelOptions) {
 	if len(window) == 0 {
 		return
@@ -91,6 +93,9 @@ func findBreakoutAfterTouches(window []model.Kline, future []model.Kline, level 
 		if breakoutIndex >= 0 && !hasLimitedUpperBandPierces(series, level, touchGroup.lastTouchIndex+1, breakoutIndex) {
 			continue
 		}
+		if breakoutIndex >= 0 && hasTooManyClosesAboveUpperUntilBreakout(series, level, touchGroup, breakoutIndex, maxAllowedClosesAboveUpperBeforeBreakout) {
+			continue
+		}
 		if breakoutIndex >= 0 {
 			return breakoutIndex, touchGroup
 		}
@@ -109,9 +114,6 @@ func buildQualifiedTouchGroups(window []model.Kline, level model.PriceLevel, tou
 	groups := make([]breakoutTouchGroup, 0)
 	for endTouch := minTouches - 1; endTouch < len(touches); endTouch++ {
 		group := append([]indexedTouch{}, touches[endTouch-minTouches+1:endTouch+1]...)
-		if hasTooManyClosesAboveUpper(window, level, group, 3) {
-			continue
-		}
 		consolidation := collectConsolidationZone(window, level, anchorPointsFromTouchGroup(group))
 		groups = append(groups, breakoutTouchGroup{
 			touches:        group,
@@ -130,21 +132,21 @@ func anchorPointsFromTouchGroup(touches []indexedTouch) []model.LevelAnchorPoint
 	return points
 }
 
-func hasTooManyClosesAboveUpper(window []model.Kline, level model.PriceLevel, touchGroup []indexedTouch, maxAllowed int) bool {
-	if len(touchGroup) == 0 {
+func hasTooManyClosesAboveUpperUntilBreakout(series []model.Kline, level model.PriceLevel, touchGroup breakoutTouchGroup, breakoutIndex int, maxAllowed int) bool {
+	if len(touchGroup.touches) == 0 {
 		return false
 	}
-	start := touchGroup[0].index
-	end := touchGroup[len(touchGroup)-1].index
+	start := touchGroup.touches[0].index
+	end := breakoutIndex
 	if start < 0 {
 		start = 0
 	}
-	if end >= len(window) {
-		end = len(window) - 1
+	if end >= len(series) {
+		end = len(series) - 1
 	}
 	count := 0
 	for i := start; i <= end; i++ {
-		if marketClose(window[i]) > level.Upper {
+		if marketClose(series[i]) > level.Upper {
 			count++
 			if count > maxAllowed {
 				return true
@@ -229,6 +231,9 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 	series := append(append([]model.Kline{}, window...), current)
 	currentIndex := len(series) - 1
 	if !hasLimitedUpperBandPierces(series, level, latestGroup.lastTouchIndex+1, currentIndex) {
+		return nil
+	}
+	if hasTooManyClosesAboveUpperUntilBreakout(series, level, latestGroup, currentIndex, maxAllowedClosesAboveUpperBeforeBreakout) {
 		return nil
 	}
 	if !isBreakoutConfirmedAtIndex(series, level, currentIndex, options) {
