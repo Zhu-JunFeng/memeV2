@@ -48,6 +48,10 @@ func DetectClosedBarBreakoutSignalsByWindows(klines []model.Kline, now time.Time
 // DetectLiveBreakoutSignalsByWindows 直接把最后一根正在形成的 bar 视为当前实时 bar，
 // 让候选池在轮询拿到最新价格后立即判定是否已经突破。
 func DetectLiveBreakoutSignalsByWindows(klines []model.Kline, options LevelOptions, detector ScenarioDetector) (RealtimeSignalResult, model.Kline, bool) {
+	return detectLiveBreakoutSignalsByWindowsVariant(klines, options, detector, true)
+}
+
+func detectLiveBreakoutSignalsByWindowsVariant(klines []model.Kline, options LevelOptions, detector ScenarioDetector, latestWindowOnly bool) (RealtimeSignalResult, model.Kline, bool) {
 	if len(klines) < 2 {
 		return RealtimeSignalResult{}, model.Kline{}, false
 	}
@@ -61,7 +65,10 @@ func DetectLiveBreakoutSignalsByWindows(klines []model.Kline, options LevelOptio
 	if windowStep <= 0 {
 		windowStep = 1
 	}
-	return CalculateRealtimeScenarioSignalsByWindows(history, current, options, windowSize, windowStep, detector), current, true
+	if latestWindowOnly {
+		return CalculateRealtimeScenarioSignalsByWindows(history, current, options, windowSize, windowStep, detector), current, true
+	}
+	return CalculateReplayScenarioSignalsByWindows(history, current, options, windowSize, windowStep, detector), current, true
 }
 
 // EvaluateClosedBarBandFollowExit 只基于已收盘 K 线复用回测退出规则，

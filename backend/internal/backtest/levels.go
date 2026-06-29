@@ -157,6 +157,16 @@ func CalculateLevelScenariosByWindows(klines []model.Kline, options LevelOptions
 // CalculateRealtimeScenarioSignalsByWindows 基于“历史窗口 + 当前实时 K 线”做实时信号判定。
 // 这里不会要求当前 K 线已经写入历史窗口，适合外部行情推送到来时即时判断是否触发信号。
 func CalculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current model.Kline, options LevelOptions, windowSize int, windowStep int, detector ScenarioDetector) RealtimeSignalResult {
+	return calculateRealtimeScenarioSignalsByWindows(klines, current, options, windowSize, windowStep, detector, true)
+}
+
+// CalculateReplayScenarioSignalsByWindows 给历史回放/回测使用，允许当前 bar 同时匹配多个滑动窗口，
+// 保留“多窗口回放”的历史口径；实时监控仍单独走 latest-window-only 逻辑。
+func CalculateReplayScenarioSignalsByWindows(klines []model.Kline, current model.Kline, options LevelOptions, windowSize int, windowStep int, detector ScenarioDetector) RealtimeSignalResult {
+	return calculateRealtimeScenarioSignalsByWindows(klines, current, options, windowSize, windowStep, detector, false)
+}
+
+func calculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current model.Kline, options LevelOptions, windowSize int, windowStep int, detector ScenarioDetector, latestWindowOnly bool) RealtimeSignalResult {
 	options = normalizeLevelOptions(options, len(klines))
 	items := normalizedKlines(klines, options)
 	if len(items) == 0 {
@@ -193,7 +203,7 @@ func CalculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current mod
 	for _, klineWindow := range klineWindows {
 		// 实时突破只允许基于“紧贴当前 bar 的最新连续窗口”判定，
 		// 避免很早之前的旧窗口在很多小时后仍被当前 bar 复用成新信号。
-		if klineWindow.end != len(items) {
+		if latestWindowOnly && klineWindow.end != len(items) {
 			continue
 		}
 		windowSignals := make([]RealtimeScenarioSignal, 0)

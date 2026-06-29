@@ -17,10 +17,8 @@ type BandFollowReplayEntry struct {
 	GlobalWindow int
 }
 
-// DetectBandFollowEntryAtCurrentBar 用回测同源的实时突破判定，计算“当前最后一根K线”是否构成买点。
-// 这个函数是实时监控与历史回放的共同入口，避免两边再维护两套买入逻辑。
-func DetectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOptions) (BandFollowReplayEntry, bool) {
-	result, decisionBar, ok := DetectLiveBreakoutSignalsByWindows(klines, options, PressureBreakoutDetector())
+func detectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOptions, latestWindowOnly bool) (BandFollowReplayEntry, bool) {
+	result, decisionBar, ok := detectLiveBreakoutSignalsByWindowsVariant(klines, options, PressureBreakoutDetector(), latestWindowOnly)
 	if !ok || len(result.Windows) == 0 || len(result.Signals) == 0 {
 		return BandFollowReplayEntry{}, false
 	}
@@ -47,6 +45,16 @@ func DetectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOption
 	}, true
 }
 
+// DetectBandFollowEntryAtCurrentBar 给实时监控使用，只允许最新窗口触发买点。
+func DetectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOptions) (BandFollowReplayEntry, bool) {
+	return detectBandFollowEntryAtCurrentBar(klines, options, true)
+}
+
+// DetectBandFollowReplayEntryAtCurrentBar 给历史回放/回测使用，允许多个滑动窗口逐根触发。
+func DetectBandFollowReplayEntryAtCurrentBar(klines []model.Kline, options LevelOptions) (BandFollowReplayEntry, bool) {
+	return detectBandFollowEntryAtCurrentBar(klines, options, false)
+}
+
 // CollectBandFollowReplayEntries 逐根K线回放统一的实时买入判定，
 // 生成后续回测与实时监控都能复用的候选买点列表。
 func CollectBandFollowReplayEntries(klines []model.Kline, options LevelOptions) ([]BandFollowReplayEntry, []WindowLevelResult) {
@@ -57,7 +65,7 @@ func CollectBandFollowReplayEntries(klines []model.Kline, options LevelOptions) 
 	windows := make([]WindowLevelResult, 0)
 	windowIndexByKey := map[string]int{}
 	for index := 1; index < len(klines); index++ {
-		entry, ok := DetectBandFollowEntryAtCurrentBar(klines[:index+1], options)
+		entry, ok := DetectBandFollowReplayEntryAtCurrentBar(klines[:index+1], options)
 		if !ok {
 			continue
 		}
