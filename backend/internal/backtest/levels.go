@@ -191,6 +191,11 @@ func CalculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current mod
 	windows := make([]WindowLevelResult, 0)
 	signals := make([]RealtimeScenarioSignal, 0)
 	for _, klineWindow := range klineWindows {
+		// 实时突破只允许基于“紧贴当前 bar 的最新连续窗口”判定，
+		// 避免很早之前的旧窗口在很多小时后仍被当前 bar 复用成新信号。
+		if klineWindow.end != len(items) {
+			continue
+		}
 		windowSignals := make([]RealtimeScenarioSignal, 0)
 		windowLevels := make([]model.PriceLevel, 0)
 		for levelIndex, levelWindow := range levelWindows {

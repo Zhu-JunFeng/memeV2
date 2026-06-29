@@ -406,6 +406,56 @@ func TestCalculateRealtimeScenarioSignalsByWindowsDetectsLatestBreakout(t *testi
 	}
 }
 
+func TestCalculateRealtimeScenarioSignalsByWindowsSkipsStaleOldWindowBreakout(t *testing.T) {
+	base := time.Date(2026, 6, 29, 9, 0, 0, 0, time.UTC)
+	history := make([]model.Kline, 0, 14)
+	history = append(history,
+		model.Kline{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
+		model.Kline{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.4, MarketCapLow: 9.0, MarketCapClose: 9.8, Volume: 200},
+		model.Kline{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		model.Kline{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		model.Kline{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		model.Kline{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+	)
+	for minute := 6; minute < 14; minute++ {
+		history = append(history, model.Kline{
+			Interval:       "1m",
+			OpenTime:       base.Add(time.Duration(minute) * time.Minute),
+			CloseTime:      base.Add(time.Duration(minute+1) * time.Minute),
+			MarketCapOpen:  8.6,
+			MarketCapHigh:  8.9,
+			MarketCapLow:   8.2,
+			MarketCapClose: 8.5,
+			Volume:         90,
+		})
+	}
+	current := model.Kline{
+		Interval:       "1m",
+		OpenTime:       base.Add(14 * time.Minute),
+		CloseTime:      base.Add(15 * time.Minute),
+		MarketCapOpen:  8.5,
+		MarketCapHigh:  11.2,
+		MarketCapLow:   8.4,
+		MarketCapClose: 10.95,
+		Volume:         320,
+	}
+	result := CalculateRealtimeScenarioSignalsByWindows(history, current, LevelOptions{
+		PivotWindow:      1,
+		PriceTolerance:   0.02,
+		BreakTolerance:   0.01,
+		ConfirmBars:      1,
+		VolumeWindow:     3,
+		VolumeMultiplier: 1.2,
+		MaxLevels:        4,
+		WindowSize:       6,
+		WindowStep:       1,
+		MinTouches:       3,
+	}, 6, 1, pressureBreakoutDetector())
+	if len(result.Signals) != 0 {
+		t.Fatalf("expected stale old-window breakout to be skipped, got %#v", result.Signals)
+	}
+}
+
 func TestDedupeBreakoutsByKlineSignatureKeepsHighestScore(t *testing.T) {
 	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
 	duplicateBreakout := &model.BreakoutSetup{
