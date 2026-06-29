@@ -564,6 +564,9 @@ Orders 实时 SSE 流。参数同 `/api/trade/orders`。连接后先推 `snapsho
 
 返回持仓列表，字段包含：
 
+- `tokenAddress` / `tokenSymbol`
+- `candidateAt`：该持仓对应 CA 首次入池时间；前端可据此只加载入池后的系统 K 线
+- `openSignalTime` / `closeSignalTime`：该持仓对应买卖信号时间
 - `tradeMode`
 - `quantity`
 - `costAmount`

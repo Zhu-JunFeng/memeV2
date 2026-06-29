@@ -107,6 +107,7 @@ type TradePosition struct {
 	AccountID         string              `json:"accountId"`
 	TradeMode         TradeMode           `json:"tradeMode"`
 	TokenAddress      string              `json:"tokenAddress"`
+	TokenSymbol       string              `json:"tokenSymbol"`
 	Status            TradePositionStatus `json:"status"`
 	OpenOrderID       string              `json:"openOrderId"`
 	CloseOrderID      string              `json:"closeOrderId"`
@@ -119,6 +120,9 @@ type TradePosition struct {
 	UnrealizedPNL     float64             `json:"unrealizedPnl"`
 	MaxProfitRate     float64             `json:"maxProfitRate"`
 	MaxDrawdownAmount float64             `json:"maxDrawdownAmount"`
+	CandidateAt       *time.Time          `json:"candidateAt,omitempty"`
+	OpenSignalTime    *time.Time          `json:"openSignalTime,omitempty"`
+	CloseSignalTime   *time.Time          `json:"closeSignalTime,omitempty"`
 	OpenedAt          time.Time           `json:"openedAt"`
 	ClosedAt          *time.Time          `json:"closedAt,omitempty"`
 	UpdatedAt         time.Time           `json:"updatedAt"`

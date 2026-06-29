@@ -444,22 +444,30 @@ func (r *TradeRepository) ListPositions(ctx context.Context, status string, trad
 		limit = 100
 	}
 	query := `
-		SELECT id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
-		FROM trade_positions`
+		SELECT
+			p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id,
+			p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
+			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
+			open_signal.signal_time, close_signal.signal_time, open_signal.raw_payload_json
+		FROM trade_positions p
+		LEFT JOIN trade_orders open_order ON open_order.id = p.open_order_id
+		LEFT JOIN trade_signals open_signal ON open_signal.id = open_order.signal_id
+		LEFT JOIN trade_orders close_order ON close_order.id = p.close_order_id
+		LEFT JOIN trade_signals close_signal ON close_signal.id = close_order.signal_id`
 	args := make([]any, 0, 3)
 	clauses := make([]string, 0, 2)
 	if strings.TrimSpace(status) != "" {
 		args = append(args, status)
-		clauses = append(clauses, `status = $`+itoa(len(args)))
+		clauses = append(clauses, `p.status = $`+itoa(len(args)))
 	}
 	if tradeMode != "" {
 		args = append(args, tradeMode)
-		clauses = append(clauses, `trade_mode = $`+itoa(len(args)))
+		clauses = append(clauses, `p.trade_mode = $`+itoa(len(args)))
 	}
 	if len(clauses) > 0 {
 		query += ` WHERE ` + strings.Join(clauses, ` AND `)
 	}
-	query += ` ORDER BY updated_at DESC LIMIT $` + itoa(len(args)+1)
+	query += ` ORDER BY p.updated_at DESC LIMIT $` + itoa(len(args)+1)
 	args = append(args, limit)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -479,8 +487,17 @@ func (r *TradeRepository) ListPositions(ctx context.Context, status string, trad
 
 func (r *TradeRepository) GetPosition(ctx context.Context, id string) (model.TradePosition, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at
-		FROM trade_positions WHERE id = $1`, id)
+		SELECT
+			p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id,
+			p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
+			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
+			open_signal.signal_time, close_signal.signal_time, open_signal.raw_payload_json
+		FROM trade_positions p
+		LEFT JOIN trade_orders open_order ON open_order.id = p.open_order_id
+		LEFT JOIN trade_signals open_signal ON open_signal.id = open_order.signal_id
+		LEFT JOIN trade_orders close_order ON close_order.id = p.close_order_id
+		LEFT JOIN trade_signals close_signal ON close_signal.id = close_order.signal_id
+		WHERE p.id = $1`, id)
 	item, err := scanTradePosition(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -533,13 +550,55 @@ func scanTradeOrder(scanner rowScanner) (model.TradeOrder, error) {
 func scanTradePosition(scanner rowScanner) (model.TradePosition, error) {
 	var item model.TradePosition
 	var closedAt sql.NullTime
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt); err != nil {
+	var openSignalTime sql.NullTime
+	var closeSignalTime sql.NullTime
+	var openSignalPayload []byte
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &openSignalPayload); err != nil {
 		return model.TradePosition{}, err
 	}
 	if closedAt.Valid {
 		item.ClosedAt = &closedAt.Time
 	}
+	if openSignalTime.Valid {
+		item.OpenSignalTime = &openSignalTime.Time
+	}
+	if closeSignalTime.Valid {
+		item.CloseSignalTime = &closeSignalTime.Time
+	}
+	enrichTradePositionMeta(&item, openSignalPayload)
 	return item, nil
+}
+
+type tradeSignalPayload struct {
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+type tradeSignalMetadata struct {
+	Upstream struct {
+		Token       string `json:"token"`
+		PublishedAt int64  `json:"publishedAt"`
+	} `json:"upstream"`
+}
+
+// enrichTradePositionMeta 只从买入信号里提取展示层需要的字段，
+// 这样 Positions 表和图表联动不需要额外查一轮接口。
+func enrichTradePositionMeta(item *model.TradePosition, raw []byte) {
+	if item == nil || len(raw) == 0 {
+		return
+	}
+	var payload tradeSignalPayload
+	if err := json.Unmarshal(raw, &payload); err != nil || len(payload.Metadata) == 0 {
+		return
+	}
+	var metadata tradeSignalMetadata
+	if err := json.Unmarshal(payload.Metadata, &metadata); err != nil {
+		return
+	}
+	item.TokenSymbol = strings.TrimSpace(metadata.Upstream.Token)
+	if metadata.Upstream.PublishedAt > 0 {
+		candidateAt := time.UnixMilli(metadata.Upstream.PublishedAt).UTC()
+		item.CandidateAt = &candidateAt
+	}
 }
 
 func itoa(value int) string {

@@ -652,11 +652,21 @@
             <el-table-column prop="status" label="状态" width="84" />
             <el-table-column label="Token" min-width="180">
               <template #default="{ row }">
-                <TokenAddressLink
-                  :address="row.tokenAddress"
-                  :short="true"
-                  :compact="true"
-                />
+                <div class="position-token-cell">
+                  <button
+                    type="button"
+                    class="position-symbol-link"
+                    :disabled="!row.candidateAt"
+                    @click="loadPositionCandidateScenario(row)"
+                  >
+                    {{ row.tokenSymbol || "未识别 Symbol" }}
+                  </button>
+                  <TokenAddressLink
+                    :address="row.tokenAddress"
+                    :short="true"
+                    :compact="true"
+                  />
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="数量" width="108">
@@ -1487,6 +1497,34 @@ async function loadCandidateSystemKlines(row) {
   ElMessage.success(`已加载 ${result.klines.length} 根系统K线`);
 }
 
+async function loadPositionCandidateScenario(row) {
+  const tokenAddress = String(row?.tokenAddress || "").trim();
+  if (!tokenAddress) {
+    ElMessage.error("持仓缺少 CA");
+    return;
+  }
+  if (!row?.candidateAt) {
+    ElMessage.error("该持仓缺少入池时间，无法按入池后 K 线加载");
+    return;
+  }
+  form.tokenAddress = tokenAddress;
+  form.dataSource = "system";
+  const range = {
+    start: new Date(row.candidateAt),
+    end: new Date(),
+  };
+  await loadRangeLevels(range, "系统K线·入池后");
+  if (!(store.result?.klines || []).length) {
+    return;
+  }
+  await runStrategyForLoadedRange();
+  focusPositionTrade(row);
+  nextTick(() => {
+    chartPanelRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  ElMessage.success(`已加载 ${row.tokenSymbol || shortAddress(tokenAddress)} 的入池后 K 线与压力位`);
+}
+
 function openAddCandidateDialog() {
   addCandidateTokenAddress.value = "";
   addCandidateDialogVisible.value = true;
@@ -1619,6 +1657,32 @@ function focusTrade(trade) {
   });
 }
 
+function focusPositionTrade(row) {
+  const targetTime = timestamp(row?.openSignalTime || row?.openedAt || row?.updatedAt);
+  if (!targetTime) return;
+  const matched = findNearestTradeByBuyTime(targetTime);
+  if (!matched) return;
+  activeStrategyGroupKey.value = groupKey(matched.group);
+  focusTrade(matched.trade);
+}
+
+function findNearestTradeByBuyTime(targetTime) {
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  strategyGroups.value.forEach((group) => {
+    (group.trades || []).forEach((trade) => {
+      const tradeTime = timestamp(trade?.buyPoint?.time);
+      if (!tradeTime) return;
+      const distance = Math.abs(tradeTime - targetTime);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { group, trade };
+      }
+    });
+  });
+  return bestDistance <= 5 * 60 * 1000 ? best : null;
+}
+
 function selectStrategyGroup(group) {
   activeStrategyGroupKey.value = groupKey(group);
   const firstTrade = group.trades?.[0];
@@ -1698,11 +1762,17 @@ function formatOptionalMarketCap(value) {
   return Number.isFinite(number) && number !== 0 ? formatMarketCap(number) : "-";
 }
 
+function timestamp(value) {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function formatRelativeTime(value) {
   if (!value) return "-";
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "-";
-  const seconds = Math.max(0, Math.floor((relativeNow.value - timestamp) / 1000));
+  const parsed = timestamp(value);
+  if (!parsed) return "-";
+  const seconds = Math.max(0, Math.floor((relativeNow.value - parsed) / 1000));
   if (seconds < 60) return `${seconds}s前`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m前`;
@@ -1713,9 +1783,9 @@ function formatRelativeTime(value) {
 
 function formatCompactRelativeTime(value) {
   if (!value) return "-";
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "-";
-  const seconds = Math.max(0, Math.floor((relativeNow.value - timestamp) / 1000));
+  const parsed = timestamp(value);
+  if (!parsed) return "-";
+  const seconds = Math.max(0, Math.floor((relativeNow.value - parsed) / 1000));
   if (seconds < 60) return `${seconds}s之前`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m之前`;
@@ -2160,6 +2230,35 @@ onUnmounted(() => {
 
 .trade-cell-stack-token {
   gap: 1px;
+}
+
+.position-token-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.position-symbol-link {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.position-symbol-link:hover:not(:disabled) {
+  color: #2563eb;
+}
+
+.position-symbol-link:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
 }
 
 .trade-table-orders :deep(.el-table__cell) {
