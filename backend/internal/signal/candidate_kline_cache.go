@@ -73,6 +73,7 @@ func (c *candidateKlineCache) ApplyPriceSample(tokenAddress string, interval str
 	last := items[len(items)-1]
 	switch {
 	case last.OpenTime.Equal(bar.OpenTime):
+		// 已有同一分钟的 GMGN K 线时，只用实时价格补齐/刷新 OHLC，不再改动 GMGN 原始 volume。
 		if last.MarketCapOpen <= 0 {
 			last.MarketCapOpen = marketCap
 		}
@@ -90,11 +91,11 @@ func (c *candidateKlineCache) ApplyPriceSample(tokenAddress string, interval str
 		last.MarketCapClose = marketCap
 		last.Close = marketCap
 		last.CloseTime = bar.CloseTime
-		last.Volume++
 		items[len(items)-1] = last
 		bar = last
 	case last.OpenTime.Before(bar.OpenTime):
-		bar.Volume = 1
+		// 当前分钟还没有 GMGN bar 时，只生成一个临时价格 bar，volume 保持 0，避免污染量能口径。
+		bar.Volume = 0
 		items = append(items, bar)
 	default:
 		items = mergeKlinesByOpenTime(items, []model.Kline{bar}, c.limit)
@@ -127,7 +128,7 @@ func buildCandidateBar(sampleAt time.Time, tokenAddress string, interval string,
 		MarketCapHigh:  marketCap,
 		MarketCapLow:   marketCap,
 		MarketCapClose: marketCap,
-		Volume:         1,
+		Volume:         0,
 	}
 }
 

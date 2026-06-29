@@ -188,7 +188,7 @@ npm run build
 - `signal.candidate_monitor_enabled` / `signal.candidate_channel`：是否启用候选池后二次压力突破监控及上游候选池通道
 - `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值；候选池当前默认阈值为 `10_000`，配置 `>0` 时按配置值覆盖
 - 候选池监控会把最新价格实时写入当前 forming bar；一旦满足突破/止盈/止损条件，就立即发出买卖信号并进入交易执行
-- 候选池自维护 K 线的 `volume` 表示该分钟内的系统采样次数，用来执行实时量能过滤，不再固定为 `0`
+- 候选池实时补价只会刷新当前 forming bar 的 OHLC；`volume` 始终沿用 GMGN 返回值，若当前分钟尚无 GMGN bar，则临时补价 bar 的 `volume=0`
 - 候选池卖出后若市值仍高于阈值会 rearm，但同一根已卖出的 bar 不允许立刻重新买入
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行

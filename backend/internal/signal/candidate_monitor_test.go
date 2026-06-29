@@ -248,7 +248,7 @@ func TestCandidateMonitorUsesRealGMGNVolumeForRealtimeBars(t *testing.T) {
 		t.Fatalf("expected realtime klines")
 	}
 	last := klines[len(klines)-1]
-	if last.Volume != 501 {
+	if last.Volume != 500 {
 		t.Fatalf("expected realtime bar to keep GMGN volume, got %#v", last)
 	}
 	if last.MarketCapClose != 21900 {
