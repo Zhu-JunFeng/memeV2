@@ -3,6 +3,7 @@ import {
   candidateMonitorStreamURL,
   closeTradePosition,
   createBacktest,
+  fetchKlines,
   fetchSupportResistance,
   fetchTradeRuntime,
   listBacktests,
@@ -51,6 +52,25 @@ export const useBacktestStore = defineStore("backtest", {
           windows: data.windows || [],
           windowSize: data.windowSize || 0,
           windowStep: data.windowStep || 1,
+        };
+        return this.result;
+      } catch (error) {
+        this.error = error.message;
+        throw error;
+      } finally {
+        this.loading = false;
+      }
+    },
+    async loadRawKlines(params) {
+      this.loading = true;
+      this.error = "";
+      try {
+        const data = await fetchKlines(params);
+        this.result = {
+          klines: data.items || [],
+          windows: [],
+          windowSize: 0,
+          windowStep: 1,
         };
         return this.result;
       } catch (error) {

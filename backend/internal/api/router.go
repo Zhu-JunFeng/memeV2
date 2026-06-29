@@ -90,12 +90,12 @@ func (h *Handler) searchTokens(c *gin.Context) {
 }
 
 func (h *Handler) getKlines(c *gin.Context) {
-	start, err := parseTime(c.Query("startTime"))
+	start, err := parseOptionalTime(c.Query("startTime"))
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "startTime 格式错误")
 		return
 	}
-	end, err := parseTime(c.Query("endTime"))
+	end, err := parseOptionalTime(c.Query("endTime"))
 	if err != nil {
 		response.Fail(c, http.StatusBadRequest, "endTime 格式错误")
 		return
@@ -651,6 +651,13 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 func parseTime(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, errors.New("时间不能为空")
+	}
+	return parseOptionalTime(value)
+}
+
+func parseOptionalTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
 	}
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return apptime.InBeijing(parsed), nil

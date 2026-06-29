@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -27,6 +28,8 @@ const (
 	candidateStatusStopped  = "stopped"
 	candidateStatusSold     = "sold"
 	strategyBreakoutFollow  = "breakout_band_follow"
+	monitorKlineCacheLimit  = 200
+	monitorMinMarketCap     = 10000
 )
 
 type CandidateMonitorConfig struct {
@@ -40,16 +43,21 @@ type CandidateMonitorConfig struct {
 	LevelOptions     backtest.LevelOptions
 	BreakoutFollow   backtest.BreakoutBandFollowConfig
 	SupplyProvider   datasource.TokenSupplyProvider
+	SystemKlines     monitorKlineStore
 	EventBus         *eventbus.Broker
 }
 
 type CandidateMonitor struct {
 	redis          *redis.Client
-	birdeye        datasource.KlineDataSource
+	market         datasource.KlineDataSource
 	publisher      Publisher
 	store          candidateMonitorStore
 	cfg            CandidateMonitorConfig
 	supplyProvider datasource.TokenSupplyProvider
+	systemKlines   monitorKlineStore
+	klineCache     *candidateKlineCache
+	supplyMu       sync.RWMutex
+	supplyCache    map[string]float64
 	eventBus       *eventbus.Broker
 }
 
@@ -124,18 +132,27 @@ type candidateMonitorStore interface {
 	ReleaseEmission(ctx context.Context, signalID string) error
 }
 
-func NewCandidateMonitor(redisClient *redis.Client, birdeye datasource.KlineDataSource, publisher Publisher, cfg CandidateMonitorConfig) *CandidateMonitor {
+type monitorKlineStore interface {
+	GetKlines(ctx context.Context, req datasource.KlineQuery) ([]model.Kline, error)
+	GetRecentKlines(ctx context.Context, tokenAddress string, interval string, limit int) ([]model.Kline, error)
+	EnqueueUpsert(klines []model.Kline)
+}
+
+func NewCandidateMonitor(redisClient *redis.Client, market datasource.KlineDataSource, publisher Publisher, cfg CandidateMonitorConfig) *CandidateMonitor {
 	if publisher == nil {
 		publisher = noopPublisher{}
 	}
 	cfg = normalizeCandidateMonitorConfig(cfg)
 	return &CandidateMonitor{
 		redis:          redisClient,
-		birdeye:        birdeye,
+		market:         market,
 		publisher:      publisher,
 		store:          newRedisCandidateMonitorStore(redisClient, cfg.RedisKeyPrefix),
 		cfg:            cfg,
 		supplyProvider: cfg.SupplyProvider,
+		systemKlines:   cfg.SystemKlines,
+		klineCache:     newCandidateKlineCache(monitorKlineCacheLimit),
+		supplyCache:    map[string]float64{},
 		eventBus:       cfg.EventBus,
 	}
 }
@@ -169,11 +186,31 @@ func normalizeCandidateMonitorConfig(cfg CandidateMonitorConfig) CandidateMonito
 }
 
 func (m *CandidateMonitor) Start(ctx context.Context) {
-	if m == nil || !m.cfg.Enabled || m.redis == nil || m.birdeye == nil || m.publisher == nil || m.store == nil {
+	if m == nil || !m.cfg.Enabled || m.redis == nil || m.market == nil || m.publisher == nil || m.store == nil {
 		return
 	}
+	m.preloadActiveKlines(ctx)
 	go m.subscribeCandidates(ctx)
 	go m.pollCandidates(ctx)
+}
+
+func (m *CandidateMonitor) preloadActiveKlines(ctx context.Context) {
+	if m == nil || m.systemKlines == nil || m.klineCache == nil {
+		return
+	}
+	items, err := m.store.ListActive(ctx)
+	if err != nil {
+		log.Printf("candidate monitor preload active candidates failed: %v", err)
+		return
+	}
+	for _, item := range items {
+		klines, err := m.systemKlines.GetRecentKlines(ctx, item.TokenAddress, m.cfg.Interval, monitorKlineCacheLimit)
+		if err != nil {
+			log.Printf("candidate monitor preload klines failed: ca=%s err=%v", item.TokenAddress, err)
+			continue
+		}
+		m.klineCache.Set(item.TokenAddress, m.cfg.Interval, klines)
+	}
 }
 
 func (m *CandidateMonitor) ListCandidates(ctx context.Context) ([]CandidateMonitorItem, error) {
@@ -356,14 +393,11 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 		return nil
 	}
 	latest := klines[len(klines)-1]
-	currentMarketCap, err := m.calculateCurrentMarketCap(ctx, state.TokenAddress, latest.MarketCapClose)
-	if err != nil {
-		return err
-	}
+	currentMarketCap := latest.MarketCapClose
 	state.CurrentPrice = currentMarketCap
 	state.CurrentAt = latest.OpenTime
 	state.KlineFetchedAt = time.Now().UTC()
-	if state.Status == candidateStatusWatching && m.cfg.MinMarketCap > 0 && currentMarketCap < m.cfg.MinMarketCap {
+	if state.Status == candidateStatusWatching && currentMarketCap < monitorMinMarketCap {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 			return err
 		}
@@ -386,18 +420,62 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	if err != nil {
 		return nil, err
 	}
-	start := state.CandidateAt.Add(-time.Duration(m.cfg.LookbackBars) * interval)
+	lookbackBars := m.cfg.LookbackBars
+	if lookbackBars < monitorKlineCacheLimit {
+		lookbackBars = monitorKlineCacheLimit
+	}
+	start := time.Now().UTC().Add(-time.Duration(lookbackBars) * interval)
 	end := time.Now().UTC().Add(interval)
-	return m.birdeye.GetKlines(ctx, datasource.KlineQuery{TokenAddress: state.TokenAddress, Interval: m.cfg.Interval, StartTime: start, EndTime: end})
+	klines, err := m.market.GetKlines(ctx, datasource.KlineQuery{TokenAddress: state.TokenAddress, Interval: m.cfg.Interval, StartTime: start, EndTime: end})
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := m.normalizeKlinesWithSupply(ctx, state.TokenAddress, klines)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) > 0 && m.systemKlines != nil {
+		m.systemKlines.EnqueueUpsert(normalized)
+	}
+	merged := m.klineCache.MergePreferIncoming(state.TokenAddress, m.cfg.Interval, normalized)
+	return filterKlinesAfter(merged, start), nil
 }
 
-func (m *CandidateMonitor) calculateCurrentMarketCap(ctx context.Context, tokenAddress string, price float64) (float64, error) {
-	if price <= 0 {
-		return 0, fmt.Errorf("candidate monitor latest price invalid: ca=%s price=%.12f", tokenAddress, price)
+func (m *CandidateMonitor) normalizeKlinesWithSupply(ctx context.Context, tokenAddress string, klines []model.Kline) ([]model.Kline, error) {
+	if len(klines) == 0 {
+		return []model.Kline{}, nil
 	}
+	supply, err := m.tokenSupply(ctx, tokenAddress)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]model.Kline, len(klines))
+	for index, item := range klines {
+		current := item
+		if current.Open == 0 && current.High == 0 && current.Low == 0 && current.Close == 0 &&
+			(current.MarketCapOpen > 0 || current.MarketCapHigh > 0 || current.MarketCapLow > 0 || current.MarketCapClose > 0) {
+			items[index] = current
+			continue
+		}
+		current.MarketCapOpen = current.Open * supply
+		current.MarketCapHigh = current.High * supply
+		current.MarketCapLow = current.Low * supply
+		current.MarketCapClose = current.Close * supply
+		items[index] = current
+	}
+	return items, nil
+}
+
+func (m *CandidateMonitor) tokenSupply(ctx context.Context, tokenAddress string) (float64, error) {
 	if m.supplyProvider == nil {
 		return 0, errors.New("candidate monitor token supply provider not configured")
 	}
+	m.supplyMu.RLock()
+	if value, ok := m.supplyCache[tokenAddress]; ok && value > 0 {
+		m.supplyMu.RUnlock()
+		return value, nil
+	}
+	m.supplyMu.RUnlock()
 	supply, err := m.supplyProvider.GetTokenSupply(ctx, tokenAddress)
 	if err != nil {
 		return 0, err
@@ -405,7 +483,10 @@ func (m *CandidateMonitor) calculateCurrentMarketCap(ctx context.Context, tokenA
 	if supply <= 0 {
 		return 0, fmt.Errorf("candidate monitor token supply invalid: ca=%s supply=%.12f", tokenAddress, supply)
 	}
-	return price * supply, nil
+	m.supplyMu.Lock()
+	m.supplyCache[tokenAddress] = supply
+	m.supplyMu.Unlock()
+	return supply, nil
 }
 
 func (m *CandidateMonitor) saveState(ctx context.Context, state candidateMonitorState) error {
@@ -546,6 +627,22 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	if err := m.publisher.PublishTradeSignal(ctx, message); err != nil {
 		_ = m.store.ReleaseEmission(ctx, message.SignalID)
 		return err
+	}
+	latest := klines[len(klines)-1]
+	if latest.MarketCapClose > monitorMinMarketCap {
+		state.Status = candidateStatusWatching
+		state.BuySignalID = ""
+		state.EntryTime = time.Time{}
+		state.EntryPrice = 0
+		state.Level = model.PriceLevel{}
+		state.CurrentPrice = latest.MarketCapClose
+		state.CurrentAt = latest.OpenTime
+		state.KlineFetchedAt = time.Now().UTC()
+		if err := m.saveState(ctx, state); err != nil {
+			return err
+		}
+		log.Printf("candidate monitor rearmed after sell: ca=%s marketCap=%.2f", state.TokenAddress, latest.MarketCapClose)
+		return nil
 	}
 	if err := m.store.StopCandidate(ctx, state, candidateStatusSold); err != nil {
 		return err

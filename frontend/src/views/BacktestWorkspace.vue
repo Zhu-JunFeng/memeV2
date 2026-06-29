@@ -421,7 +421,13 @@
             <el-table-column label="Symbol / CA" min-width="220">
               <template #default="{ row }">
                 <div class="trade-cell-stack">
-                  <strong>{{ row.symbol || "-" }}</strong>
+                  <button
+                    class="candidate-symbol-link"
+                    type="button"
+                    @click="loadCandidateSystemKlines(row)"
+                  >
+                    {{ row.symbol || "-" }}
+                  </button>
                   <TokenAddressLink
                     :address="row.tokenAddress"
                     :short="true"
@@ -1204,7 +1210,7 @@ const tradeFilterOptions = [
   { label: "实盘", value: "live" },
 ];
 const dataSourceLabel = computed(() => {
-  const labels = { gmgn: "GMGN", birdeye: "Birdeye", sql: "SQL", db: "DB" };
+  const labels = { gmgn: "GMGN", birdeye: "Birdeye", sql: "SQL", db: "DB", system: "系统K线" };
   return labels[form.dataSource] || form.dataSource || "GMGN";
 });
 const selectedStrategyMethod = computed(
@@ -1359,6 +1365,39 @@ async function runStrategyForLoadedRange() {
   ElMessage.success(
     `回测完成：共 ${result.groups?.length || 0} 个止盈组，最佳净收益 ${formatUsd(result.summary?.totalProfitUsd || 0)}`,
   );
+}
+
+async function loadCandidateSystemKlines(row) {
+  const tokenAddress = String(row?.tokenAddress || "").trim();
+  if (!tokenAddress) {
+    ElMessage.error("候选项目缺少 CA");
+    return;
+  }
+  form.tokenAddress = tokenAddress;
+  const result = await store.loadRawKlines({
+    source: "system",
+    tokenAddress,
+    interval: form.interval,
+  });
+  selectedChartRange.value = null;
+  selectedWindowKey.value = "";
+  selectedLevelKey.value = "";
+  loadedRange.value = null;
+  store.strategyBacktestResult = null;
+  focusedTradeKey.value = "";
+  activeStrategyGroupKey.value = "";
+  if (!result.klines.length) {
+    ElMessage.warning("该 CA 暂无系统K线");
+    return;
+  }
+  const first = result.klines[0];
+  const last = result.klines[result.klines.length - 1];
+  loadedRange.value = {
+    start: new Date(first.openTime),
+    end: new Date(last.closeTime || last.openTime),
+    source: "系统K线·全量",
+  };
+  ElMessage.success(`已加载 ${result.klines.length} 根系统K线`);
 }
 
 async function refreshTradeDashboard() {
@@ -1856,6 +1895,23 @@ onUnmounted(() => {
 .trade-cell-stack strong {
   color: #0f172a;
   font-size: 12px;
+}
+
+.candidate-symbol-link {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.candidate-symbol-link:hover {
+  color: #2563eb;
 }
 
 .trade-cell-stack span {

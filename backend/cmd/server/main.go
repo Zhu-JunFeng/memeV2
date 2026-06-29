@@ -36,6 +36,8 @@ func main() {
 	source := datasource.NewSQLDataSource(database, cfg.Datasource.KlineQuery, cfg.Datasource.TokenSearchQuery)
 	dbBarSource := datasource.NewDBBarDataSource(database)
 	dbTradePointSource := datasource.NewDBTradePointDataSource(database)
+	systemKlineStore := datasource.NewSystemKlineStore(database)
+	systemKlineStore.Start(context.Background())
 	birdeyeKeyRepo := repository.NewBirdeyeAPIKeyRepository(database)
 	if err := birdeyeKeyRepo.EnsureConfigKeys(context.Background(), cfg.Birdeye.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 Birdeye API Key 池失败")
@@ -45,11 +47,11 @@ func main() {
 	gmgnSource := datasource.NewGMGNDataSource(cfg.GMGN.BaseURL, cfg.GMGN.APIKey, cfg.GMGN.Chain, cfg.GMGN.MaxQPS)
 	supplyProvider := datasource.NewSolanaRPCSupplyProvider(cfg.Trade.SolanaRPCURL)
 	events := eventbus.NewBroker()
-	primaryKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeSource, gmgnSource)
+	primaryKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeSource, gmgnSource, systemKlineStore)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("K 线数据源配置错误")
 	}
-	primaryRealtimeKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeUpstream, gmgnSource)
+	primaryRealtimeKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeUpstream, gmgnSource, systemKlineStore)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("实时 K 线数据源配置错误")
 	}
@@ -63,6 +65,7 @@ func main() {
 		backtest.WithKlineSource("db", dbBarSource),
 		backtest.WithKlineSource("birdeye", birdeyeSource),
 		backtest.WithKlineSource("gmgn", gmgnSource),
+		backtest.WithKlineSource("system", systemKlineStore),
 	)
 	var publisher signal.Publisher
 	var redisClient *redis.Client
@@ -76,6 +79,7 @@ func main() {
 		signal.WithKlineSource("db", dbBarSource),
 		signal.WithKlineSource("birdeye", birdeyeSource),
 		signal.WithKlineSource("gmgn", gmgnSource),
+		signal.WithKlineSource("system", systemKlineStore),
 	)
 	var candidateMonitor *signal.CandidateMonitor
 	if cfg.Signal.CandidateMonitorEnabled && redisClient != nil {
@@ -90,6 +94,7 @@ func main() {
 			LevelOptions:     backtest.DefaultLevelOptions(),
 			BreakoutFollow:   backtest.DefaultBreakoutBandFollowConfig(),
 			SupplyProvider:   supplyProvider,
+			SystemKlines:     systemKlineStore,
 			EventBus:         events,
 		})
 		candidateMonitor.Start(context.Background())
@@ -128,7 +133,7 @@ func main() {
 	}
 }
 
-func selectKlineSource(name string, sqlSource datasource.KlineDataSource, dbSource datasource.KlineDataSource, birdeyeSource datasource.KlineDataSource, gmgnSource datasource.KlineDataSource) (datasource.KlineDataSource, error) {
+func selectKlineSource(name string, sqlSource datasource.KlineDataSource, dbSource datasource.KlineDataSource, birdeyeSource datasource.KlineDataSource, gmgnSource datasource.KlineDataSource, systemSource datasource.KlineDataSource) (datasource.KlineDataSource, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "gmgn":
 		return gmgnSource, nil
@@ -138,6 +143,8 @@ func selectKlineSource(name string, sqlSource datasource.KlineDataSource, dbSour
 		return sqlSource, nil
 	case "db":
 		return dbSource, nil
+	case "system":
+		return systemSource, nil
 	default:
 		return nil, fmt.Errorf("%w: %s", datasource.ErrUnsupportedKlineSource, name)
 	}
