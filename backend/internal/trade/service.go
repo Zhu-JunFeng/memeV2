@@ -73,20 +73,21 @@ type ExecutionResult struct {
 }
 
 type Service struct {
-	cfg           config.TradeConfig
-	repo          Repository
-	executor      Executor
-	priceProvider datasource.TokenPriceProvider
-	account       model.TradeAccount
-	enabled       bool
-	modeMu        sync.RWMutex
-	tradeMode     model.TradeMode
-	eventBus      *eventbus.Broker
-	persister     *asyncPersister
-	runtimeMu     sync.Mutex
-	openPositions map[string]model.TradePosition
-	inFlight      map[string]model.TradeSignalType
-	seenSignals   map[string]struct{}
+	cfg            config.TradeConfig
+	repo           Repository
+	executor       Executor
+	priceProvider  datasource.TokenPriceProvider
+	supplyProvider datasource.TokenSupplyProvider
+	account        model.TradeAccount
+	enabled        bool
+	modeMu         sync.RWMutex
+	tradeMode      model.TradeMode
+	eventBus       *eventbus.Broker
+	persister      *asyncPersister
+	runtimeMu      sync.Mutex
+	openPositions  map[string]model.TradePosition
+	inFlight       map[string]model.TradeSignalType
+	seenSignals    map[string]struct{}
 }
 
 type ServiceOption func(*Service)
@@ -94,6 +95,12 @@ type ServiceOption func(*Service)
 func WithEventBus(bus *eventbus.Broker) ServiceOption {
 	return func(s *Service) {
 		s.eventBus = bus
+	}
+}
+
+func WithSupplyProvider(provider datasource.TokenSupplyProvider) ServiceOption {
+	return func(s *Service) {
+		s.supplyProvider = provider
 	}
 }
 
@@ -199,7 +206,23 @@ func (s *Service) GetOrder(ctx context.Context, id string) (model.TradeOrder, er
 }
 
 func (s *Service) ListPositions(ctx context.Context, status string, tradeMode model.TradeMode, limit int) ([]model.TradePosition, error) {
-	return s.repo.ListPositions(ctx, status, normalizeTradeModeFilter(tradeMode), limit)
+	items, err := s.repo.ListPositions(ctx, status, normalizeTradeModeFilter(tradeMode), limit)
+	if err != nil {
+		return nil, err
+	}
+	for index := range items {
+		s.enrichExecutedMarketCaps(ctx, &items[index])
+	}
+	return items, nil
+}
+
+func (s *Service) GetPosition(ctx context.Context, id string) (model.TradePosition, error) {
+	item, err := s.repo.GetPosition(ctx, id)
+	if err != nil {
+		return model.TradePosition{}, err
+	}
+	s.enrichExecutedMarketCaps(ctx, &item)
+	return item, nil
 }
 
 func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMessage) (model.TradeSignal, error) {
@@ -617,11 +640,27 @@ func (s *Service) publishPosition(ctx context.Context, id string) {
 	if s.eventBus == nil {
 		return
 	}
-	item, err := s.repo.GetPosition(ctx, id)
+	item, err := s.GetPosition(ctx, id)
 	if err != nil {
 		return
 	}
 	s.eventBus.Publish(eventbus.TopicPositions, eventbus.Event{Type: eventbus.EventUpsert, ID: item.ID, Data: item})
+}
+
+func (s *Service) enrichExecutedMarketCaps(ctx context.Context, item *model.TradePosition) {
+	if item == nil || s.supplyProvider == nil {
+		return
+	}
+	supply, err := s.supplyProvider.GetTokenSupply(ctx, item.TokenAddress)
+	if err != nil || supply <= 0 {
+		return
+	}
+	if item.EntryExecutedPrice > 0 {
+		item.EntryMarketCap = item.EntryExecutedPrice * supply
+	}
+	if item.ExitExecutedPrice > 0 {
+		item.ExitMarketCap = item.ExitExecutedPrice * supply
+	}
 }
 
 func defaultString(value string, fallback string) string {
