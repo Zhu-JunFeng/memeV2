@@ -569,41 +569,43 @@
             :data="store.tradeOrders"
             size="small"
             stripe
-            class="trade-table"
+            class="trade-table trade-table-orders"
             table-layout="auto"
             empty-text="暂无订单"
           >
-            <el-table-column label="模式" width="92">
+            <el-table-column label="模式" width="84">
               <template #default="{ row }">
                 <el-tag size="small" :type="modeTagType(row.tradeMode)">{{
                   tradeModeText(row.tradeMode)
                 }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="side" label="方向" width="72" />
-            <el-table-column label="执行通道" width="126">
+            <el-table-column prop="side" label="方向" width="64" />
+            <el-table-column label="执行通道" width="112">
               <template #default="{ row }">{{
                 row.executionChannel || "-"
               }}</template>
             </el-table-column>
-            <el-table-column label="Token" min-width="180">
+            <el-table-column label="Token" min-width="220">
               <template #default="{ row }">
-                <TokenAddressLink
-                  :address="row.tokenAddress"
-                  :short="true"
-                  :compact="true"
-                />
+                <div class="trade-cell-stack trade-cell-stack-token">
+                  <TokenAddressLink
+                    :address="row.tokenAddress"
+                    :short="true"
+                    :compact="true"
+                  />
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="计划金额" width="104">
+            <el-table-column label="计划金额" width="92">
               <template #default="{ row }">{{
                 row.intentAmountUsd
                   ? formatUsd(row.intentAmountUsd).replace("+", "")
                   : formatTokenAmount(row.intentTokenAmount)
               }}</template>
             </el-table-column>
-            <el-table-column prop="status" label="状态" width="90" />
-            <el-table-column label="Tx" min-width="160">
+            <el-table-column prop="status" label="状态" width="84" />
+            <el-table-column label="Tx" width="88">
               <template #default="{ row }">
                 <div v-if="row.submitTxHash" class="tx-cell">
                   <span :title="row.submitTxHash">{{
@@ -616,12 +618,12 @@
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column label="时间" width="168">
+            <el-table-column label="时间" width="154">
               <template #default="{ row }">{{
                 formatBeijingDateTime(row.createdAt)
               }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="88" fixed="right">
+            <el-table-column label="操作" width="72" fixed="right">
               <template #default="{ row }">
                 <el-button
                   v-if="row.status === 'failed'"
@@ -2120,6 +2122,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .trade-cell-stack strong {
@@ -2147,6 +2150,19 @@ onUnmounted(() => {
 .trade-cell-stack span {
   color: #64748b;
   font-size: 11px;
+}
+
+.trade-cell-stack-token {
+  gap: 1px;
+}
+
+.trade-table-orders :deep(.el-table__cell) {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.trade-table-orders :deep(.cell) {
+  line-height: 1.2;
 }
 
 .breakout-card {

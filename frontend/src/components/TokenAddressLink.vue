@@ -67,7 +67,9 @@ async function copyAddress() {
 }
 
 .token-link.compact {
-  gap: 6px;
+  display: inline-grid;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .token-link__anchor {
@@ -90,9 +92,21 @@ async function copyAddress() {
   flex-shrink: 0;
 }
 
+.token-link.compact .token-link__anchor {
+  display: inline-block;
+  max-width: 100%;
+  line-height: 1.2;
+}
+
+.token-link.compact .token-link__actions {
+  gap: 0;
+}
+
 .token-link__actions :deep(.el-button) {
   margin-left: 0;
   padding: 0 2px;
+  height: 18px;
+  font-size: 12px;
 }
 
 .token-link__empty {
