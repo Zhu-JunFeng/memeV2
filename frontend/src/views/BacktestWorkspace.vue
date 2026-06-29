@@ -1406,7 +1406,7 @@ async function refreshTradeDashboard() {
     limit: 50,
   };
   await store.loadTradeDashboard(params);
-  store.startTradeStreams(params);
+  store.startTradeStream(tradeTab.value, params);
 }
 
 async function handleTradeModeChange(value) {
@@ -1785,6 +1785,13 @@ onMounted(async () => {
   await Promise.all([store.loadStrategyMethods(), store.loadTradeRuntime()]);
   tradeRuntimeMode.value = store.tradeRuntime.tradeMode || "paper";
   await refreshTradeDashboard();
+});
+
+watch(tradeTab, (nextTab) => {
+  store.startTradeStream(nextTab, {
+    tradeMode: tradeFilterMode.value,
+    limit: 50,
+  });
 });
 
 onUnmounted(() => {

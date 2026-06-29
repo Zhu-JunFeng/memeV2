@@ -40,6 +40,7 @@ export const useBacktestStore = defineStore("backtest", {
     tradeOrders: [],
     tradePositions: [],
     tradeStreamSources: [],
+    activeTradeStreamTab: "",
   }),
   actions: {
     async loadKlineLevels(params) {
@@ -172,18 +173,58 @@ export const useBacktestStore = defineStore("backtest", {
       }
     },
 
-    startTradeStreams(params = {}) {
+    startTradeStream(tab, params = {}) {
       this.stopTradeStreams();
       if (typeof EventSource === "undefined") return;
-      const streamParams = { tradeMode: params.tradeMode || "all", limit: params.limit || 50 };
-      this.openTradeStream(candidateMonitorStreamURL(), "candidateMonitorItems", "tokenAddress", compareCandidates);
-      this.openTradeStream(tradeSignalsStreamURL(streamParams), "tradeSignals", "id", compareSignals);
-      this.openTradeStream(tradeOrdersStreamURL(streamParams), "tradeOrders", "id", compareOrders);
-      this.openTradeStream(tradePositionsStreamURL({ ...streamParams, status: params.status || "" }), "tradePositions", "id", comparePositions);
+      const nextTab = String(tab || "").trim();
+      if (!nextTab) return;
+      const streamParams = {
+        tradeMode: params.tradeMode || "all",
+        limit: params.limit || 50,
+      };
+      const definitions = {
+        candidates: {
+          url: candidateMonitorStreamURL(),
+          stateKey: "candidateMonitorItems",
+          idKey: "tokenAddress",
+          compareFn: compareCandidates,
+        },
+        signals: {
+          url: tradeSignalsStreamURL(streamParams),
+          stateKey: "tradeSignals",
+          idKey: "id",
+          compareFn: compareSignals,
+        },
+        orders: {
+          url: tradeOrdersStreamURL(streamParams),
+          stateKey: "tradeOrders",
+          idKey: "id",
+          compareFn: compareOrders,
+        },
+        positions: {
+          url: tradePositionsStreamURL({
+            ...streamParams,
+            status: params.status || "",
+          }),
+          stateKey: "tradePositions",
+          idKey: "id",
+          compareFn: comparePositions,
+        },
+      };
+      const current = definitions[nextTab];
+      if (!current) return;
+      this.openTradeStream(
+        current.url,
+        current.stateKey,
+        current.idKey,
+        current.compareFn,
+      );
+      this.activeTradeStreamTab = nextTab;
     },
     stopTradeStreams() {
       this.tradeStreamSources.forEach((source) => source.close());
       this.tradeStreamSources = [];
+      this.activeTradeStreamTab = "";
     },
     openTradeStream(url, stateKey, idKey, compareFn) {
       const source = new EventSource(url);
