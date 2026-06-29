@@ -81,6 +81,14 @@ func (r *fakeRepo) GetSignalByID(_ context.Context, id string) (model.TradeSigna
 	}
 	return model.TradeSignal{}, sql.ErrNoRows
 }
+func (r *fakeRepo) GetSignalBySignalID(_ context.Context, signalID string) (model.TradeSignal, error) {
+	for _, item := range r.signals {
+		if item.SignalID == signalID {
+			return item, nil
+		}
+	}
+	return model.TradeSignal{}, sql.ErrNoRows
+}
 func (r *fakeRepo) ListTradeSummaries(context.Context) ([]model.TradeSummaryItem, error) {
 	return append([]model.TradeSummaryItem(nil), r.summaries...), nil
 }

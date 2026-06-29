@@ -31,6 +31,7 @@ type Repository interface {
 	InsertSignalIfAbsent(ctx context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error)
 	UpdateSignalStatus(ctx context.Context, signalID string, status string) error
 	GetSignalByID(ctx context.Context, id string) (model.TradeSignal, error)
+	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
 	ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error)
 	ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error)
 	CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error)
@@ -191,6 +192,14 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 
 func (s *Service) ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error) {
 	return s.repo.ListSignals(ctx, normalizeTradeModeFilter(tradeMode), limit)
+}
+
+func (s *Service) GetSignal(ctx context.Context, id string) (model.TradeSignal, error) {
+	return s.repo.GetSignalByID(ctx, id)
+}
+
+func (s *Service) GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error) {
+	return s.repo.GetSignalBySignalID(ctx, signalID)
 }
 
 func (s *Service) ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error) {

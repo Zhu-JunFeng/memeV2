@@ -606,7 +606,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 		state.LastDecisionBarTime = decisionBar.OpenTime
 		return m.saveState(ctx, state)
 	}
-	message, level, err := m.buildBuySignal(state, decisionBar, entry.Signal)
+	message, level, err := m.buildBuySignal(state, klines, decisionBar, entry)
 	if err != nil {
 		return err
 	}
@@ -661,7 +661,8 @@ func candidateSignalsAfterExit(signals []backtest.RealtimeScenarioSignal, lastEx
 	return items
 }
 
-func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, decisionBar model.Kline, sig backtest.RealtimeScenarioSignal) (model.TradeSignalMessage, model.PriceLevel, error) {
+func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, klines []model.Kline, decisionBar model.Kline, entry backtest.BandFollowReplayEntry) (model.TradeSignalMessage, model.PriceLevel, error) {
+	sig := entry.Signal
 	if sig.Breakout == nil || sig.Breakout.BuyPoint == nil {
 		return model.TradeSignalMessage{}, model.PriceLevel{}, errors.New("breakout signal missing buy point")
 	}
@@ -673,10 +674,12 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, decisionB
 		Calculation: sig.Calculation,
 		Breakout:    sig.Breakout,
 	}
+	snapshot := buildSignalSnapshot(klines, decisionBar, entry, level)
 	metadata, err := json.Marshal(map[string]any{
 		"source":          "candidate_monitor",
 		"upstream":        json.RawMessage(state.RawPayload),
 		"realtime":        sig,
+		"snapshot":        snapshot,
 		"strategyCode":    strategyBreakoutFollow,
 		"decisionBarTime": decisionBar.OpenTime,
 		"entryBarTime":    sig.SignalTime,
@@ -757,6 +760,7 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 		"outcome":         decision.Outcome,
 		"holdingBars":     decision.HoldingBars,
 		"profitRate":      decision.ProfitRate,
+		"exitPoint":       decision.ExitPoint,
 		"strategyCode":    strategyBreakoutFollow,
 		"entryBarTime":    state.EntryTime,
 		"exitBarTime":     decisionBar.OpenTime,
@@ -779,6 +783,51 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 		Reason:           decision.Reason,
 		Metadata:         metadata,
 	}, nil
+}
+
+type signalSnapshot struct {
+	Window      signalSnapshotWindow `json:"window"`
+	Level       model.PriceLevel     `json:"level"`
+	ChartKlines []model.Kline        `json:"chartKlines"`
+	DecisionBar model.Kline          `json:"decisionBar"`
+}
+
+type signalSnapshotWindow struct {
+	WindowIndex int       `json:"windowIndex"`
+	StartTime   time.Time `json:"startTime"`
+	EndTime     time.Time `json:"endTime"`
+	KlineCount  int       `json:"klineCount"`
+}
+
+func buildSignalSnapshot(klines []model.Kline, decisionBar model.Kline, entry backtest.BandFollowReplayEntry, level model.PriceLevel) signalSnapshot {
+	return signalSnapshot{
+		Window: signalSnapshotWindow{
+			WindowIndex: entry.GlobalWindow,
+			StartTime:   entry.Window.StartTime,
+			EndTime:     entry.Window.EndTime,
+			KlineCount:  entry.Window.KlineCount,
+		},
+		Level:       level,
+		ChartKlines: snapshotChartKlines(klines, entry.Window.StartTime, decisionBar),
+		DecisionBar: decisionBar,
+	}
+}
+
+func snapshotChartKlines(klines []model.Kline, start time.Time, decisionBar model.Kline) []model.Kline {
+	items := make([]model.Kline, 0, len(klines))
+	for _, item := range klines {
+		if !start.IsZero() && item.OpenTime.Before(start) {
+			continue
+		}
+		items = append(items, item)
+		if !decisionBar.OpenTime.IsZero() && item.OpenTime.Equal(decisionBar.OpenTime) {
+			break
+		}
+	}
+	if len(items) == 0 && !decisionBar.OpenTime.IsZero() {
+		items = append(items, decisionBar)
+	}
+	return append([]model.Kline(nil), items...)
 }
 
 func compactSignalID(prefix string, parts ...string) string {

@@ -72,6 +72,8 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.PUT("/trade/runtime", h.updateTradeRuntime)
 	api.GET("/trade/summary", h.listTradeSummary)
 	api.GET("/trade/signals", h.listTradeSignals)
+	api.GET("/trade/signals/:id", h.getTradeSignal)
+	api.GET("/trade/signals/by-signal-id/:signalId", h.getTradeSignalBySignalID)
 	api.GET("/trade/signals/stream", h.streamTradeSignals)
 	api.GET("/trade/orders", h.listTradeOrders)
 	api.GET("/trade/orders/stream", h.streamTradeOrders)
@@ -620,6 +622,24 @@ func (h *Handler) listTradeSignals(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) getTradeSignal(c *gin.Context) {
+	item, err := h.tradeService.GetSignal(c.Request.Context(), strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"item": item})
+}
+
+func (h *Handler) getTradeSignalBySignalID(c *gin.Context) {
+	item, err := h.tradeService.GetSignalBySignalID(c.Request.Context(), strings.TrimSpace(c.Param("signalId")))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"item": item})
 }
 
 func (h *Handler) listTradeSummary(c *gin.Context) {

@@ -8,6 +8,8 @@ import {
   fetchKlines,
   fetchSupportResistance,
   fetchTradeRuntime,
+  getTradeSignal,
+  getTradeSignalBySignalId,
   listTradeSummary,
   listBacktests,
   listCandidateMonitor,
@@ -190,6 +192,12 @@ export const useBacktestStore = defineStore("backtest", {
       } finally {
         this.tradeLoading = false;
       }
+    },
+    async fetchTradeSignal(id) {
+      return getTradeSignal(id).then((data) => data.item);
+    },
+    async fetchTradeSignalBySignalId(signalId) {
+      return getTradeSignalBySignalId(signalId).then((data) => data.item);
     },
     async addCandidateMonitor(tokenAddress) {
       this.tradeLoading = true;

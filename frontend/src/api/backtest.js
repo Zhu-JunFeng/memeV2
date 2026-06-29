@@ -48,6 +48,14 @@ export function listTradeSignals(params) {
   return http.get("/trade/signals", { params });
 }
 
+export function getTradeSignal(id) {
+  return http.get(`/trade/signals/${id}`);
+}
+
+export function getTradeSignalBySignalId(signalId) {
+  return http.get(`/trade/signals/by-signal-id/${encodeURIComponent(signalId)}`);
+}
+
 export function listCandidateMonitor() {
   return http.get("/signal/candidate-monitor");
 }

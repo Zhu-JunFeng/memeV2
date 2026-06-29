@@ -143,6 +143,10 @@ func (r *TradeRepository) GetSignalByID(ctx context.Context, id string) (model.T
 	return r.getSignal(ctx, `WHERE id = $1`, id)
 }
 
+func (r *TradeRepository) GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error) {
+	return r.getSignal(ctx, `WHERE signal_id = $1`, signalID)
+}
+
 func (r *TradeRepository) getSignal(ctx context.Context, where string, arg any) (model.TradeSignal, error) {
 	var item model.TradeSignal
 	if err := r.db.QueryRowContext(ctx, `

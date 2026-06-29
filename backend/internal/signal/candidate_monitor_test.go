@@ -288,6 +288,17 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	if signal.SignalType != model.TradeSignalTypeBuy || signal.StrategyCode != strategyBreakoutFollow {
 		t.Fatalf("unexpected buy signal: %#v", signal)
 	}
+	var payload map[string]any
+	if err := json.Unmarshal(signal.Metadata, &payload); err != nil {
+		t.Fatalf("unmarshal signal metadata: %v", err)
+	}
+	snapshot, ok := payload["snapshot"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected snapshot in signal metadata, got %#v", payload)
+	}
+	if len(snapshot["chartKlines"].([]any)) == 0 {
+		t.Fatalf("expected snapshot chart klines, got %#v", snapshot)
+	}
 	stored := store.states["token-a"]
 	if stored.Status != candidateStatusBought || stored.BuySignalID != signal.SignalID || stored.Level.Breakout == nil {
 		t.Fatalf("expected bought state with level, got %#v", stored)

@@ -548,9 +548,16 @@
               </template>
             </el-table-column>
             <el-table-column label="触发价位" width="120">
-              <template #default="{ row }">{{
-                formatMarketCap(row.triggerMarketCap)
-              }}</template>
+              <template #default="{ row }">
+                <el-button
+                  link
+                  type="primary"
+                  class="signal-link-button"
+                  @click="focusSignalSnapshot(row)"
+                >
+                  {{ formatMarketCap(row.triggerMarketCap) }}
+                </el-button>
+              </template>
             </el-table-column>
             <el-table-column label="时间" width="168">
               <template #default="{ row }">{{
@@ -706,20 +713,40 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="价位" width="148">
+              <el-table-column label="市值" width="258">
                 <template #default="{ row }">
                   <div class="position-market-stack">
-                    <div>
-                      <span>买入</span>
-                      <strong>{{ formatOptionalMarketCap(row.entryMarketCap) }}</strong>
-                    </div>
-                    <div>
-                      <span>{{ row.status === "closed" ? "卖出" : "当前" }}</span>
+                    <div class="position-market-current">
+                      <span>当前</span>
                       <strong>{{
-                        row.status === "closed"
-                          ? formatOptionalMarketCap(row.exitMarketCap)
-                          : formatOptionalMarketCap(positionCurrentMarketCap(row))
+                        formatOptionalMarketCap(positionCurrentMarketCap(row))
                       }}</strong>
+                    </div>
+                    <div class="position-market-pair">
+                      <span>买入</span>
+                      <div>
+                        <small>信号</small>
+                        <strong>{{
+                          formatOptionalMarketCap(row.signalEntryMarketCap)
+                        }}</strong>
+                      </div>
+                      <div>
+                        <small>真实</small>
+                        <strong>{{ formatOptionalMarketCap(row.entryMarketCap) }}</strong>
+                      </div>
+                    </div>
+                    <div class="position-market-pair">
+                      <span>卖出</span>
+                      <div>
+                        <small>信号</small>
+                        <strong>{{
+                          formatOptionalMarketCap(row.signalExitMarketCap)
+                        }}</strong>
+                      </div>
+                      <div>
+                        <small>真实</small>
+                        <strong>{{ formatOptionalMarketCap(row.exitMarketCap) }}</strong>
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -1199,7 +1226,8 @@ const store = useBacktestStore();
 const TRADE_LIST_LIMIT = 20;
 const TRADE_TABLE_HEADER_HEIGHT = 40;
 const TRADE_TABLE_ROW_HEIGHT = 39;
-const POSITION_TABLE_ROW_HEIGHT = 58;
+const POSITION_TABLE_ROW_HEIGHT = 76;
+const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 const tradeTableHeight =
   TRADE_TABLE_HEADER_HEIGHT + TRADE_TABLE_ROW_HEIGHT * TRADE_LIST_LIMIT;
 const positionTableHeight =
@@ -1292,6 +1320,7 @@ const selectedWindowKey = ref("");
 const selectedLevelKey = ref("");
 const focusedTradeKey = ref("");
 const activeStrategyGroupKey = ref("");
+const signalPreviewTrades = ref([]);
 const selectedChartRange = ref(null);
 const loadedRange = ref(null);
 const chartPanelRef = ref(null);
@@ -1411,7 +1440,7 @@ const activeStrategySummary = computed(
   () => activeStrategyGroup.value?.summary || null,
 );
 const activeStrategyTrades = computed(
-  () => activeStrategyGroup.value?.trades || [],
+  () => signalPreviewTrades.value.length ? signalPreviewTrades.value : activeStrategyGroup.value?.trades || [],
 );
 const levelOptions = computed(() =>
   sortedLevels.value.map((level) => ({
@@ -1510,6 +1539,7 @@ async function loadRangeLevels(range, sourceLabel) {
   selectedLevelKey.value = initialLevel ? levelKey(initialLevel) : "";
   loadedRange.value = { ...range, source: sourceLabel };
   store.strategyBacktestResult = null;
+  signalPreviewTrades.value = [];
   focusedTradeKey.value = "";
   activeStrategyGroupKey.value = "";
   ElMessage.success(
@@ -1549,6 +1579,7 @@ async function runStrategyForLoadedRange() {
       confirmBars: form.confirmBars,
     },
   });
+  signalPreviewTrades.value = [];
   const bestGroup = pickBestStrategyGroup(result.groups || []);
   activeStrategyGroupKey.value = bestGroup ? groupKey(bestGroup) : "";
   const firstTrade = bestGroup?.trades?.[0] || result.trades?.[0];
@@ -1577,6 +1608,7 @@ async function loadCandidateSystemKlines(row) {
   selectedLevelKey.value = "";
   loadedRange.value = null;
   store.strategyBacktestResult = null;
+  signalPreviewTrades.value = [];
   focusedTradeKey.value = "";
   activeStrategyGroupKey.value = "";
   if (!result.klines.length) {
@@ -1619,6 +1651,61 @@ async function loadPositionCandidateScenario(row) {
     chartPanelRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
   });
   ElMessage.success(`已加载 ${row.tokenSymbol || shortAddress(tokenAddress)} 的入池后 K 线与压力位`);
+}
+
+async function focusSignalSnapshot(row) {
+  const signal = await store.fetchTradeSignal(row.id);
+  const payload = signal?.rawPayloadJson || {};
+  const metadata = payload?.metadata || {};
+  let snapshotPayload = signal;
+  let snapshot = metadata?.snapshot || null;
+  let previewSellSignal = null;
+  if (!snapshot && signal.signalType === "sell") {
+    const buySignalId = metadata?.buySignalId;
+    if (!buySignalId) {
+      ElMessage.error("该卖出信号未关联买入信号快照");
+      return;
+    }
+    snapshotPayload = await store.fetchTradeSignalBySignalId(buySignalId);
+    snapshot = snapshotPayload?.rawPayloadJson?.metadata?.snapshot || null;
+    previewSellSignal = signal;
+  }
+  if (!snapshot) {
+    ElMessage.error("该历史信号未保存场景快照，请等待新信号生成后再查看");
+    return;
+  }
+  const level = normalizeSnapshotLevel(snapshot.level);
+  const window = normalizeSnapshotWindow(snapshot.window, level);
+  const chartKlines = Array.isArray(snapshot.chartKlines) ? snapshot.chartKlines : [];
+  if (!chartKlines.length || !level || !window) {
+    ElMessage.error("信号快照数据不完整，无法回看");
+    return;
+  }
+  form.tokenAddress = signal.tokenAddress;
+  form.interval = signal.interval || form.interval;
+  form.dataSource = "system";
+  selectedChartRange.value = null;
+  loadedRange.value = {
+    start: new Date(chartKlines[0].openTime),
+    end: new Date(chartKlines[chartKlines.length - 1].closeTime || chartKlines[chartKlines.length - 1].openTime),
+    source: `信号快照·${signal.signalType === "buy" ? "买入" : "卖出"}`,
+  };
+  store.result = {
+    klines: chartKlines,
+    windows: [{ ...window, levels: [level] }],
+    windowSize: window.klineCount || chartKlines.length,
+    windowStep: 1,
+  };
+  store.strategyBacktestResult = null;
+  activeStrategyGroupKey.value = "";
+  signalPreviewTrades.value = [buildSignalPreviewTrade(snapshotPayload, previewSellSignal, level, window)];
+  selectedWindowKey.value = windowKey(window);
+  selectedLevelKey.value = levelKey(level);
+  focusedTradeKey.value = tradeKey(signalPreviewTrades.value[0]);
+  tradeTab.value = "signals";
+  await nextTick();
+  chartPanelRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  ElMessage.success("已跳转到 K 线并加载该次信号快照");
 }
 
 function openAddCandidateDialog() {
@@ -1777,6 +1864,76 @@ function findNearestTradeByBuyTime(targetTime) {
     });
   });
   return bestDistance <= 5 * 60 * 1000 ? best : null;
+}
+
+function normalizeSnapshotWindow(window, level) {
+  if (!window) return null;
+  return {
+    windowIndex: Number(window.windowIndex || 1),
+    startTime: window.startTime,
+    endTime: window.endTime,
+    klineCount: Number(window.klineCount || 0),
+    levels: level ? [level] : [],
+  };
+}
+
+function normalizeSnapshotLevel(level) {
+  if (!level) return null;
+  return {
+    ...level,
+    marketCap: Number(level.marketCap),
+    lowerMarketCap: Number(level.lowerMarketCap),
+    upperMarketCap: Number(level.upperMarketCap),
+    score: Number(level.score || 0),
+    touches: Number(level.touches || 0),
+    volume: Number(level.volume || 0),
+  };
+}
+
+function buildSignalPreviewTrade(buySignal, sellSignal, level, window) {
+  const buyPayload = buySignal?.rawPayloadJson || {};
+  const buyMetadata = buyPayload?.metadata || {};
+  const breakout = level?.breakout || buyMetadata?.realtime?.breakout || {};
+  const buyPoint = breakout?.buyPoint || breakout?.breakoutPoint || {
+    time: buySignal?.signalTime,
+    marketCap: buySignal?.triggerMarketCap,
+  };
+  const sellPayload = sellSignal?.rawPayloadJson || {};
+  const sellMetadata = sellPayload?.metadata || {};
+  const sellPoint = sellMetadata?.exitPoint
+    ? {
+        ...sellMetadata.exitPoint,
+        marketCap: Number(
+          sellMetadata.exitPoint.marketCap ?? sellMetadata.exitPoint.price ?? sellSignal?.triggerMarketCap,
+        ),
+      }
+    : null;
+  const profitRate = computePreviewProfitRate(
+    buySignal?.triggerMarketCap,
+    sellSignal?.triggerMarketCap,
+  );
+  return {
+    takeProfitRate: sellMetadata?.profitRate ?? 0,
+    windowIndex: Number(window?.windowIndex || 1),
+    levelIndex: 1,
+    levelType: level?.type || "resistance",
+    levelMarketCap: Number(level?.marketCap || 0),
+    levelLowerMarketCap: Number(level?.lowerMarketCap || 0),
+    levelUpperMarketCap: Number(level?.upperMarketCap || 0),
+    buyPoint,
+    sellPoint,
+    profitRate,
+    exitReason: sellSignal?.reason || buySignal?.reason || "",
+  };
+}
+
+function computePreviewProfitRate(entry, exit) {
+  const entryValue = Number(entry);
+  const exitValue = Number(exit);
+  if (!Number.isFinite(entryValue) || entryValue <= 0 || !Number.isFinite(exitValue) || exitValue <= 0) {
+    return 0;
+  }
+  return exitValue / entryValue - 1;
 }
 
 function selectStrategyGroup(group) {
@@ -1956,6 +2113,13 @@ function formatTokenAmount(value) {
   return number.toFixed(4).replace(/\.?0+$/, "");
 }
 
+function formatSolAmount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  const decimals = Math.abs(number) >= 1 ? 4 : 6;
+  return number.toFixed(decimals).replace(/\.?0+$/, "");
+}
+
 function formatCompactTokenAmount(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
@@ -2041,6 +2205,10 @@ function positionRealizedRate(row) {
 }
 
 function formatOrderIntent(row) {
+  if (row?.side === "sell") {
+    const soldSol = orderReceivedSol(row);
+    return Number.isFinite(soldSol) ? `${formatSolAmount(soldSol)} SOL` : "-";
+  }
   if (Number(row?.intentAmountSol) > 0) {
     return `${formatTokenAmount(row.intentAmountSol)} SOL`;
   }
@@ -2048,6 +2216,31 @@ function formatOrderIntent(row) {
     return formatUsd(row.intentAmountUsd).replace("+", "");
   }
   return formatTokenAmount(row?.intentTokenAmount);
+}
+
+function orderReceivedSol(row) {
+  const response = row?.jupiterResponseJson || {};
+  const executeAmount = lamportsToSol(response.execute?.outputAmountResult);
+  if (Number.isFinite(executeAmount)) return executeAmount;
+  const orderAmount = response.order?.outAmount;
+  if (isWrappedSolMint(response.order?.outputMint)) {
+    return lamportsToSol(orderAmount);
+  }
+  const quoteAmount = response.quote?.outAmount;
+  if (isWrappedSolMint(response.quote?.outputMint)) {
+    return lamportsToSol(quoteAmount);
+  }
+  return NaN;
+}
+
+function lamportsToSol(value) {
+  const lamports = Number(value);
+  if (!Number.isFinite(lamports) || lamports <= 0) return NaN;
+  return lamports / 1_000_000_000;
+}
+
+function isWrappedSolMint(value) {
+  return String(value || "") === WRAPPED_SOL_MINT;
 }
 
 function tradeModeText(value) {
