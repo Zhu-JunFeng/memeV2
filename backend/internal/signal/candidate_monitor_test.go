@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,6 +21,30 @@ func (p fakeSupplyProvider) GetTokenSupply(context.Context, string) (float64, er
 		return 1, nil
 	}
 	return p.supply, nil
+}
+
+type fakePriceProvider struct {
+	sequences map[string][]float64
+	calls     map[string]int
+}
+
+func (p *fakePriceProvider) GetTokenPrice(_ context.Context, tokenAddress string) (float64, error) {
+	if p == nil {
+		return 0, fmt.Errorf("price provider not configured")
+	}
+	items := p.sequences[tokenAddress]
+	if len(items) == 0 {
+		return 0, fmt.Errorf("missing price for %s", tokenAddress)
+	}
+	if p.calls == nil {
+		p.calls = map[string]int{}
+	}
+	index := p.calls[tokenAddress]
+	if index >= len(items) {
+		index = len(items) - 1
+	}
+	p.calls[tokenAddress]++
+	return items[index], nil
 }
 
 type fakeCandidateStore struct {
@@ -62,6 +87,7 @@ func (s *fakeCandidateStore) UpsertCandidate(_ context.Context, state candidateM
 	s.states[state.TokenAddress] = state
 	return nil
 }
+
 func (s *fakeCandidateStore) ListActive(context.Context) ([]candidateMonitorState, error) {
 	items := make([]candidateMonitorState, 0, len(s.states))
 	for _, item := range s.states {
@@ -69,16 +95,19 @@ func (s *fakeCandidateStore) ListActive(context.Context) ([]candidateMonitorStat
 	}
 	return items, nil
 }
+
 func (s *fakeCandidateStore) SaveState(_ context.Context, state candidateMonitorState) error {
 	s.states[state.TokenAddress] = state
 	return nil
 }
+
 func (s *fakeCandidateStore) StopCandidate(_ context.Context, state candidateMonitorState, status string) error {
 	state.Status = status
 	s.stopped[state.TokenAddress] = status
 	delete(s.states, state.TokenAddress)
 	return nil
 }
+
 func (s *fakeCandidateStore) AcquireEmission(_ context.Context, signalID string) (bool, error) {
 	if s.emitted[signalID] {
 		return false, nil
@@ -86,16 +115,21 @@ func (s *fakeCandidateStore) AcquireEmission(_ context.Context, signalID string)
 	s.emitted[signalID] = true
 	return true, nil
 }
+
 func (s *fakeCandidateStore) ReleaseEmission(_ context.Context, signalID string) error {
 	delete(s.emitted, signalID)
 	s.released = append(s.released, signalID)
 	return nil
 }
 
-func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, pub *capturePublisher) *CandidateMonitor {
+func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, prices map[string][]float64, now time.Time, pub *capturePublisher) *CandidateMonitor {
 	systemStore := newFakeMonitorKlineStore()
+	if len(klines) > 0 {
+		systemStore.recent[klines[0].TokenAddress+"|1m"] = append([]model.Kline(nil), klines...)
+	}
+	priceProvider := &fakePriceProvider{sequences: prices, calls: map[string]int{}}
 	return &CandidateMonitor{
-		market:         fakeKlineSource{items: klines},
+		priceProvider:  priceProvider,
 		publisher:      pub,
 		store:          store,
 		supplyProvider: fakeSupplyProvider{supply: 1},
@@ -105,12 +139,14 @@ func testCandidateMonitor(store *fakeCandidateStore, klines []model.Kline, pub *
 		cfg: CandidateMonitorConfig{
 			Enabled:        true,
 			Interval:       "1m",
-			MinMarketCap:   5,
+			MinMarketCap:   monitorMinMarketCap,
 			LookbackBars:   120,
 			LevelOptions:   testLevelOptions(),
 			BreakoutFollow: backtest.DefaultBreakoutBandFollowConfig(),
 			SupplyProvider: fakeSupplyProvider{supply: 1},
+			PriceProvider:  priceProvider,
 			SystemKlines:   systemStore,
+			Now:            func() time.Time { return now },
 		},
 	}
 }
@@ -119,12 +155,47 @@ func testLevelOptions() backtest.LevelOptions {
 	return backtest.LevelOptions{PivotWindow: 1, PriceTolerance: 0.02, BreakTolerance: 0.01, ConfirmBars: 1, VolumeWindow: 3, VolumeMultiplier: 1.2, MaxLevels: 4, WindowSize: 6, WindowStep: 1, MinTouches: 3}
 }
 
+func TestCandidateMonitorPreloadSanitizesSystemKlines(t *testing.T) {
+	base := time.Date(2026, 6, 29, 9, 0, 0, 0, time.UTC)
+	store := newFakeCandidateStore()
+	state := candidateMonitorState{TokenAddress: "token-a", Status: candidateStatusWatching, CandidateAt: base}
+	store.states[state.TokenAddress] = state
+	monitor := testCandidateMonitor(store, []model.Kline{{
+		TokenAddress:   "token-a",
+		Interval:       "1m",
+		OpenTime:       base,
+		CloseTime:      base.Add(time.Minute),
+		Open:           10,
+		High:           12,
+		Low:            9,
+		Close:          11,
+		MarketCapOpen:  20000,
+		MarketCapHigh:  22000,
+		MarketCapLow:   19000,
+		MarketCapClose: 21000,
+		Volume:         123,
+	}}, nil, base, &capturePublisher{})
+
+	monitor.preloadActiveKlines(context.Background())
+	cached := monitor.klineCache.Get("token-a", "1m")
+	if len(cached) != 1 {
+		t.Fatalf("expected one cached kline, got %d", len(cached))
+	}
+	if cached[0].Volume != 0 {
+		t.Fatalf("expected preload volume to be sanitized to 0, got %#v", cached[0])
+	}
+	if cached[0].Open != 20000 || cached[0].High != 22000 || cached[0].Low != 19000 || cached[0].Close != 21000 {
+		t.Fatalf("expected preload to use market cap values, got %#v", cached[0])
+	}
+}
+
 func TestCandidateMonitorStopsWatchingLowMarketCap(t *testing.T) {
-	base := time.Now().UTC().Truncate(time.Minute)
+	base := time.Date(2026, 6, 29, 10, 0, 30, 0, time.UTC)
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	monitor := testCandidateMonitor(store, []model.Kline{{TokenAddress: "token-a", Interval: "1m", OpenTime: base, MarketCapClose: 9999}}, pub)
-	state := candidateMonitorState{TokenAddress: "token-a", RunID: "run-1", CandidateAt: base, Status: candidateStatusWatching, RawPayload: json.RawMessage(`{"event":"candidate_score_passed"}`)}
+	monitor := testCandidateMonitor(store, nil, map[string][]float64{"token-a": {9.999}}, base, pub)
+	state := candidateMonitorState{TokenAddress: "token-a", RunID: "run-1", CandidateAt: base.Add(-time.Minute), Status: candidateStatusWatching, RawPayload: json.RawMessage(`{"event":"candidate_score_passed"}`)}
+	store.states[state.TokenAddress] = state
 	if err := monitor.processCandidate(context.Background(), state); err != nil {
 		t.Fatalf("process candidate: %v", err)
 	}
@@ -137,22 +208,25 @@ func TestCandidateMonitorStopsWatchingLowMarketCap(t *testing.T) {
 }
 
 func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
-	base := time.Now().UTC().Truncate(time.Minute).Add(-7 * time.Minute)
-	klines := []model.Kline{
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), Open: 9.0, High: 9.4, Low: 8.8, Close: 9.1, MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), Open: 9.1, High: 10.4, Low: 9.0, Close: 9.8, MarketCapOpen: 9.1, MarketCapHigh: 10.4, MarketCapLow: 9.0, MarketCapClose: 9.8, Volume: 200},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), Open: 9.8, High: 9.9, Low: 9.2, Close: 9.4, MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), Open: 9.4, High: 10.45, Low: 9.3, Close: 9.85, MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), Open: 9.85, High: 9.95, Low: 9.4, Close: 9.5, MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), Open: 9.5, High: 10.5, Low: 9.45, Close: 9.9, MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), Open: 9.9, High: 11.2, Low: 9.8, Close: 10.95, MarketCapOpen: 9.9, MarketCapHigh: 11.2, MarketCapLow: 9.8, MarketCapClose: 10.95, Volume: 320},
+	base := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
+	preloaded := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 18000, MarketCapHigh: 18800, MarketCapLow: 17600, MarketCapClose: 18200, Volume: 100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 18200, MarketCapHigh: 20800, MarketCapLow: 18000, MarketCapClose: 19600, Volume: 200},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 19600, MarketCapHigh: 19800, MarketCapLow: 18400, MarketCapClose: 18800, Volume: 120},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 18800, MarketCapHigh: 20900, MarketCapLow: 18600, MarketCapClose: 19700, Volume: 240},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 19700, MarketCapHigh: 19900, MarketCapLow: 18800, MarketCapClose: 19000, Volume: 140},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 19000, MarketCapHigh: 21000, MarketCapLow: 18900, MarketCapClose: 19800, Volume: 280},
 	}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	monitor := testCandidateMonitor(store, klines, pub)
+	now := base.Add(6*time.Minute + 30*time.Second)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.95}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
 	state := candidateMonitorState{TokenAddress: "token-a", RunID: "run-1", ScanNo: 7, CandidateAt: base.Add(5*time.Minute + 30*time.Second), Status: candidateStatusWatching, RawPayload: json.RawMessage(`{"event":"candidate_score_passed"}`)}
+	store.states[state.TokenAddress] = state
+	monitor.preloadActiveKlines(context.Background())
+
 	if err := monitor.processCandidate(context.Background(), state); err != nil {
 		t.Fatalf("process candidate: %v", err)
 	}
@@ -167,11 +241,14 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	if stored.Status != candidateStatusBought || stored.BuySignalID != signal.SignalID || stored.Level.Breakout == nil {
 		t.Fatalf("expected bought state with level, got %#v", stored)
 	}
+	if len(monitor.systemKlines.(*fakeMonitorKlineStore).enqueued) == 0 {
+		t.Fatalf("expected latest synthetic kline to be enqueued")
+	}
 }
 
 func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
-	base := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
-	entry := model.LevelAnchorPoint{Time: base, Price: 10}
+	base := time.Date(2026, 6, 29, 11, 0, 0, 0, time.UTC)
+	entry := model.LevelAnchorPoint{Time: base, Price: 10000}
 	state := candidateMonitorState{
 		TokenAddress: "token-a",
 		RunID:        "run-1",
@@ -179,19 +256,20 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		BuySignalID:  "buy-1",
 		CandidateAt:  base.Add(-time.Minute),
 		EntryTime:    base,
-		EntryPrice:   10,
+		EntryPrice:   10000,
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed"}`),
-		Level:        model.PriceLevel{Price: 9.8, Upper: 9.8, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
+		Level:        model.PriceLevel{Price: 9800, Upper: 9800, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
 	}
-	klines := []model.Kline{
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), Open: 10, High: 10.1, Low: 9.9, Close: 10, MarketCapOpen: 10, MarketCapHigh: 10.1, MarketCapLow: 9.9, MarketCapClose: 10, Volume: 100},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), Open: 10, High: 10.9, Low: 10, Close: 10.8, MarketCapOpen: 10, MarketCapHigh: 10.9, MarketCapLow: 10, MarketCapClose: 10.8, Volume: 200},
-	}
+	preloaded := []model.Kline{{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100}}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	monitor := testCandidateMonitor(store, klines, pub)
-	monitor.supplyProvider = fakeSupplyProvider{supply: 2000}
-	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 2000}
+	now := base.Add(time.Minute + 30*time.Second)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.8}}, now, pub)
+	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
+	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
+	store.states[state.TokenAddress] = state
+	monitor.preloadActiveKlines(context.Background())
+
 	if err := monitor.processCandidate(context.Background(), state); err != nil {
 		t.Fatalf("process candidate: %v", err)
 	}
@@ -212,8 +290,8 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 }
 
 func TestCandidateMonitorBoughtCandidateKeepsMonitoringBelowTenK(t *testing.T) {
-	base := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
-	entry := model.LevelAnchorPoint{Time: base, Price: 12_000}
+	base := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	entry := model.LevelAnchorPoint{Time: base, Price: 9500}
 	state := candidateMonitorState{
 		TokenAddress: "token-a",
 		RunID:        "run-1",
@@ -221,18 +299,20 @@ func TestCandidateMonitorBoughtCandidateKeepsMonitoringBelowTenK(t *testing.T) {
 		BuySignalID:  "buy-1",
 		CandidateAt:  base.Add(-time.Minute),
 		EntryTime:    base,
-		EntryPrice:   12_000,
+		EntryPrice:   9500,
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed"}`),
-		Level:        model.PriceLevel{Price: 11_900, Upper: 11_900, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
+		Level:        model.PriceLevel{Price: 9000, Upper: 9000, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
 	}
-	klines := []model.Kline{
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), Open: 9.5, High: 9.6, Low: 9.4, Close: 9.5, Volume: 120},
-	}
+	preloaded := []model.Kline{{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 9500, MarketCapHigh: 9600, MarketCapLow: 9400, MarketCapClose: 9500, Volume: 100}}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	monitor := testCandidateMonitor(store, klines, pub)
+	now := base.Add(time.Minute + 30*time.Second)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {9.8}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
+	store.states[state.TokenAddress] = state
+	monitor.preloadActiveKlines(context.Background())
+
 	if err := monitor.processCandidate(context.Background(), state); err != nil {
 		t.Fatalf("process candidate: %v", err)
 	}
@@ -246,8 +326,8 @@ func TestCandidateMonitorBoughtCandidateKeepsMonitoringBelowTenK(t *testing.T) {
 }
 
 func TestCandidateMonitorSellStopsWhenMarketCapNotAboveTenK(t *testing.T) {
-	base := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
-	entry := model.LevelAnchorPoint{Time: base, Price: 10}
+	base := time.Date(2026, 6, 29, 13, 0, 0, 0, time.UTC)
+	entry := model.LevelAnchorPoint{Time: base, Price: 10000}
 	state := candidateMonitorState{
 		TokenAddress: "token-a",
 		RunID:        "run-1",
@@ -255,19 +335,20 @@ func TestCandidateMonitorSellStopsWhenMarketCapNotAboveTenK(t *testing.T) {
 		BuySignalID:  "buy-1",
 		CandidateAt:  base.Add(-time.Minute),
 		EntryTime:    base,
-		EntryPrice:   10,
+		EntryPrice:   10000,
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed"}`),
-		Level:        model.PriceLevel{Price: 9.8, Upper: 9.8, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
+		Level:        model.PriceLevel{Price: 9500, Upper: 9500, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
 	}
-	klines := []model.Kline{
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), Open: 10, High: 10.1, Low: 9.9, Close: 10, Volume: 100},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), Open: 10, High: 10.9, Low: 10, Close: 10.8, Volume: 200},
-	}
+	preloaded := []model.Kline{{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100}}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
-	monitor := testCandidateMonitor(store, klines, pub)
-	monitor.supplyProvider = fakeSupplyProvider{supply: 800}
-	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 800}
+	now := base.Add(time.Minute + 30*time.Second)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {9.0}}, now, pub)
+	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
+	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
+	store.states[state.TokenAddress] = state
+	monitor.preloadActiveKlines(context.Background())
+
 	if err := monitor.processCandidate(context.Background(), state); err != nil {
 		t.Fatalf("process candidate: %v", err)
 	}
@@ -279,7 +360,7 @@ func TestCandidateMonitorSellStopsWhenMarketCapNotAboveTenK(t *testing.T) {
 func TestCandidateMonitorListCandidates(t *testing.T) {
 	base := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
 	store := newFakeCandidateStore()
-	monitor := testCandidateMonitor(store, nil, &capturePublisher{})
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
 	store.states["token-old"] = candidateMonitorState{
 		TokenAddress: "token-old",
 		Symbol:       "OLD",
@@ -328,7 +409,7 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 		t.Fatalf("expected current market cap time, got %#v", first.CurrentMarketCapAt)
 	}
 	if first.BirdeyeKlineFetchedAt == nil || !first.BirdeyeKlineFetchedAt.Equal(base.Add(3*time.Minute+10*time.Second)) {
-		t.Fatalf("expected Birdeye fetch time, got %#v", first.BirdeyeKlineFetchedAt)
+		t.Fatalf("expected kline fetch time, got %#v", first.BirdeyeKlineFetchedAt)
 	}
 	if first.LevelMarketCap != 23000 || first.LevelLowerMarketCap != 22800 || first.LevelUpperMarketCap != 23200 {
 		t.Fatalf("unexpected level fields: %#v", first)
@@ -339,8 +420,9 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 }
 
 func TestCandidateMonitorAddManualCandidate(t *testing.T) {
+	base := time.Date(2026, 6, 29, 14, 0, 0, 0, time.UTC)
 	store := newFakeCandidateStore()
-	monitor := testCandidateMonitor(store, nil, &capturePublisher{})
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
 	item, err := monitor.AddManualCandidate(context.Background(), "manual-token")
 	if err != nil {
 		t.Fatalf("add manual candidate: %v", err)
@@ -352,7 +434,7 @@ func TestCandidateMonitorAddManualCandidate(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected candidate to be stored")
 	}
-	if state.StrategyName != "manual" || state.RunID == "" || state.CandidateAt.IsZero() {
+	if state.StrategyName != "manual" || state.RunID == "" || !state.CandidateAt.Equal(base) {
 		t.Fatalf("unexpected stored state: %#v", state)
 	}
 }

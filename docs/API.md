@@ -399,8 +399,8 @@ Birdeye K 线专用实时突破信号入口。
 - `trade` 负责消费信号、记录订单/成交/持仓，并通过 `trade.price_source` 刷新持仓估值；当前默认 GMGN，可切回 DexScreener
 - 如配置 `redis.consumer_channel`，交易消费订阅该通道；未配置时沿用 `redis.channel`
 - 交易消费只处理标准 `TradeSignalMessage`；老版候选池 `candidate_score_passed` 由信号模块订阅后进入二次监控，不再直接买入
-- 候选池二次监控每 2 秒调用 `datasource.kline_source` 查询 active CA 的 1m 最新 K 线；当前默认 GMGN，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
-- 未买入候选在配置了正数 `signal.min_market_cap` 且最新市值低于阈值时从监控池移除；GMGN 价格源默认 `0` 不按市值阈值移除，已买入候选继续监控卖点
+- 候选池二次监控每 2 秒调用 GMGN 实时价格接口，按最新 USD 价格乘 Solana RPC `getTokenSupply` 聚合本地 1m 市值 K 线；重启时会先从 `system_kline_cache` 预加载近 200 根，再继续增量维护，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
+- 未买入候选在最新市值低于阈值时从监控池移除；默认阈值为 `10_000`，配置了正数 `signal.min_market_cap` 时按配置值覆盖，已买入候选继续监控卖点
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式仍调用 Jupiter `order` / 报价准备链路，但不会签名和执行；系统会基于 Jupiter 响应生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并把 `trade.buy_amount_usd` 先折算成 SOL 数量后再向 Jupiter 下单
@@ -419,7 +419,7 @@ Birdeye K 线专用实时突破信号入口。
 - `items[].strategyName` / `items[].scanNo`：上游评分策略名和扫描批次。
 - `items[].upstreamScore` / `items[].upstreamMarketCap`：上游评分合格信号内携带的评分和市值。
 - `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功计算出的当前市值和对应 K 线时间；GMGN 源下按最新 USD 价格乘 Solana RPC `getTokenSupply` 当前总供应量计算。
-- `items[].birdeyeKlineFetchedAt`：兼容字段名，表示 V2 最近一次成功调用当前 K 线数据源并拿到 K 线的时间，前端按相对时间展示为 `2s前`、`4s前` 等。
+- `items[].birdeyeKlineFetchedAt`：兼容字段名，表示 V2 最近一次成功拉取实时价格并更新本地 1m 市值 K 线的时间，前端按相对时间展示为 `2s前`、`4s前` 等。
 - `items[].buySignalId`：如果已触发 V2 买入信号，这里返回对应信号 ID。
 - `items[].entryTime` / `items[].entryMarketCap`：如果已触发买入信号，这里返回买点时间和买点市值。
 - `items[].levelMarketCap` / `items[].levelLowerMarketCap` / `items[].levelUpperMarketCap`：如果已触发买入信号，这里返回当时突破的压力带。

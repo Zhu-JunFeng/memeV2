@@ -180,12 +180,12 @@ npm run build
 - `database.dsn`：PostgreSQL 连接串
 - `database.auto_migrate`：启动时自动建表
 - `datasource.kline_source`：默认 K 线源，支持 `gmgn` / `birdeye` / `sql` / `db`，当前默认 `gmgn`
-- `gmgn.api_key` / `gmgn.max_qps`：GMGN key 与进程内限速；实测 `token_kline` 约 10 QPS，默认按 8 QPS 留余量
+- `gmgn.api_key` / `gmgn.max_qps`：GMGN key 与进程内限速；候选池监控当前按轮询实时价格聚合本地 1m 市值 K 线，默认按 8 QPS 留余量
 - `birdeye.api_key` / `birdeye.api_keys`：Birdeye key 与 key 池
 - `redis.enabled` / `redis.addr` / `redis.channel`：实时信号发布通道，未配置消费通道时也作为交易消费通道
 - `redis.consumer_channel`：交易模块独立订阅通道；为空时消费 `redis.channel`
 - `signal.candidate_monitor_enabled` / `signal.candidate_channel`：是否启用候选池后二次压力突破监控及上游候选池通道
-- `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值；GMGN 价格源默认设为 `0` 表示不按市值阈值移除，切回 Birdeye 市值源时可设 `15000`
+- `signal.poll_interval_seconds` / `signal.min_market_cap`：候选池监控轮询间隔与未买入低市值移除阈值；候选池当前默认阈值为 `10_000`，配置 `>0` 时按配置值覆盖
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值

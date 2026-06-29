@@ -51,10 +51,6 @@ func main() {
 	if err != nil {
 		logg.Fatal().Err(err).Msg("K 线数据源配置错误")
 	}
-	primaryRealtimeKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeUpstream, gmgnSource, systemKlineStore)
-	if err != nil {
-		logg.Fatal().Err(err).Msg("实时 K 线数据源配置错误")
-	}
 	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages).WithKeyPool(birdeyeKeyRepo)
 	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey)
 	backtestRepo := repository.NewBacktestRepository(database)
@@ -83,7 +79,7 @@ func main() {
 	)
 	var candidateMonitor *signal.CandidateMonitor
 	if cfg.Signal.CandidateMonitorEnabled && redisClient != nil {
-		candidateMonitor = signal.NewCandidateMonitor(redisClient, primaryRealtimeKlineSource, publisher, signal.CandidateMonitorConfig{
+		candidateMonitor = signal.NewCandidateMonitor(redisClient, gmgnSource, publisher, signal.CandidateMonitorConfig{
 			Enabled:          cfg.Signal.CandidateMonitorEnabled,
 			CandidateChannel: cfg.Signal.CandidateChannel,
 			PollInterval:     time.Duration(cfg.Signal.PollIntervalSeconds) * time.Second,
