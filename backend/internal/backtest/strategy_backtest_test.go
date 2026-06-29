@@ -60,7 +60,7 @@ func TestBreakoutBandFollowMethodArmsTrailingStopAfterFivePercent(t *testing.T) 
 	klines := []model.Kline{
 		{OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 10.0, MarketCapHigh: 10.4, MarketCapLow: 9.9, MarketCapClose: 10.1, Volume: 100},
 		{OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10.1, MarketCapHigh: 11.2, MarketCapLow: 10.1, MarketCapClose: 10.8, Volume: 150},
-		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 10.8, MarketCapHigh: 11.5, MarketCapLow: 10.8, MarketCapClose: 11.3, Volume: 140},
+		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 10.8, MarketCapHigh: 11.39, MarketCapLow: 10.8, MarketCapClose: 11.3, Volume: 140},
 		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 11.3, MarketCapHigh: 11.35, MarketCapLow: 11.1, MarketCapClose: 11.15, Volume: 130},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
@@ -82,6 +82,46 @@ func TestBreakoutBandFollowMethodArmsTrailingStopAfterFivePercent(t *testing.T) 
 	}
 	if !trade.TrailingArmed {
 		t.Fatalf("expected trailing stop to be armed, got %#v", trade)
+	}
+}
+
+func TestBreakoutBandFollowMethodRaisesTrailingStopByProfitSteps(t *testing.T) {
+	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
+	level := model.PriceLevel{
+		Type:  model.LevelTypeResistance,
+		Price: 10.4,
+		Upper: 10.5,
+		Breakout: &model.BreakoutSetup{
+			BreakoutPoint: &model.LevelAnchorPoint{Time: base.Add(1 * time.Minute), Price: 10.8},
+			BuyPoint:      &model.LevelAnchorPoint{Time: base.Add(1 * time.Minute), Price: 10.8},
+		},
+	}
+	klines := []model.Kline{
+		{OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 10.0, MarketCapHigh: 10.4, MarketCapLow: 9.9, MarketCapClose: 10.1, Volume: 100},
+		{OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10.1, MarketCapHigh: 11.0, MarketCapLow: 10.1, MarketCapClose: 10.8, Volume: 150},
+		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 10.8, MarketCapHigh: 11.46, MarketCapLow: 10.8, MarketCapClose: 11.42, Volume: 140},
+		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 11.42, MarketCapHigh: 11.43, MarketCapLow: 11.22, MarketCapClose: 11.25, Volume: 130},
+	}
+	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
+		Klines:  klines,
+		Windows: []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
+	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
+		TakeProfitRate:       0.15,
+		PositionSizeUSD:      10,
+		HardStopLossRate:     0.05,
+		ActivationProfitRate: 0.05,
+		LockedProfitRate:     0.03,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	trade := result.Trades[0]
+	expectedStop := 10.8 * 1.04
+	if trade.Outcome != model.BreakoutOutcomeStopLoss {
+		t.Fatalf("expected trailing stop loss, got %#v", trade)
+	}
+	if !almostEqual(trade.SellPoint.Price, expectedStop) {
+		t.Fatalf("expected trailing stop raised to %.4f, got %#v", expectedStop, trade.SellPoint)
 	}
 }
 
