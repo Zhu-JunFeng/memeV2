@@ -24,6 +24,7 @@ import {
 } from "../api/backtest.js";
 
 let lastStreamAlertAt = 0;
+const TRADE_STREAM_DEFAULT_LIMIT = 20;
 
 export const useBacktestStore = defineStore("backtest", {
   state: () => ({
@@ -155,6 +156,7 @@ export const useBacktestStore = defineStore("backtest", {
       this.tradeLoading = true;
       this.error = "";
       try {
+        const listLimit = params.limit || TRADE_STREAM_DEFAULT_LIMIT;
         const [summary, signals, candidates, orders, positions] = await Promise.all([
           listTradeSummary(),
           listTradeSignals(params),
@@ -163,10 +165,18 @@ export const useBacktestStore = defineStore("backtest", {
           listTradePositions({ ...params, status: params.status || "" }),
         ]);
         this.tradeSummaryItems = summary.items || [];
-        this.tradeSignals = signals.items || [];
+        this.tradeSignals = limitSortedItems(
+          signals.items || [],
+          compareSignals,
+          listLimit,
+        );
         this.candidateMonitorItems = candidates.items || [];
-        this.tradeOrders = orders.items || [];
-        this.tradePositions = positions.items || [];
+        this.tradeOrders = limitSortedItems(orders.items || [], compareOrders, listLimit);
+        this.tradePositions = limitSortedItems(
+          positions.items || [],
+          comparePositions,
+          listLimit,
+        );
         return {
           summary: this.tradeSummaryItems,
           signals: this.tradeSignals,
@@ -210,7 +220,7 @@ export const useBacktestStore = defineStore("backtest", {
       if (!nextTab) return;
       const streamParams = {
         tradeMode: params.tradeMode || "all",
-        limit: params.limit || 50,
+        limit: params.limit || TRADE_STREAM_DEFAULT_LIMIT,
       };
       const definitions = {
         candidates: {
@@ -230,6 +240,7 @@ export const useBacktestStore = defineStore("backtest", {
               stateKey: "tradeSignals",
               idKey: "id",
               compareFn: compareSignals,
+              maxItems: streamParams.limit,
             },
           ],
         },
@@ -240,6 +251,7 @@ export const useBacktestStore = defineStore("backtest", {
               stateKey: "tradeOrders",
               idKey: "id",
               compareFn: compareOrders,
+              maxItems: streamParams.limit,
             },
           ],
         },
@@ -253,6 +265,7 @@ export const useBacktestStore = defineStore("backtest", {
               stateKey: "tradePositions",
               idKey: "id",
               compareFn: comparePositions,
+              maxItems: streamParams.limit,
             },
             {
               url: candidateMonitorStreamURL(),
@@ -266,7 +279,13 @@ export const useBacktestStore = defineStore("backtest", {
       const current = definitions[nextTab];
       if (!current) return;
       current.streams.forEach((item) => {
-        this.openTradeStream(item.url, item.stateKey, item.idKey, item.compareFn);
+        this.openTradeStream(
+          item.url,
+          item.stateKey,
+          item.idKey,
+          item.compareFn,
+          item.maxItems,
+        );
       });
       this.activeTradeStreamTab = nextTab;
     },
@@ -275,16 +294,22 @@ export const useBacktestStore = defineStore("backtest", {
       this.tradeStreamSources = [];
       this.activeTradeStreamTab = "";
     },
-    openTradeStream(url, stateKey, idKey, compareFn) {
+    openTradeStream(url, stateKey, idKey, compareFn, maxItems = 0) {
       const source = new EventSource(url);
       source.addEventListener("snapshot", (event) => {
         const data = parseStreamData(event);
-        this[stateKey] = [...(data.items || [])].sort(compareFn);
+        this[stateKey] = limitSortedItems(data.items || [], compareFn, maxItems);
       });
       source.addEventListener("upsert", (event) => {
         const data = parseStreamData(event);
         if (!data.item) return;
-        this[stateKey] = upsertSorted(this[stateKey], data.item, idKey, compareFn);
+        this[stateKey] = upsertSorted(
+          this[stateKey],
+          data.item,
+          idKey,
+          compareFn,
+          maxItems,
+        );
         this.refreshTradeSummary(stateKey);
       });
       source.addEventListener("delete", (event) => {
@@ -362,11 +387,16 @@ function parseStreamData(event) {
   }
 }
 
-function upsertSorted(items, nextItem, idKey, compareFn) {
+function limitSortedItems(items, compareFn, maxItems = 0) {
+  const sorted = [...items].sort(compareFn);
+  return maxItems > 0 ? sorted.slice(0, maxItems) : sorted;
+}
+
+function upsertSorted(items, nextItem, idKey, compareFn, maxItems = 0) {
   const nextID = String(nextItem[idKey]);
   const merged = items.filter((item) => String(item[idKey]) !== nextID);
   merged.push(nextItem);
-  return merged.sort(compareFn);
+  return limitSortedItems(merged, compareFn, maxItems);
 }
 
 function timestamp(value) {

@@ -442,6 +442,7 @@
         <el-tab-pane label="Candidates" name="candidates">
           <el-table
             :data="store.candidateMonitorItems"
+            :height="tradeTableHeight"
             size="small"
             stripe
             class="trade-table"
@@ -519,6 +520,7 @@
         <el-tab-pane label="Signals" name="signals">
           <el-table
             :data="store.tradeSignals"
+            :height="tradeTableHeight"
             size="small"
             stripe
             class="trade-table"
@@ -567,6 +569,7 @@
         <el-tab-pane label="Orders" name="orders">
           <el-table
             :data="store.tradeOrders"
+            :height="tradeTableHeight"
             size="small"
             stripe
             class="trade-table trade-table-orders"
@@ -657,6 +660,7 @@
           <div class="positions-table-shell">
             <el-table
               :data="store.tradePositions"
+              :height="positionTableHeight"
               size="small"
               stripe
               class="trade-table trade-table-positions"
@@ -1192,6 +1196,14 @@ import { copyText } from "../utils/clipboard.js";
 import { formatBeijingDateTime, formatBeijingRFC3339 } from "../utils/time.js";
 
 const store = useBacktestStore();
+const TRADE_LIST_LIMIT = 20;
+const TRADE_TABLE_HEADER_HEIGHT = 40;
+const TRADE_TABLE_ROW_HEIGHT = 39;
+const POSITION_TABLE_ROW_HEIGHT = 58;
+const tradeTableHeight =
+  TRADE_TABLE_HEADER_HEIGHT + TRADE_TABLE_ROW_HEIGHT * TRADE_LIST_LIMIT;
+const positionTableHeight =
+  TRADE_TABLE_HEADER_HEIGHT + POSITION_TABLE_ROW_HEIGHT * TRADE_LIST_LIMIT;
 const WINDOW_COLORS = [
   "#60a5fa",
   "#f59e0b",
@@ -1629,7 +1641,7 @@ async function submitAddCandidate() {
 async function refreshTradeDashboard() {
   const params = {
     tradeMode: tradeFilterMode.value,
-    limit: 50,
+    limit: TRADE_LIST_LIMIT,
   };
   await store.loadTradeDashboard(params);
   store.startTradeStream(tradeTab.value, params);
@@ -1664,7 +1676,7 @@ async function handleTradeModeChange(value) {
 async function handleRetryOrder(row) {
   await store.retryTradeOrder(row.id, {
     tradeMode: tradeFilterMode.value,
-    limit: 50,
+    limit: TRADE_LIST_LIMIT,
   });
   ElMessage.success("订单已重新提交");
 }
@@ -1672,7 +1684,7 @@ async function handleRetryOrder(row) {
 async function handleClosePosition(row) {
   await store.closeTradePosition(row.id, {
     tradeMode: tradeFilterMode.value,
-    limit: 50,
+    limit: TRADE_LIST_LIMIT,
   });
   ElMessage.success("平仓指令已提交");
 }
@@ -2182,7 +2194,7 @@ onMounted(async () => {
 watch(tradeTab, (nextTab) => {
   store.startTradeStream(nextTab, {
     tradeMode: tradeFilterMode.value,
-    limit: 50,
+    limit: TRADE_LIST_LIMIT,
   });
 });
 
