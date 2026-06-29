@@ -163,7 +163,7 @@ func (r *TradeRepository) ListSignals(ctx context.Context, tradeMode model.Trade
 		limit = 100
 	}
 	query := `
-		SELECT id, signal_id, trade_mode, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, raw_payload_json, consume_status, created_at
+		SELECT id, signal_id, trade_mode, signal_type, strategy_code, token_address, "interval", signal_time, trigger_price, trigger_market_cap, reason, '{}'::jsonb AS raw_payload_json, consume_status, created_at
 		FROM trade_signals`
 	args := []any{}
 	if tradeMode != "" {
@@ -452,7 +452,9 @@ func (r *TradeRepository) ListPositions(ctx context.Context, status string, trad
 			p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id,
 			open_signal.trigger_market_cap, close_signal.trigger_market_cap, open_fill.avg_price, close_fill.avg_price, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
 			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
-			open_signal.signal_time, close_signal.signal_time, close_signal.reason, open_signal.raw_payload_json
+			open_signal.signal_time, close_signal.signal_time, close_signal.reason,
+			open_signal.raw_payload_json #>> '{metadata,upstream,token}',
+			NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,publishedAt}', '')::bigint
 		FROM trade_positions p
 		LEFT JOIN trade_orders open_order ON open_order.id = p.open_order_id
 		LEFT JOIN trade_signals open_signal ON open_signal.id = open_order.signal_id
@@ -497,7 +499,9 @@ func (r *TradeRepository) GetPosition(ctx context.Context, id string) (model.Tra
 			p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id,
 			open_signal.trigger_market_cap, close_signal.trigger_market_cap, open_fill.avg_price, close_fill.avg_price, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
 			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
-			open_signal.signal_time, close_signal.signal_time, close_signal.reason, open_signal.raw_payload_json
+			open_signal.signal_time, close_signal.signal_time, close_signal.reason,
+			open_signal.raw_payload_json #>> '{metadata,upstream,token}',
+			NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,publishedAt}', '')::bigint
 		FROM trade_positions p
 		LEFT JOIN trade_orders open_order ON open_order.id = p.open_order_id
 		LEFT JOIN trade_signals open_signal ON open_signal.id = open_order.signal_id
@@ -565,8 +569,9 @@ func scanTradePosition(scanner rowScanner) (model.TradePosition, error) {
 	var signalExitMarketCap sql.NullFloat64
 	var entryExecutedPrice sql.NullFloat64
 	var exitExecutedPrice sql.NullFloat64
-	var openSignalPayload []byte
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &signalEntryMarketCap, &signalExitMarketCap, &entryExecutedPrice, &exitExecutedPrice, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &exitReason, &openSignalPayload); err != nil {
+	var openSignalToken sql.NullString
+	var candidatePublishedAt sql.NullInt64
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &signalEntryMarketCap, &signalExitMarketCap, &entryExecutedPrice, &exitExecutedPrice, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &exitReason, &openSignalToken, &candidatePublishedAt); err != nil {
 		return model.TradePosition{}, err
 	}
 	if signalEntryMarketCap.Valid {
@@ -593,7 +598,13 @@ func scanTradePosition(scanner rowScanner) (model.TradePosition, error) {
 	if exitReason.Valid {
 		item.ExitReason = exitReason.String
 	}
-	enrichTradePositionMeta(&item, openSignalPayload)
+	if openSignalToken.Valid {
+		item.TokenSymbol = strings.TrimSpace(openSignalToken.String)
+	}
+	if candidatePublishedAt.Valid && candidatePublishedAt.Int64 > 0 {
+		candidateAt := time.UnixMilli(candidatePublishedAt.Int64).UTC()
+		item.CandidateAt = &candidateAt
+	}
 	return item, nil
 }
 
