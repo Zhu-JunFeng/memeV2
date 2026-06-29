@@ -2713,7 +2713,7 @@ onUnmounted(() => {
 
 .trade-table-positions {
   width: 100%;
-  min-width: 1060px;
+  min-width: 1170px;
 }
 
 .trade-table-positions :deep(.el-table__inner-wrapper),
@@ -2768,26 +2768,44 @@ onUnmounted(() => {
 
 .position-market-stack {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
 }
 
-.position-market-stack div {
+.position-market-current,
+.position-market-pair {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   align-items: center;
 }
 
-.position-market-stack span,
+.position-market-current {
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.position-market-pair > span,
+.position-market-current span,
 .position-market-stack small {
   color: #64748b;
   font-size: 11px;
 }
 
+.position-market-pair > div {
+  display: grid;
+  grid-template-columns: auto minmax(52px, 1fr);
+  gap: 4px;
+  align-items: baseline;
+  min-width: 0;
+  text-align: right;
+}
+
 .position-market-stack strong {
   color: #0f172a;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .position-pnl-cell {
