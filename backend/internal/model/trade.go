@@ -112,6 +112,7 @@ type TradePosition struct {
 	OpenOrderID       string              `json:"openOrderId"`
 	CloseOrderID      string              `json:"closeOrderId"`
 	EntryMarketCap    float64             `json:"entryMarketCap"`
+	ExitMarketCap     float64             `json:"exitMarketCap"`
 	Quantity          float64             `json:"quantity"`
 	CostAmount        float64             `json:"costAmount"`
 	AvgCostPrice      float64             `json:"avgCostPrice"`

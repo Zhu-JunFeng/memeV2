@@ -446,7 +446,7 @@ func (r *TradeRepository) ListPositions(ctx context.Context, status string, trad
 	query := `
 		SELECT
 			p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id,
-			open_signal.trigger_market_cap, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
+			open_signal.trigger_market_cap, close_signal.trigger_market_cap, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
 			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
 			open_signal.signal_time, close_signal.signal_time, open_signal.raw_payload_json
 		FROM trade_positions p
@@ -489,7 +489,7 @@ func (r *TradeRepository) GetPosition(ctx context.Context, id string) (model.Tra
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id,
-			open_signal.trigger_market_cap, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
+			open_signal.trigger_market_cap, close_signal.trigger_market_cap, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
 			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
 			open_signal.signal_time, close_signal.signal_time, open_signal.raw_payload_json
 		FROM trade_positions p
@@ -553,7 +553,7 @@ func scanTradePosition(scanner rowScanner) (model.TradePosition, error) {
 	var openSignalTime sql.NullTime
 	var closeSignalTime sql.NullTime
 	var openSignalPayload []byte
-	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.EntryMarketCap, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &openSignalPayload); err != nil {
+	if err := scanner.Scan(&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status, &item.OpenOrderID, &item.CloseOrderID, &item.EntryMarketCap, &item.ExitMarketCap, &item.Quantity, &item.CostAmount, &item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL, &item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount, &item.OpenedAt, &closedAt, &item.UpdatedAt, &openSignalTime, &closeSignalTime, &openSignalPayload); err != nil {
 		return model.TradePosition{}, err
 	}
 	if closedAt.Valid {

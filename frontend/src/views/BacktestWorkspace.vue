@@ -674,14 +674,19 @@
                 formatCompactTokenAmount(row.quantity)
               }}</template>
             </el-table-column>
-            <el-table-column label="成本" width="104">
+            <el-table-column label="买入市值" width="110">
               <template #default="{ row }">{{
                 formatOptionalMarketCap(row.entryMarketCap)
               }}</template>
             </el-table-column>
-            <el-table-column label="市值" width="110">
+            <el-table-column label="当前市值" width="110">
               <template #default="{ row }">{{
                 formatOptionalMarketCap(positionCurrentMarketCap(row))
+              }}</template>
+            </el-table-column>
+            <el-table-column label="卖出市值" width="110">
+              <template #default="{ row }">{{
+                formatOptionalMarketCap(row.exitMarketCap)
               }}</template>
             </el-table-column>
             <el-table-column label="已实现" width="110">
