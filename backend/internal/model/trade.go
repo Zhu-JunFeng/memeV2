@@ -122,6 +122,21 @@ type TradePosition struct {
 	UpdatedAt         time.Time           `json:"updatedAt"`
 }
 
+type TradeSummaryItem struct {
+	TradeMode           TradeMode  `json:"tradeMode"`
+	TotalPNL            float64    `json:"totalPnl"`
+	RealizedPNL         float64    `json:"realizedPnl"`
+	UnrealizedPNL       float64    `json:"unrealizedPnl"`
+	TradeCount          int        `json:"tradeCount"`
+	WinCount            int        `json:"winCount"`
+	LossCount           int        `json:"lossCount"`
+	WinRate             float64    `json:"winRate"`
+	OpenPositionCount   int        `json:"openPositionCount"`
+	ClosedPositionCount int        `json:"closedPositionCount"`
+	MaxDrawdownAmount   float64    `json:"maxDrawdownAmount"`
+	UpdatedAt           *time.Time `json:"updatedAt,omitempty"`
+}
+
 type TradeOrderEvent struct {
 	ID         string          `json:"id"`
 	OrderID    string          `json:"orderId"`

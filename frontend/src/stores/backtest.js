@@ -8,6 +8,7 @@ import {
   fetchKlines,
   fetchSupportResistance,
   fetchTradeRuntime,
+  listTradeSummary,
   listBacktests,
   listCandidateMonitor,
   listStrategyBacktestMethods,
@@ -39,6 +40,7 @@ export const useBacktestStore = defineStore("backtest", {
       tradeMode: "paper",
       options: [],
     },
+    tradeSummaryItems: [],
     tradeSignals: [],
     candidateMonitorItems: [],
     tradeOrders: [],
@@ -153,17 +155,20 @@ export const useBacktestStore = defineStore("backtest", {
       this.tradeLoading = true;
       this.error = "";
       try {
-        const [signals, candidates, orders, positions] = await Promise.all([
+        const [summary, signals, candidates, orders, positions] = await Promise.all([
+          listTradeSummary(),
           listTradeSignals(params),
           listCandidateMonitor(),
           listTradeOrders(params),
           listTradePositions({ ...params, status: params.status || "" }),
         ]);
+        this.tradeSummaryItems = summary.items || [];
         this.tradeSignals = signals.items || [];
         this.candidateMonitorItems = candidates.items || [];
         this.tradeOrders = orders.items || [];
         this.tradePositions = positions.items || [];
         return {
+          summary: this.tradeSummaryItems,
           signals: this.tradeSignals,
           candidates: this.candidateMonitorItems,
           orders: this.tradeOrders,
@@ -261,11 +266,13 @@ export const useBacktestStore = defineStore("backtest", {
         const data = parseStreamData(event);
         if (!data.item) return;
         this[stateKey] = upsertSorted(this[stateKey], data.item, idKey, compareFn);
+        this.refreshTradeSummary(stateKey);
       });
       source.addEventListener("delete", (event) => {
         const data = parseStreamData(event);
         if (!data.id) return;
         this[stateKey] = this[stateKey].filter((item) => String(item[idKey]) !== String(data.id));
+        this.refreshTradeSummary(stateKey);
       });
       source.onerror = () => {
         const message = "实时数据连接异常，浏览器会自动重连";
@@ -273,6 +280,15 @@ export const useBacktestStore = defineStore("backtest", {
         notifyStreamError(message);
       };
       this.tradeStreamSources.push(source);
+    },
+    async refreshTradeSummary(triggerKey = "") {
+      if (!["tradeSignals", "tradeOrders", "tradePositions"].includes(triggerKey)) return;
+      try {
+        const data = await listTradeSummary();
+        this.tradeSummaryItems = data.items || [];
+      } catch (error) {
+        this.error = error.message;
+      }
     },
     async retryTradeOrder(id, params = {}) {
       this.tradeLoading = true;

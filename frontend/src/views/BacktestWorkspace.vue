@@ -390,6 +390,36 @@
           </div>
         </div>
       </div>
+      <div class="trade-summary-grid">
+        <article
+          v-for="item in tradeSummaryCards"
+          :key="item.tradeMode || 'all'"
+          class="trade-summary-card"
+        >
+          <div class="trade-summary-head">
+            <span class="trade-summary-title">{{ tradeSummaryTitle(item.tradeMode) }}</span>
+            <el-tag size="small" :type="summaryTagType(item.tradeMode)">
+              {{ tradeSummaryTitle(item.tradeMode) }}
+            </el-tag>
+          </div>
+          <div class="trade-summary-profit">
+            <span>总盈亏</span>
+            <strong :class="profitClass(item.totalPnl)">{{ formatSignedUsd(item.totalPnl) }}</strong>
+          </div>
+          <div class="trade-summary-split">
+            <span>已实现 {{ formatSignedUsd(item.realizedPnl) }}</span>
+            <span>未实现 {{ formatSignedUsd(item.unrealizedPnl) }}</span>
+          </div>
+          <div class="trade-summary-metrics">
+            <span>交易 {{ item.tradeCount }}</span>
+            <span>胜率 {{ formatPercent(item.winRate) }}</span>
+            <span>胜 / 负 {{ item.winCount }} / {{ item.lossCount }}</span>
+            <span>Open {{ item.openPositionCount }}</span>
+            <span>Closed {{ item.closedPositionCount }}</span>
+            <span>回撤 {{ formatDrawdownUsd(item.maxDrawdownAmount) }}</span>
+          </div>
+        </article>
+      </div>
       <div class="trade-kpis">
         <div class="trade-kpi">
           <span>Candidates</span>
@@ -1246,6 +1276,28 @@ const tradeFilterOptions = [
   { label: "模拟盘", value: "paper" },
   { label: "实盘", value: "live" },
 ];
+const tradeSummaryCards = computed(() =>
+  ["all", "paper", "live"].map((tradeMode) => {
+    const matched = store.tradeSummaryItems.find(
+      (item) => String(item.tradeMode || "all") === tradeMode,
+    );
+    return (
+      matched || {
+        tradeMode,
+        totalPnl: 0,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        tradeCount: 0,
+        winCount: 0,
+        lossCount: 0,
+        winRate: 0,
+        openPositionCount: 0,
+        closedPositionCount: 0,
+        maxDrawdownAmount: 0,
+      }
+    );
+  }),
+);
 const dataSourceLabel = computed(() => {
   const labels = { gmgn: "GMGN", birdeye: "Birdeye", sql: "SQL", db: "DB", system: "系统K线" };
   return labels[form.dataSource] || form.dataSource || "GMGN";
@@ -1720,6 +1772,7 @@ function formatCostUsd(value) {
 function formatDrawdownUsd(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
+  if (Math.abs(number) < 1e-9) return "0.00u";
   return `-${Math.abs(number).toFixed(2)}u`;
 }
 
@@ -1739,6 +1792,18 @@ function tradeModeText(value) {
 
 function modeTagType(value) {
   return value === "live" ? "danger" : "info";
+}
+
+function tradeSummaryTitle(value) {
+  if (value === "paper") return "模拟盘";
+  if (value === "live") return "实盘";
+  return "全部";
+}
+
+function summaryTagType(value) {
+  if (value === "paper") return "info";
+  if (value === "live") return "danger";
+  return "success";
 }
 
 function candidateStatusText(value) {
@@ -1930,6 +1995,71 @@ onUnmounted(() => {
   color: rgba(216, 233, 226, 0.72);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.trade-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trade-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(96, 165, 250, 0.16);
+  background: linear-gradient(
+    180deg,
+    rgba(13, 20, 35, 0.92),
+    rgba(17, 24, 39, 0.8)
+  );
+}
+
+.trade-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trade-summary-title {
+  color: rgba(216, 233, 226, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trade-summary-profit {
+  display: grid;
+  gap: 2px;
+}
+
+.trade-summary-profit span {
+  color: rgba(216, 233, 226, 0.68);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.trade-summary-profit strong {
+  font-size: 22px;
+  color: #f8fafc;
+}
+
+.trade-summary-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: rgba(216, 233, 226, 0.72);
+  font-size: 12px;
+}
+
+.trade-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  color: #d8e9e2;
+  font-size: 12px;
 }
 
 .trade-kpis {
@@ -2178,6 +2308,7 @@ onUnmounted(() => {
 
 @media (max-width: 1100px) {
   .trade-runtime-grid,
+  .trade-summary-grid,
   .trade-kpis {
     grid-template-columns: 1fr;
   }

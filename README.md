@@ -232,6 +232,7 @@ npm run build
 - `GET /api/trade/accounts`
 - `GET /api/trade/runtime`
 - `PUT /api/trade/runtime`
+- `GET /api/trade/summary`
 - `GET /api/trade/signals` / `GET /api/trade/signals/stream`
 - `GET /api/trade/orders` / `GET /api/trade/orders/stream`
 - `GET /api/trade/positions` / `GET /api/trade/positions/stream`

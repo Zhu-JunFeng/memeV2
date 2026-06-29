@@ -183,6 +183,96 @@ func (r *TradeRepository) ListSignals(ctx context.Context, tradeMode model.Trade
 	return items, rows.Err()
 }
 
+func (r *TradeRepository) ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		WITH modes AS (
+			SELECT ''::varchar(16) AS trade_mode
+			UNION ALL SELECT 'paper'::varchar(16)
+			UNION ALL SELECT 'live'::varchar(16)
+		),
+		aggregated AS (
+			SELECT
+				''::varchar(16) AS trade_mode,
+				COALESCE(SUM(realized_pnl + unrealized_pnl), 0) AS total_pnl,
+				COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
+				COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS unrealized_pnl,
+				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) AS trade_count,
+				COALESCE(SUM(CASE WHEN status = 'closed' AND realized_pnl > 0 THEN 1 ELSE 0 END), 0) AS win_count,
+				COALESCE(SUM(CASE WHEN status = 'closed' AND realized_pnl < 0 THEN 1 ELSE 0 END), 0) AS loss_count,
+				COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0) AS open_position_count,
+				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) AS closed_position_count,
+				COALESCE(MIN(max_drawdown_amount), 0) AS max_drawdown_amount,
+				MAX(updated_at) AS updated_at
+			FROM trade_positions
+			UNION ALL
+			SELECT
+				trade_mode,
+				COALESCE(SUM(realized_pnl + unrealized_pnl), 0) AS total_pnl,
+				COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
+				COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS unrealized_pnl,
+				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) AS trade_count,
+				COALESCE(SUM(CASE WHEN status = 'closed' AND realized_pnl > 0 THEN 1 ELSE 0 END), 0) AS win_count,
+				COALESCE(SUM(CASE WHEN status = 'closed' AND realized_pnl < 0 THEN 1 ELSE 0 END), 0) AS loss_count,
+				COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0) AS open_position_count,
+				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) AS closed_position_count,
+				COALESCE(MIN(max_drawdown_amount), 0) AS max_drawdown_amount,
+				MAX(updated_at) AS updated_at
+			FROM trade_positions
+			GROUP BY trade_mode
+		)
+		SELECT
+			modes.trade_mode,
+			COALESCE(aggregated.total_pnl, 0),
+			COALESCE(aggregated.realized_pnl, 0),
+			COALESCE(aggregated.unrealized_pnl, 0),
+			COALESCE(aggregated.trade_count, 0),
+			COALESCE(aggregated.win_count, 0),
+			COALESCE(aggregated.loss_count, 0),
+			COALESCE(aggregated.open_position_count, 0),
+			COALESCE(aggregated.closed_position_count, 0),
+			COALESCE(aggregated.max_drawdown_amount, 0),
+			aggregated.updated_at
+		FROM modes
+		LEFT JOIN aggregated ON aggregated.trade_mode = modes.trade_mode
+		ORDER BY CASE modes.trade_mode WHEN '' THEN 0 WHEN 'paper' THEN 1 ELSE 2 END`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.TradeSummaryItem, 0, 3)
+	for rows.Next() {
+		var item model.TradeSummaryItem
+		var updatedAt sql.NullTime
+		if err := rows.Scan(
+			&item.TradeMode,
+			&item.TotalPNL,
+			&item.RealizedPNL,
+			&item.UnrealizedPNL,
+			&item.TradeCount,
+			&item.WinCount,
+			&item.LossCount,
+			&item.OpenPositionCount,
+			&item.ClosedPositionCount,
+			&item.MaxDrawdownAmount,
+			&updatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if item.TradeMode == "" {
+			item.TradeMode = model.TradeMode("all")
+		}
+		if item.TradeCount > 0 {
+			item.WinRate = float64(item.WinCount) / float64(item.TradeCount)
+		}
+		if updatedAt.Valid {
+			value := updatedAt.Time
+			item.UpdatedAt = &value
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (r *TradeRepository) GetOpenPosition(ctx context.Context, accountID string, tokenAddress string) (model.TradePosition, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, account_id, trade_mode, token_address, status, open_order_id, close_order_id, quantity, cost_amount, avg_cost_price, last_price, market_value, realized_pnl, unrealized_pnl, max_profit_rate, max_drawdown_amount, opened_at, closed_at, updated_at

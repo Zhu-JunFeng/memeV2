@@ -17,6 +17,7 @@ import (
 type fakeRepo struct {
 	account           model.TradeAccount
 	tradeMode         model.TradeMode
+	summaries         []model.TradeSummaryItem
 	signals           []model.TradeSignal
 	orders            []model.TradeOrder
 	positions         map[string]model.TradePosition
@@ -79,6 +80,9 @@ func (r *fakeRepo) GetSignalByID(_ context.Context, id string) (model.TradeSigna
 		}
 	}
 	return model.TradeSignal{}, sql.ErrNoRows
+}
+func (r *fakeRepo) ListTradeSummaries(context.Context) ([]model.TradeSummaryItem, error) {
+	return append([]model.TradeSummaryItem(nil), r.summaries...), nil
 }
 func (r *fakeRepo) ListSignals(context.Context, model.TradeMode, int) ([]model.TradeSignal, error) {
 	return r.signals, nil
@@ -332,5 +336,28 @@ func TestDisabledServiceRejectsSignal(t *testing.T) {
 	_, err = svc.ProcessSignal(context.Background(), model.TradeSignalMessage{SignalID: "sig-1", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-a", Interval: "1m", SignalTime: time.Now().UTC(), Reason: "buy"})
 	if !errors.Is(err, ErrTradeDisabled) {
 		t.Fatalf("expected ErrTradeDisabled, got %v", err)
+	}
+}
+
+func TestListTradeSummaries(t *testing.T) {
+	repo := newFakeRepo()
+	repo.summaries = []model.TradeSummaryItem{
+		{TradeMode: "", TotalPNL: 12.5, TradeCount: 3, WinRate: 2.0 / 3.0},
+		{TradeMode: model.TradeModePaper, TotalPNL: 4.2, TradeCount: 2, WinRate: 0.5},
+		{TradeMode: model.TradeModeLive, TotalPNL: 8.3, TradeCount: 1, WinRate: 1},
+	}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	items, err := svc.ListTradeSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("list summaries: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 summaries, got %d", len(items))
+	}
+	if items[0].TotalPNL != 12.5 || items[2].TradeMode != model.TradeModeLive {
+		t.Fatalf("unexpected summaries: %#v", items)
 	}
 }

@@ -477,6 +477,26 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 - `live`：恢复真实下单执行
 - 切换后新进来的信号、订单、成交、持仓都会记录对应 `tradeMode`
 
+### GET /api/trade/summary
+
+返回交易汇总，固定包含三组：
+
+- `items[].tradeMode`：`all` / `paper` / `live`
+- `items[].totalPnl`：总盈亏，口径为 `realizedPnl + unrealizedPnl`
+- `items[].realizedPnl`：已实现盈亏
+- `items[].unrealizedPnl`：未实现盈亏，仅统计 open 持仓
+- `items[].tradeCount`：已平仓笔数
+- `items[].winCount` / `items[].lossCount`
+- `items[].winRate`：`winCount / tradeCount`
+- `items[].openPositionCount` / `items[].closedPositionCount`
+- `items[].maxDrawdownAmount`：该模式下最大回撤金额
+- `items[].updatedAt`：该模式下最近一次持仓更新时间
+
+说明：
+
+- 汇总口径基于 `trade_positions`
+- 没有数据时各字段返回 `0`，`updatedAt` 为空
+
 ### GET /api/trade/signals
 
 参数：

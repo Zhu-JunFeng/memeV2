@@ -64,6 +64,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/trade/accounts", h.listTradeAccounts)
 	api.GET("/trade/runtime", h.getTradeRuntime)
 	api.PUT("/trade/runtime", h.updateTradeRuntime)
+	api.GET("/trade/summary", h.listTradeSummary)
 	api.GET("/trade/signals", h.listTradeSignals)
 	api.GET("/trade/signals/stream", h.streamTradeSignals)
 	api.GET("/trade/orders", h.listTradeOrders)
@@ -581,6 +582,15 @@ func (h *Handler) listTradeSignals(c *gin.Context) {
 		return
 	}
 	items, err := h.tradeService.ListSignals(c.Request.Context(), mode, parseLimit(c.Query("limit"), 100))
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) listTradeSummary(c *gin.Context) {
+	items, err := h.tradeService.ListTradeSummaries(c.Request.Context())
 	if err != nil {
 		h.handleError(c, err)
 		return

@@ -33,6 +33,7 @@ type Repository interface {
 	UpdateSignalStatus(ctx context.Context, signalID string, status string) error
 	GetSignalByID(ctx context.Context, id string) (model.TradeSignal, error)
 	ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error)
+	ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error)
 	GetOpenPosition(ctx context.Context, accountID string, tokenAddress string) (model.TradePosition, error)
 	CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error)
 	UpdateOrderExecution(ctx context.Context, orderID string, status model.TradeOrderStatus, txHash string, requestJSON json.RawMessage, responseJSON json.RawMessage, failReason string, confirmedAt *time.Time) error
@@ -166,6 +167,10 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 
 func (s *Service) ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error) {
 	return s.repo.ListSignals(ctx, normalizeTradeModeFilter(tradeMode), limit)
+}
+
+func (s *Service) ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error) {
+	return s.repo.ListTradeSummaries(ctx)
 }
 
 func (s *Service) ListOrders(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeOrder, error) {

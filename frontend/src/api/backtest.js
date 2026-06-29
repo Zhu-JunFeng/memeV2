@@ -40,6 +40,10 @@ export function updateTradeRuntime(payload) {
   return http.put("/trade/runtime", payload);
 }
 
+export function listTradeSummary() {
+  return http.get("/trade/summary");
+}
+
 export function listTradeSignals(params) {
   return http.get("/trade/signals", { params });
 }
