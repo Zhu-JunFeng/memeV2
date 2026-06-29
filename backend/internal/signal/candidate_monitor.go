@@ -29,6 +29,7 @@ const (
 	candidateStatusSold     = "sold"
 	strategyBreakoutFollow  = "breakout_band_follow"
 	monitorIncrementalBars  = 5
+	candidatePollWorkers    = 6
 	monitorMinMarketCap     = 10000
 )
 
@@ -383,6 +384,7 @@ func (m *CandidateMonitor) pollCandidates(ctx context.Context) {
 }
 
 func (m *CandidateMonitor) pollOnce(ctx context.Context) {
+	startedAt := time.Now()
 	items, err := m.store.ListActive(ctx)
 	if err != nil {
 		log.Printf("candidate monitor list active failed: %v", err)
@@ -392,11 +394,44 @@ func (m *CandidateMonitor) pollOnce(ctx context.Context) {
 		return
 	}
 	log.Printf("candidate monitor polling active candidates: count=%d", len(items))
-	for _, item := range items {
-		if err := m.processCandidate(ctx, item); err != nil {
-			log.Printf("candidate monitor process candidate failed: ca=%s err=%v", item.TokenAddress, err)
-		}
+	workers := candidatePollWorkers
+	if len(items) < workers {
+		workers = len(items)
 	}
+	if workers <= 1 {
+		for _, item := range items {
+			if err := m.processCandidate(ctx, item); err != nil {
+				log.Printf("candidate monitor process candidate failed: ca=%s err=%v", item.TokenAddress, err)
+			}
+		}
+		log.Printf("candidate monitor poll completed: count=%d duration=%s", len(items), time.Since(startedAt).Round(time.Millisecond))
+		return
+	}
+	sem := make(chan struct{}, workers)
+	errCh := make(chan error, len(items))
+	var wg sync.WaitGroup
+	for _, item := range items {
+		item := item
+		select {
+		case <-ctx.Done():
+			return
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := m.processCandidate(ctx, item); err != nil {
+				errCh <- fmt.Errorf("ca=%s err=%w", item.TokenAddress, err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		log.Printf("candidate monitor process candidate failed: %v", err)
+	}
+	log.Printf("candidate monitor poll completed: count=%d duration=%s", len(items), time.Since(startedAt).Round(time.Millisecond))
 }
 
 func (m *CandidateMonitor) handleCandidatePayload(ctx context.Context, payload []byte) error {
@@ -512,11 +547,6 @@ func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidate
 	merged := m.klineCache.MergePreferIncoming(state.TokenAddress, m.cfg.Interval, normalized)
 	if m.systemKlines != nil && len(normalized) > 0 {
 		m.systemKlines.EnqueueUpsert(normalized)
-	}
-	currentPrice, err := m.priceProvider.GetTokenPrice(ctx, state.TokenAddress)
-	if err == nil && currentPrice > 0 {
-		currentMarketCap := currentPrice * supply
-		merged, _ = m.klineCache.ApplyPriceSample(state.TokenAddress, m.cfg.Interval, sampleAt, currentMarketCap)
 	}
 	if len(merged) == 0 {
 		return nil, nil
