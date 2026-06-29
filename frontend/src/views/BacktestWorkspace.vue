@@ -3041,7 +3041,7 @@ onUnmounted(() => {
   }
 
   .trade-table-positions {
-    min-width: 960px;
+    min-width: 1170px;
   }
 }
 
