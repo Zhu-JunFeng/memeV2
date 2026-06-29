@@ -654,139 +654,136 @@
               }}</strong>
             </div>
           </div>
-          <el-table
-            :data="store.tradePositions"
-            size="small"
-            stripe
-            class="trade-table trade-table-positions"
-            table-layout="auto"
-            empty-text="暂无持仓"
-            :row-class-name="positionRowClassName"
-          >
-            <el-table-column label="模式" width="84">
-              <template #default="{ row }">
-                <el-tag size="small" :type="modeTagType(row.tradeMode)">{{
-                  tradeModeText(row.tradeMode)
-                }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="104">
-              <template #default="{ row }">
-                <span class="position-status" :class="positionStatusClass(row)">
-                  <i />
-                  {{ positionStatusText(row.status) }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Token" min-width="220">
-              <template #default="{ row }">
-                <div class="position-token-cell">
-                  <button
-                    type="button"
-                    class="position-symbol-link"
-                    :disabled="!row.candidateAt"
-                    @click="loadPositionCandidateScenario(row)"
+          <div class="positions-table-shell">
+            <el-table
+              :data="store.tradePositions"
+              size="small"
+              stripe
+              class="trade-table trade-table-positions"
+              table-layout="fixed"
+              empty-text="暂无持仓"
+              :row-class-name="positionRowClassName"
+            >
+              <el-table-column label="持仓" min-width="238">
+                <template #default="{ row }">
+                  <div class="position-token-cell">
+                    <div class="position-token-head">
+                      <button
+                        type="button"
+                        class="position-symbol-link"
+                        :disabled="!row.candidateAt"
+                        @click="loadPositionCandidateScenario(row)"
+                      >
+                        {{ row.tokenSymbol || "未识别 Symbol" }}
+                      </button>
+                      <el-tag size="small" :type="modeTagType(row.tradeMode)">{{
+                        tradeModeText(row.tradeMode)
+                      }}</el-tag>
+                    </div>
+                    <div class="position-token-meta">
+                      <span class="position-status" :class="positionStatusClass(row)">
+                        <i />
+                        {{ positionStatusText(row.status) }}
+                      </span>
+                      <TokenAddressLink
+                        :address="row.tokenAddress"
+                        :short="true"
+                        :compact="true"
+                      />
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="仓位" width="120">
+                <template #default="{ row }">
+                  <div class="trade-cell-stack position-size-cell">
+                    <strong>{{ formatCompactTokenAmount(row.quantity) }}</strong>
+                    <span>{{ formatAbsoluteUsd(row.costAmount) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="价位" width="148">
+                <template #default="{ row }">
+                  <div class="position-market-stack">
+                    <div>
+                      <span>买入</span>
+                      <strong>{{ formatOptionalMarketCap(row.entryMarketCap) }}</strong>
+                    </div>
+                    <div>
+                      <span>{{ row.status === "closed" ? "卖出" : "当前" }}</span>
+                      <strong>{{
+                        row.status === "closed"
+                          ? formatOptionalMarketCap(row.exitMarketCap)
+                          : formatOptionalMarketCap(positionCurrentMarketCap(row))
+                      }}</strong>
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="收益" width="158">
+                <template #default="{ row }">
+                  <div class="position-pnl-cell">
+                    <div :class="profitClass(positionTotalPnl(row))">
+                      <strong>{{ formatSignedUsd(positionTotalPnl(row)) }}</strong>
+                      <span>{{ formatPercent(positionTotalRate(row)) }}</span>
+                    </div>
+                    <div class="position-pnl-bar">
+                      <i :style="positionPnlBarStyle(row)" />
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="拆分" width="138">
+                <template #default="{ row }">
+                  <div class="position-split-cell">
+                    <span>已 {{ formatSignedUsd(row.realizedPnl) }}</span>
+                    <span>未 {{ formatSignedUsd(row.unrealizedPnl) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="风控" width="118">
+                <template #default="{ row }">
+                  <div class="trade-cell-stack">
+                    <strong>{{ formatPercent(row.maxProfitRate) }}</strong>
+                    <span>回撤 {{ formatDrawdownUsd(row.maxDrawdownAmount) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="时间" width="136">
+                <template #default="{ row }">
+                  <div class="position-time-cell">
+                    <strong>{{ formatCompactRelativeTime(row.openedAt) }}</strong>
+                    <span :title="formatBeijingDateTime(row.openedAt)">
+                      开 {{ formatShortTime(row.openedAt) }}
+                    </span>
+                    <span
+                      v-if="row.closedAt"
+                      :title="formatBeijingDateTime(row.closedAt)"
+                    >
+                      平 {{ formatShortTime(row.closedAt) }}
+                    </span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="原因" min-width="124" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span>{{ row.exitReason || "-" }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="72">
+                <template #default="{ row }">
+                  <el-button
+                    v-if="row.status === 'open'"
+                    link
+                    type="danger"
+                    @click="handleClosePosition(row)"
+                    >平仓</el-button
                   >
-                    {{ row.tokenSymbol || "未识别 Symbol" }}
-                  </button>
-                  <TokenAddressLink
-                    :address="row.tokenAddress"
-                    :short="true"
-                    :compact="true"
-                  />
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="仓位" width="146">
-              <template #default="{ row }">
-                <div class="trade-cell-stack position-size-cell">
-                  <strong>{{ formatCompactTokenAmount(row.quantity) }}</strong>
-                  <span>成本 {{ formatAbsoluteUsd(row.costAmount) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="价位" width="170">
-              <template #default="{ row }">
-                <div class="position-market-stack">
-                  <div>
-                    <span>买入</span>
-                    <strong>{{ formatOptionalMarketCap(row.entryMarketCap) }}</strong>
-                  </div>
-                  <div>
-                    <span>{{ row.status === "closed" ? "卖出" : "当前" }}</span>
-                    <strong>{{
-                      row.status === "closed"
-                        ? formatOptionalMarketCap(row.exitMarketCap)
-                        : formatOptionalMarketCap(positionCurrentMarketCap(row))
-                    }}</strong>
-                  </div>
-                  <small>信号 {{ formatOptionalMarketCap(row.signalEntryMarketCap) }}</small>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="收益" width="178">
-              <template #default="{ row }">
-                <div class="position-pnl-cell">
-                  <div :class="profitClass(positionTotalPnl(row))">
-                    <strong>{{ formatSignedUsd(positionTotalPnl(row)) }}</strong>
-                    <span>{{ formatPercent(positionTotalRate(row)) }}</span>
-                  </div>
-                  <div class="position-pnl-bar">
-                    <i :style="positionPnlBarStyle(row)" />
-                  </div>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="拆分" width="154">
-              <template #default="{ row }">
-                <div class="position-split-cell">
-                  <span>已实现 {{ formatSignedUsd(row.realizedPnl) }}</span>
-                  <span>未实现 {{ formatSignedUsd(row.unrealizedPnl) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="风控" width="136">
-              <template #default="{ row }">
-                <div class="trade-cell-stack">
-                  <strong>{{ formatPercent(row.maxProfitRate) }}</strong>
-                  <span>回撤 {{ formatDrawdownUsd(row.maxDrawdownAmount) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="时间" width="174">
-              <template #default="{ row }">
-                <div class="position-time-cell">
-                  <strong>{{ formatCompactRelativeTime(row.openedAt) }}</strong>
-                  <span :title="formatBeijingDateTime(row.openedAt)">
-                    开仓 {{ formatShortTime(row.openedAt) }}
-                  </span>
-                  <span
-                    v-if="row.closedAt"
-                    :title="formatBeijingDateTime(row.closedAt)"
-                  >
-                    平仓 {{ formatShortTime(row.closedAt) }}
-                  </span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="卖出原因" min-width="150" show-overflow-tooltip>
-              <template #default="{ row }">
-                <span>{{ row.exitReason || "-" }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="88" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.status === 'open'"
-                  link
-                  type="danger"
-                  @click="handleClosePosition(row)"
-                  >平仓</el-button
-                >
-                <span v-else>-</span>
-              </template>
-            </el-table-column>
-          </el-table>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </el-tab-pane>
       </el-tabs>
     </section>
@@ -2421,10 +2418,26 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.position-token-head,
+.position-token-meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.position-token-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.position-token-meta {
+  gap: 8px;
+}
+
 .position-symbol-link {
   display: inline-flex;
   align-items: center;
-  width: fit-content;
+  max-width: 150px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -2432,6 +2445,9 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .position-symbol-link:hover:not(:disabled) {
@@ -2469,6 +2485,24 @@ onUnmounted(() => {
 .positions-strip-item strong {
   color: #0f172a;
   font-size: 14px;
+}
+
+.positions-table-shell {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 12px;
+}
+
+.trade-table-positions {
+  width: 100%;
+  min-width: 1060px;
+}
+
+.trade-table-positions :deep(.el-table__inner-wrapper),
+.trade-table-positions :deep(.el-table__body-wrapper),
+.trade-table-positions :deep(.el-scrollbar) {
+  max-width: 100%;
 }
 
 .trade-table-positions :deep(.el-table__row.position-row-open td) {
@@ -2769,6 +2803,10 @@ onUnmounted(() => {
   .trade-kpis,
   .positions-strip {
     grid-template-columns: 1fr;
+  }
+
+  .trade-table-positions {
+    min-width: 960px;
   }
 }
 
