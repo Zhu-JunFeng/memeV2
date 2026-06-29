@@ -214,41 +214,60 @@ export const useBacktestStore = defineStore("backtest", {
       };
       const definitions = {
         candidates: {
-          url: candidateMonitorStreamURL(),
-          stateKey: "candidateMonitorItems",
-          idKey: "tokenAddress",
-          compareFn: compareCandidates,
+          streams: [
+            {
+              url: candidateMonitorStreamURL(),
+              stateKey: "candidateMonitorItems",
+              idKey: "tokenAddress",
+              compareFn: compareCandidates,
+            },
+          ],
         },
         signals: {
-          url: tradeSignalsStreamURL(streamParams),
-          stateKey: "tradeSignals",
-          idKey: "id",
-          compareFn: compareSignals,
+          streams: [
+            {
+              url: tradeSignalsStreamURL(streamParams),
+              stateKey: "tradeSignals",
+              idKey: "id",
+              compareFn: compareSignals,
+            },
+          ],
         },
         orders: {
-          url: tradeOrdersStreamURL(streamParams),
-          stateKey: "tradeOrders",
-          idKey: "id",
-          compareFn: compareOrders,
+          streams: [
+            {
+              url: tradeOrdersStreamURL(streamParams),
+              stateKey: "tradeOrders",
+              idKey: "id",
+              compareFn: compareOrders,
+            },
+          ],
         },
         positions: {
-          url: tradePositionsStreamURL({
-            ...streamParams,
-            status: params.status || "",
-          }),
-          stateKey: "tradePositions",
-          idKey: "id",
-          compareFn: comparePositions,
+          streams: [
+            {
+              url: tradePositionsStreamURL({
+                ...streamParams,
+                status: params.status || "",
+              }),
+              stateKey: "tradePositions",
+              idKey: "id",
+              compareFn: comparePositions,
+            },
+            {
+              url: candidateMonitorStreamURL(),
+              stateKey: "candidateMonitorItems",
+              idKey: "tokenAddress",
+              compareFn: compareCandidates,
+            },
+          ],
         },
       };
       const current = definitions[nextTab];
       if (!current) return;
-      this.openTradeStream(
-        current.url,
-        current.stateKey,
-        current.idKey,
-        current.compareFn,
-      );
+      current.streams.forEach((item) => {
+        this.openTradeStream(item.url, item.stateKey, item.idKey, item.compareFn);
+      });
       this.activeTradeStreamTab = nextTab;
     },
     stopTradeStreams() {

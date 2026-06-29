@@ -111,6 +111,7 @@ type TradePosition struct {
 	Status            TradePositionStatus `json:"status"`
 	OpenOrderID       string              `json:"openOrderId"`
 	CloseOrderID      string              `json:"closeOrderId"`
+	EntryMarketCap    float64             `json:"entryMarketCap"`
 	Quantity          float64             `json:"quantity"`
 	CostAmount        float64             `json:"costAmount"`
 	AvgCostPrice      float64             `json:"avgCostPrice"`

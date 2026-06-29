@@ -671,17 +671,17 @@
             </el-table-column>
             <el-table-column label="数量" width="108">
               <template #default="{ row }">{{
-                formatTokenAmount(row.quantity)
+                formatCompactTokenAmount(row.quantity)
               }}</template>
             </el-table-column>
             <el-table-column label="成本" width="104">
               <template #default="{ row }">{{
-                formatUsd(row.costAmount).replace("+", "")
+                formatOptionalMarketCap(row.entryMarketCap)
               }}</template>
             </el-table-column>
             <el-table-column label="市值" width="110">
               <template #default="{ row }">{{
-                formatUsd(row.marketValue).replace("+", "")
+                formatOptionalMarketCap(positionCurrentMarketCap(row))
               }}</template>
             </el-table-column>
             <el-table-column label="已实现" width="110">
@@ -691,11 +691,15 @@
                 }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="未实现" width="110">
+            <el-table-column label="未实现" width="146">
               <template #default="{ row }">
-                <span :class="profitClass(row.unrealizedPnl)">{{
-                  formatSignedUsd(row.unrealizedPnl)
-                }}</span>
+                <div
+                  class="trade-cell-stack trade-cell-stack-profit"
+                  :class="profitClass(row.unrealizedPnl)"
+                >
+                  <strong>{{ formatSignedUsd(row.unrealizedPnl) }}</strong>
+                  <span>{{ formatPercent(positionUnrealizedRate(row)) }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="更新时间" width="168">
@@ -1368,6 +1372,11 @@ const openTradePositions = computed(() =>
 const closedTradePositions = computed(() =>
   store.tradePositions.filter((item) => item.status === "closed"),
 );
+const candidateMonitorMap = computed(() =>
+  Object.fromEntries(
+    (store.candidateMonitorItems || []).map((item) => [item.tokenAddress, item]),
+  ),
+);
 
 async function loadKlineLevels() {
   selectedChartRange.value = null;
@@ -1854,6 +1863,41 @@ function formatTokenAmount(value) {
   return number.toFixed(4).replace(/\.?0+$/, "");
 }
 
+function formatCompactTokenAmount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  const sign = number < 0 ? "-" : "";
+  const absolute = Math.round(Math.abs(number));
+  if (absolute >= 1_000_000) {
+    const millions = Math.floor(absolute / 1_000_000);
+    const thousands = Math.floor((absolute % 1_000_000) / 1_000);
+    const remainder = absolute % 1_000;
+    let text = `${millions}m`;
+    if (thousands > 0) text += `${thousands}k`;
+    if (thousands === 0 && remainder > 0) {
+      text += `${(remainder / 1_000).toFixed(1).replace(/^0/, "").replace(/\.0$/, "")}k`;
+    }
+    return `${sign}${text}`;
+  }
+  if (absolute >= 1_000) {
+    const thousands = absolute / 1_000;
+    return `${sign}${thousands.toFixed(thousands >= 100 ? 0 : 1).replace(/\.0$/, "")}k`;
+  }
+  return `${sign}${formatTokenAmount(absolute)}`;
+}
+
+function positionCurrentMarketCap(row) {
+  const tokenAddress = String(row?.tokenAddress || "").trim();
+  if (!tokenAddress) return 0;
+  return Number(candidateMonitorMap.value[tokenAddress]?.currentMarketCap || 0);
+}
+
+function positionUnrealizedRate(row) {
+  const costAmount = Number(row?.costAmount || 0);
+  if (!Number.isFinite(costAmount) || costAmount <= 0) return 0;
+  return Number(row?.unrealizedPnl || 0) / costAmount;
+}
+
 function formatOrderIntent(row) {
   if (Number(row?.intentAmountSol) > 0) {
     return `${formatTokenAmount(row.intentAmountSol)} SOL`;
@@ -2226,6 +2270,11 @@ onUnmounted(() => {
 .trade-cell-stack span {
   color: #64748b;
   font-size: 11px;
+}
+
+.trade-cell-stack-profit strong,
+.trade-cell-stack-profit span {
+  color: inherit;
 }
 
 .trade-cell-stack-token {
