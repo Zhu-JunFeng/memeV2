@@ -87,3 +87,27 @@ func TestCollectBandFollowReplayEntriesAllowsMultipleSlidingWindows(t *testing.T
 		t.Fatal("expected replay collector to preserve replay windows")
 	}
 }
+
+func TestCollectBandFollowReplayEntriesUsesFirstConfirmedBreakoutOnly(t *testing.T) {
+	base := time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.3, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
+		{OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.1, MarketCapHigh: 10.4, MarketCapLow: 9.0, MarketCapClose: 9.8, Volume: 200},
+		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		{OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+		{OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 11.2, MarketCapLow: 9.8, MarketCapClose: 10.95, Volume: 320},
+		{OpenTime: base.Add(7 * time.Minute), CloseTime: base.Add(8 * time.Minute), MarketCapOpen: 10.95, MarketCapHigh: 11.4, MarketCapLow: 10.8, MarketCapClose: 11.1, Volume: 330},
+		{OpenTime: base.Add(8 * time.Minute), CloseTime: base.Add(9 * time.Minute), MarketCapOpen: 11.1, MarketCapHigh: 11.5, MarketCapLow: 10.9, MarketCapClose: 11.2, Volume: 340},
+	}
+	options := LevelOptions{PivotWindow: 1, PriceTolerance: 0.02, BreakTolerance: 0.01, ConfirmBars: 1, VolumeWindow: 3, VolumeMultiplier: 1.2, MaxLevels: 4, WindowSize: 8, WindowStep: 1, MinTouches: 3}
+
+	entries, _ := CollectBandFollowReplayEntries(klines, options)
+	if len(entries) != 1 {
+		t.Fatalf("expected only first confirmed breakout entry, got %d entries: %#v", len(entries), entries)
+	}
+	if !entries[0].Signal.SignalTime.Equal(base.Add(6 * time.Minute)) {
+		t.Fatalf("expected first breakout at minute 6, got %#v", entries[0])
+	}
+}

@@ -64,9 +64,14 @@ func CollectBandFollowReplayEntries(klines []model.Kline, options LevelOptions) 
 	entries := make([]BandFollowReplayEntry, 0)
 	windows := make([]WindowLevelResult, 0)
 	windowIndexByKey := map[string]int{}
+	seenScenarioKeys := map[string]struct{}{}
 	for index := 1; index < len(klines); index++ {
 		entry, ok := DetectBandFollowReplayEntryAtCurrentBar(klines[:index+1], options)
 		if !ok {
+			continue
+		}
+		scenarioKey := replayScenarioKey(entry.Level)
+		if _, exists := seenScenarioKeys[scenarioKey]; exists {
 			continue
 		}
 		if existing, exists := windowIndexByKey[entry.WindowKey]; exists {
@@ -81,6 +86,7 @@ func CollectBandFollowReplayEntries(klines []model.Kline, options LevelOptions) 
 		}
 		entry.Window.WindowIndex = entry.GlobalWindow
 		entries = append(entries, entry)
+		seenScenarioKeys[scenarioKey] = struct{}{}
 	}
 	return entries, windows
 }
@@ -115,6 +121,17 @@ func priceLevelFromSignal(signal RealtimeScenarioSignal) model.PriceLevel {
 
 func replayWindowKey(window WindowLevelResult) string {
 	return window.StartTime.Format(time.RFC3339Nano) + "|" + window.EndTime.Format(time.RFC3339Nano) + "|" + strconv.Itoa(window.KlineCount)
+}
+
+func replayScenarioKey(level model.PriceLevel) string {
+	key := levelSelectionKey(level)
+	if level.Breakout == nil || len(level.Breakout.FailedTouches) == 0 {
+		return key
+	}
+	for _, point := range level.Breakout.FailedTouches {
+		key += "|" + point.Time.Format(time.RFC3339Nano)
+	}
+	return key
 }
 
 func cloneWindowLevelResult(window WindowLevelResult) WindowLevelResult {

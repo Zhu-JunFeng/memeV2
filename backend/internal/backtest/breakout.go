@@ -236,6 +236,12 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 	if hasTooManyClosesAboveUpperUntilBreakout(series, level, latestGroup, currentIndex, maxAllowedClosesAboveUpperBeforeBreakout) {
 		return nil
 	}
+	// 实时/回放都只把“第一次确认突破”的 bar 记成买点。
+	// 如果更早的 bar 已经满足突破确认，后续持续站在压力带上方的 bar 不能重复记成新突破。
+	firstBreakoutIndex := findBreakoutIndexInRange(series, level, latestGroup.lastTouchIndex+1, currentIndex+1, options)
+	if firstBreakoutIndex != currentIndex {
+		return nil
+	}
 	if !isBreakoutConfirmedAtIndex(series, level, currentIndex, options) {
 		return nil
 	}
