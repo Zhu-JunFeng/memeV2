@@ -561,34 +561,14 @@ function renderMarkers() {
 function buildLevelMarkers(level) {
   if (!level) return [];
   const markers = [];
-  const typeColor = levelRole(level) === "support" ? "#22c55e" : "#f97316";
-  const oppositeColor = levelRole(level) === "support" ? "#86efac" : "#fdba74";
-  const pivotPoints = level.calculation?.pivots || [];
   const sampleTouches = level.calculation?.sampleTouches || [];
   const failedTouches = level.breakout?.failedTouches || [];
-  pivotPoints.forEach((point, index) => {
-    pushPointMarker(markers, point, {
-      color: typeColor,
-      shape: "circle",
-      text: `P${index + 1}`,
-      position: "atPriceTop",
-      size: 0.8,
-    });
-  });
-  sampleTouches.forEach((point) => {
-    pushPointMarker(markers, point, {
-      color: withAlpha(oppositeColor, 0.8),
-      shape: "square",
-      text: "触碰",
-      position: "atPriceMiddle",
-      size: 0.65,
-    });
-  });
-  failedTouches.forEach((point) => {
+  const displayTouches = failedTouches.length ? failedTouches : sampleTouches.slice(0, 3);
+  displayTouches.forEach((point, index) => {
     pushPointMarker(markers, point, {
       color: "#facc15",
       shape: "arrowDown",
-      text: "试压",
+      text: `试压${index + 1}`,
       position: "atPriceTop",
       size: 0.85,
     });
