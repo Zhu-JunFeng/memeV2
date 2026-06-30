@@ -9,29 +9,8 @@
           @click="loadKlineLevels"
           >加载 K 线并计算</el-button
         >
-        <el-select
-          v-model="form.dataSource"
-          class="load-source-select"
-          size="small"
-          aria-label="K 线数据源"
-        >
-          <el-option label="GMGN" value="gmgn" />
-          <el-option label="Birdeye" value="birdeye" />
-        </el-select>
+        <span class="load-source-chip">系统K线回放逻辑</span>
       </div>
-      <el-button
-        size="large"
-        :disabled="!selectedChartRange"
-        :loading="store.loading"
-        @click="loadSelectedRangeLevels"
-        >计算选中区域压力位</el-button
-      >
-      <el-button
-        size="large"
-        :disabled="!selectedChartRange && !loadedRangeLabel"
-        @click="clearSelectedRange"
-        >恢复近 5 天</el-button
-      >
       <el-button
         type="success"
         size="large"
@@ -48,7 +27,7 @@
           <strong>{{ rangeCardTitle }}</strong>
           <div class="query-range-detail">{{ rangeCardDetail }}</div>
           <div class="query-range-meta">
-            {{ loadedRangeLabel || "默认使用当前时刻向前近 5 天" }}
+            {{ loadedRangeLabel || defaultRangeMeta }}
           </div>
         </div>
         <div class="query-view-card">
@@ -1293,7 +1272,7 @@ const PRESET_TOKEN_ADDRESSES = [
 const form = reactive({
   tokenAddress: "cY435H7F4wcZ4NgWQFM3wUjBDffdb3qdsQST2EVpump",
   interval: "1m",
-  dataSource: "gmgn",
+  dataSource: "system",
   windowSize: 120,
   levelWindowSize: 120,
   levelWindowStep: 20,
@@ -1456,21 +1435,21 @@ const selectedLevel = computed(
     sortedLevels.value[0] ||
     null,
 );
+const defaultRangeInfo = computed(() => resolveDefaultRange());
 const activeWindow = computed(() => {
-  const range = loadedRange.value || recentFiveDayRange();
+  const range = loadedRange.value || defaultRangeInfo.value.range;
   return `${formatBeijingDateTime(range.start)} → ${formatBeijingDateTime(range.end)}`;
 });
 const loadedRangeLabel = computed(() => {
   if (!loadedRange.value?.source) return "";
   return `${loadedRange.value.source}：${formatShortTime(loadedRange.value.start)} - ${formatShortTime(loadedRange.value.end)}`;
 });
-const rangeCardTitle = computed(() =>
-  loadedRange.value?.source === "选中区域" ? "选中区域" : "固定近 5 天",
-);
+const rangeCardTitle = computed(() => loadedRange.value?.title || defaultRangeInfo.value.title);
 const rangeCardDetail = computed(() => {
-  const range = loadedRange.value || recentFiveDayRange();
+  const range = loadedRange.value || defaultRangeInfo.value.range;
   return `${formatShortTime(range.start)} - ${formatShortTime(range.end)}`;
 });
+const defaultRangeMeta = computed(() => defaultRangeInfo.value.meta);
 const openTradePositions = computed(() =>
   store.tradePositions.filter((item) => item.status === "open"),
 );
@@ -1496,7 +1475,8 @@ const candidateMonitorMap = computed(() =>
 
 async function loadKlineLevels() {
   selectedChartRange.value = null;
-  await loadRangeLevels(recentFiveDayRange(), "近 5 天");
+  const info = resolveDefaultRange();
+  await loadRangeLevels(info.range, info.sourceLabel, info.title);
 }
 
 async function loadSelectedRangeLevels() {
@@ -1513,7 +1493,7 @@ async function loadSelectedRangeLevels() {
   );
 }
 
-async function loadRangeLevels(range, sourceLabel) {
+async function loadRangeLevels(range, sourceLabel, title) {
   if (!form.tokenAddress) {
     ElMessage.error("请填写 token CA");
     return;
@@ -1537,7 +1517,11 @@ async function loadRangeLevels(range, sourceLabel) {
   )[0];
   selectedWindowKey.value = firstWindow ? windowKey(firstWindow) : "";
   selectedLevelKey.value = initialLevel ? levelKey(initialLevel) : "";
-  loadedRange.value = { ...range, source: sourceLabel };
+  loadedRange.value = {
+    ...range,
+    source: sourceLabel,
+    title: title || (sourceLabel === "选中区域" ? "选中区域" : sourceLabel),
+  };
   store.strategyBacktestResult = null;
   signalPreviewTrades.value = [];
   focusedTradeKey.value = "";
@@ -1552,7 +1536,7 @@ async function runStrategyForLoadedRange() {
     ElMessage.error("请填写 token CA");
     return;
   }
-  const range = loadedRange.value || recentFiveDayRange();
+  const range = loadedRange.value || defaultRangeInfo.value.range;
   const result = await store.runStrategyBacktest({
     dataSource: form.dataSource,
     methodCode: strategyForm.methodCode,
@@ -1621,6 +1605,7 @@ async function loadCandidateSystemKlines(row) {
     start: new Date(first.openTime),
     end: new Date(last.closeTime || last.openTime),
     source: "系统K线·全量",
+    title: "系统K线·全量",
   };
   ElMessage.success(`已加载 ${result.klines.length} 根系统K线`);
 }
@@ -1641,7 +1626,7 @@ async function loadPositionCandidateScenario(row) {
     start: new Date(row.candidateAt),
     end: new Date(),
   };
-  await loadRangeLevels(range, "系统K线·入池后");
+  await loadRangeLevels(range, "系统K线·入池后", "入池后系统K线");
   if (!(store.result?.klines || []).length) {
     return;
   }
@@ -1689,6 +1674,7 @@ async function focusSignalSnapshot(row) {
     start: new Date(chartKlines[0].openTime),
     end: new Date(chartKlines[chartKlines.length - 1].closeTime || chartKlines[chartKlines.length - 1].openTime),
     source: `信号快照·${signal.signalType === "buy" ? "买入" : "卖出"}`,
+    title: "信号快照",
   };
   store.result = {
     klines: chartKlines,
@@ -1792,12 +1778,6 @@ function handleChartRangeSelected(range) {
   ElMessage.success(
     `已选中 ${range.klineCount} 根 K 线，可点击“计算选中区域压力位”`,
   );
-}
-
-function clearSelectedRange() {
-  selectedChartRange.value = null;
-  loadedRange.value = null;
-  loadKlineLevels();
 }
 
 function selectWindow(key) {
@@ -1965,6 +1945,28 @@ function recentFiveDayRange() {
   const end = new Date();
   const start = new Date(end.getTime() - 5 * 24 * 60 * 60 * 1000);
   return { start, end };
+}
+
+function resolveDefaultRange() {
+  const tokenAddress = String(form.tokenAddress || "").trim();
+  const candidate = candidateMonitorMap.value[tokenAddress];
+  if (form.dataSource === "system" && candidate?.candidateAt) {
+    return {
+      range: {
+        start: new Date(candidate.candidateAt),
+        end: new Date(),
+      },
+      sourceLabel: "系统K线·入池后",
+      title: "入池后系统K线",
+      meta: `当前 CA 在 Candidates 池中，默认按入池时间 ${formatShortTime(candidate.candidateAt)} 起回放`,
+    };
+  }
+  return {
+    range: recentFiveDayRange(),
+    sourceLabel: "系统K线·近 5 天",
+    title: "固定近 5 天",
+    meta: "当前 CA 不在 Candidates 池中，默认使用系统K线近 5 天范围",
+  };
 }
 
 function tradeKey(trade) {
@@ -3291,10 +3293,28 @@ onUnmounted(() => {
 }
 
 .load-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: nowrap;
   min-width: 0;
   background: rgba(3, 10, 13, 0.58);
   border-color: rgba(52, 211, 153, 0.22);
+}
+
+.load-source-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  border-radius: 999px;
+  color: #8ff0c1;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: rgba(5, 24, 18, 0.72);
+  white-space: nowrap;
 }
 
 .query-panel,
