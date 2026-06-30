@@ -1775,9 +1775,7 @@ async function copyOrderTx(row) {
 
 function handleChartRangeSelected(range) {
   selectedChartRange.value = range;
-  ElMessage.success(
-    `已选中 ${range.klineCount} 根 K 线，可点击“计算选中区域压力位”`,
-  );
+  ElMessage.success(`已选中 ${range.klineCount} 根 K 线，可点击“计算该区域”`);
 }
 
 function selectWindow(key) {
