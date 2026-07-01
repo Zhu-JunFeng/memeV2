@@ -107,6 +107,8 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
 - `startTime`：北京时间 RFC3339 开始时间；当前前端固定传近 5 天开始时间。
 - `endTime`：北京时间 RFC3339 结束时间；当前前端固定传当前时间。
 - `windowSize`：按多少根 K 线组成一个计算窗口；当前前端可配置。
+- `levelWindowSize`：可选，压力带计算窗口 K 线数，默认 `240`。
+- `levelWindowStep`：可选，压力带计算窗口滑动步长，默认 `50`。
 - `pivotWindow`：可选，局部高低点窗口，默认 `5`。
 - `priceTolerance`：可选，合并相近市值位的基础容忍度，默认 `0.02`；当前前端用“带宽范围(%)”传入。
 - `breakTolerance`：可选，突破/跌破确认容忍度，默认 `0.01`。
@@ -171,8 +173,8 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
   "endTime": "2026-06-30T08:00:00+08:00",
   "levelOptions": {
     "windowSize": 120,
-    "levelWindowSize": 120,
-    "levelWindowStep": 20,
+    "levelWindowSize": 240,
+    "levelWindowStep": 50,
     "priceTolerance": 0.005,
     "minTouches": 3,
     "confirmBars": 1
@@ -246,8 +248,8 @@ Birdeye K 线专用实时突破信号入口。
   "endTime": "2026-06-30T08:00:00+08:00",
   "levelOptions": {
     "windowSize": 120,
-    "levelWindowSize": 120,
-    "levelWindowStep": 20,
+    "levelWindowSize": 240,
+    "levelWindowStep": 50,
     "priceTolerance": 0.005,
     "minTouches": 3,
     "confirmBars": 1
@@ -320,6 +322,8 @@ Birdeye K 线专用实时突破信号入口。
 - `interval`：K 线粒度，对应 `bar_data.interval`。
 - `range=all`：可选，使用该 pair + interval 的全部 K 线。
 - `startTime` / `endTime`：不传 `range=all` 时必填，北京时间 RFC3339。
+- `levelWindowSize`：可选，压力带计算窗口 K 线数，默认 `240`。
+- `levelWindowStep`：可选，压力带计算窗口滑动步长，默认 `50`。
 - `pivotWindow`：可选，局部高低点窗口，默认 `5`。
 - `priceTolerance`：可选，合并相近价位的基础容忍度，默认 `0.02`；实际计算会结合近 20 根 K 线 ATR 波动率自适应放大，最高 `0.08`。
 - `breakTolerance`：可选，突破/跌破确认容忍度，默认 `0.01`。
