@@ -330,7 +330,7 @@ func TestBreakoutBandFollowMethodOnlyKeepsOnePositionOpenAtATime(t *testing.T) {
 	}
 }
 
-func TestBreakoutBandFollowMethodReplaysRealtimeEntrySignals(t *testing.T) {
+func TestBreakoutBandFollowMethodUsesLoadedWindowSignals(t *testing.T) {
 	base := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	klines := []model.Kline{
 		{OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 18000, MarketCapHigh: 18800, MarketCapLow: 17600, MarketCapClose: 18200, Volume: 100},
@@ -341,9 +341,12 @@ func TestBreakoutBandFollowMethodReplaysRealtimeEntrySignals(t *testing.T) {
 		{OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 19000, MarketCapHigh: 21000, MarketCapLow: 18900, MarketCapClose: 19800, Volume: 280},
 		{OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 19800, MarketCapHigh: 22500, MarketCapLow: 19600, MarketCapClose: 21900, Volume: 320},
 	}
+	options := LevelOptions{PivotWindow: 1, PriceTolerance: 0.02, BreakTolerance: 0.01, ConfirmBars: 1, VolumeWindow: 3, VolumeMultiplier: 1.2, MaxLevels: 4, WindowSize: 6, WindowStep: 1, MinTouches: 3}
+	windows := CalculateSupportResistanceByWindows(klines, options, options.WindowSize, options.WindowStep)
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
 		Klines:       klines,
-		LevelOptions: LevelOptions{PivotWindow: 1, PriceTolerance: 0.02, BreakTolerance: 0.01, ConfirmBars: 1, VolumeWindow: 3, VolumeMultiplier: 1.2, MaxLevels: 4, WindowSize: 6, WindowStep: 1, MinTouches: 3},
+		Windows:      windows,
+		LevelOptions: options,
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.08,
 		PositionSizeUSD:      10,
@@ -356,13 +359,16 @@ func TestBreakoutBandFollowMethodReplaysRealtimeEntrySignals(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if len(result.Trades) != 1 {
-		t.Fatalf("expected one replayed trade, got %#v", result.Trades)
+		t.Fatalf("expected one loaded-window trade, got %#v", result.Trades)
 	}
-	if !result.Trades[0].BuyPoint.Time.Equal(base.Add(6 * time.Minute)) {
-		t.Fatalf("expected replay buy at realtime breakout bar, got %#v", result.Trades[0])
+	if result.Trades[0].LevelMarketCap != windows[0].Levels[0].Price {
+		t.Fatalf("expected trade to use loaded pressure level, got %#v from %#v", result.Trades[0], windows[0].Levels[0])
+	}
+	if !result.Trades[0].BuyPoint.Time.Equal(windows[0].Levels[0].Breakout.BuyPoint.Time) {
+		t.Fatalf("expected trade buy point from loaded window, got %#v from %#v", result.Trades[0], windows[0].Levels[0].Breakout)
 	}
 	if len(result.Windows) == 0 {
-		t.Fatalf("expected replay windows for chart explanation")
+		t.Fatalf("expected loaded windows for chart explanation")
 	}
 }
 

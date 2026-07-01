@@ -53,9 +53,9 @@ type StrategyBacktestContext struct {
 	Klines       []model.Kline
 	Windows      []WindowLevelResult
 	// ReplayEntries 允许调用方直接注入“逐 bar 回放后得到的买点”，
-	// 方便测试和后续扩展复用；正常 API 回测不传，统一由 CollectBandFollowReplayEntries 生成。
+	// 方便测试和后续扩展复用；正常 API 回测使用已加载窗口上的突破买点。
 	ReplayEntries []BandFollowReplayEntry
-	LevelOptions LevelOptions
+	LevelOptions  LevelOptions
 }
 
 type StrategyBacktestResult struct {
@@ -267,8 +267,8 @@ func (breakoutBandFollowMethod) Run(ctx StrategyBacktestContext, raw json.RawMes
 	}
 	replayEntries := ctx.ReplayEntries
 	replayWindows := cloneWindowLevelResults(ctx.Windows)
-	if len(replayEntries) == 0 {
-		replayEntries, replayWindows = CollectBandFollowReplayEntries(ctx.Klines, ctx.LevelOptions)
+	if len(replayEntries) == 0 && len(replayWindows) > 0 {
+		replayEntries = CollectBandFollowReplayEntriesFromWindows(ctx.Klines, replayWindows)
 	}
 	groups := make([]StrategyBacktestGroup, 0, len(takeProfitRates))
 	for _, takeProfitRate := range takeProfitRates {

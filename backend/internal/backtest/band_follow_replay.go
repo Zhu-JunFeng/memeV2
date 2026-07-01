@@ -91,6 +91,90 @@ func CollectBandFollowReplayEntries(klines []model.Kline, options LevelOptions) 
 	return entries, windows
 }
 
+// CollectBandFollowReplayEntriesFromWindows turns the already annotated K-line
+// loading result into strategy entries, so backtest trades use the same bands
+// and buy markers shown on the chart.
+func CollectBandFollowReplayEntriesFromWindows(klines []model.Kline, windows []WindowLevelResult) []BandFollowReplayEntry {
+	if len(klines) == 0 || len(windows) == 0 {
+		return nil
+	}
+	timeIndex := make(map[string]int, len(klines))
+	for index, item := range klines {
+		timeIndex[item.OpenTime.Format(time.RFC3339Nano)] = index
+	}
+	entries := make([]BandFollowReplayEntry, 0)
+	seenScenarioKeys := map[string]struct{}{}
+	for windowPos, window := range windows {
+		globalWindow := window.WindowIndex
+		if globalWindow <= 0 {
+			globalWindow = windowPos + 1
+		}
+		for levelIndex, level := range window.Levels {
+			if level.Breakout == nil || level.Breakout.BuyPoint == nil {
+				continue
+			}
+			entryIndex, ok := timeIndex[level.Breakout.BuyPoint.Time.Format(time.RFC3339Nano)]
+			if !ok {
+				continue
+			}
+			scenarioKey := replayScenarioKey(level)
+			if _, exists := seenScenarioKeys[scenarioKey]; exists {
+				continue
+			}
+			levelForEntry := level
+			if levelForEntry.Type == "" {
+				levelForEntry.Type = model.LevelTypeResistance
+			}
+			signal := realtimeSignalFromWindowLevel(levelForEntry, levelIndex+1, globalWindow)
+			entries = append(entries, BandFollowReplayEntry{
+				EntryIndex:   entryIndex,
+				WindowKey:    replayWindowKey(window),
+				Window:       cloneWindowLevelResult(window),
+				Signal:       signal,
+				Level:        levelForEntry,
+				GlobalWindow: globalWindow,
+			})
+			seenScenarioKeys[scenarioKey] = struct{}{}
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].EntryIndex != entries[j].EntryIndex {
+			return entries[i].EntryIndex < entries[j].EntryIndex
+		}
+		if entries[i].GlobalWindow != entries[j].GlobalWindow {
+			return entries[i].GlobalWindow < entries[j].GlobalWindow
+		}
+		return entries[i].Signal.LevelIndex < entries[j].Signal.LevelIndex
+	})
+	return entries
+}
+
+func realtimeSignalFromWindowLevel(level model.PriceLevel, levelIndex int, windowIndex int) RealtimeScenarioSignal {
+	signal := RealtimeScenarioSignal{
+		ScenarioCode:        "pressure_breakout",
+		ScenarioName:        "压力带历史突破",
+		WindowIndex:         windowIndex,
+		LevelIndex:          levelIndex,
+		LevelType:           level.Type,
+		LevelMarketCap:      level.Price,
+		LevelLowerMarketCap: level.Lower,
+		LevelUpperMarketCap: level.Upper,
+		Calculation:         level.Calculation,
+		Breakout:            level.Breakout,
+	}
+	if level.Breakout != nil {
+		if level.Breakout.BuyPoint != nil {
+			signal.SignalTime = level.Breakout.BuyPoint.Time
+			signal.SignalMarketCap = level.Breakout.BuyPoint.Price
+		}
+		if level.Breakout.BreakoutPoint != nil {
+			signal.BreakoutThreshold = level.Breakout.BreakoutPoint.Price
+		}
+		signal.Reason = level.Breakout.BreakoutReason
+	}
+	return signal
+}
+
 func sortRealtimeSignals(signals []RealtimeScenarioSignal) []RealtimeScenarioSignal {
 	items := append([]RealtimeScenarioSignal(nil), signals...)
 	sort.Slice(items, func(i, j int) bool {
@@ -136,7 +220,7 @@ func replayScenarioKey(level model.PriceLevel) string {
 
 func cloneWindowLevelResult(window WindowLevelResult) WindowLevelResult {
 	cloned := window
-	cloned.Levels = clonePriceLevels(window.Levels)
+	cloned.Levels = append([]model.PriceLevel(nil), window.Levels...)
 	return cloned
 }
 

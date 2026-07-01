@@ -200,6 +200,7 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
 - `trades[].breakout`：该笔交易依赖的突破识别详情，可直接用于图表回放。
 - `trades[].buyPoint/sellPoint` 会在前端 K 线上标记为 `B/S`；鼠标悬停标记可查看详情，并显示对应价格虚线。
 - `klines` / `windows`：本次回测实际使用的 K 线和滑动窗口结果，前端可直接复用，不需要重复调用上游。
+- 回测买点直接来自同一次 K 线加载得到的 `windows[].levels[].breakout.buyPoint`，保证交易列表、压力带和图表标记使用同一套窗口计算结果。
 
 当前内置方法 `breakout_band_follow` 规则：
 

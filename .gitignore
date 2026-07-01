@@ -1,6 +1,7 @@
 .DS_Store
 .env
 *.log
+.tmp/
 backend/.tmp/
 frontend/node_modules/
 frontend/dist/
