@@ -45,12 +45,12 @@ func detectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOption
 	}, true
 }
 
-// DetectBandFollowEntryAtCurrentBar 给实时监控使用，只允许最新窗口触发买点。
+// DetectBandFollowEntryAtCurrentBar 给 latest-only 场景使用，只允许最新窗口触发买点。
 func DetectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOptions) (BandFollowReplayEntry, bool) {
 	return detectBandFollowEntryAtCurrentBar(klines, options, true)
 }
 
-// DetectBandFollowReplayEntryAtCurrentBar 给历史回放/回测使用，允许多个滑动窗口逐根触发。
+// DetectBandFollowReplayEntryAtCurrentBar 给历史回放、回测和候选池实时监控使用，允许多个滑动窗口逐根触发。
 func DetectBandFollowReplayEntryAtCurrentBar(klines []model.Kline, options LevelOptions) (BandFollowReplayEntry, bool) {
 	return detectBandFollowEntryAtCurrentBar(klines, options, false)
 }

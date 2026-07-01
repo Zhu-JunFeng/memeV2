@@ -160,8 +160,8 @@ func CalculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current mod
 	return calculateRealtimeScenarioSignalsByWindows(klines, current, options, windowSize, windowStep, detector, true)
 }
 
-// CalculateReplayScenarioSignalsByWindows 给历史回放/回测使用，允许当前 bar 同时匹配多个滑动窗口，
-// 保留“多窗口回放”的历史口径；实时监控仍单独走 latest-window-only 逻辑。
+// CalculateReplayScenarioSignalsByWindows 给历史回放/回测和候选池实时监控使用，
+// 允许当前 bar 同时匹配多个滑动窗口，保留“多窗口回放”的历史口径。
 func CalculateReplayScenarioSignalsByWindows(klines []model.Kline, current model.Kline, options LevelOptions, windowSize int, windowStep int, detector ScenarioDetector) RealtimeSignalResult {
 	return calculateRealtimeScenarioSignalsByWindows(klines, current, options, windowSize, windowStep, detector, false)
 }
