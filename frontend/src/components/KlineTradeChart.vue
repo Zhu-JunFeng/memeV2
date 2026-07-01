@@ -193,6 +193,7 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   formatBeijingDateTime,
+  formatChartCrosshairTime,
   formatChartTick,
   toUnixTimestamp,
 } from "../utils/time.js";
@@ -1093,6 +1094,7 @@ onMounted(() => {
     localization: {
       locale: "zh-CN",
       priceFormatter: (value) => formatMarketCap(value),
+      timeFormatter: (value) => formatChartCrosshairTime(value),
     },
     crosshair: { mode: 0 },
     rightPriceScale: {

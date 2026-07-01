@@ -35,9 +35,34 @@ export function toUnixTimestamp(value) {
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null
 }
 
+function normalizeChartTimeValue(value) {
+  if (typeof value === 'number') return value
+  if (value && typeof value === 'object') {
+    if (typeof value.timestamp === 'number') return value.timestamp
+    if (
+      typeof value.year === 'number' &&
+      typeof value.month === 'number' &&
+      typeof value.day === 'number'
+    ) {
+      return toUnixTimestamp(
+        `${value.year}-${String(value.month).padStart(2, '0')}-${String(value.day).padStart(2, '0')}T00:00:00+08:00`
+      )
+    }
+  }
+  const timestamp = Date.parse(value) / 1000
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
 export function formatChartTick(value) {
-  const seconds = typeof value === 'number' ? value : Date.parse(value) / 1000
+  const seconds = normalizeChartTimeValue(value)
   if (!Number.isFinite(seconds)) return ''
   const text = formatBeijingDateTime(seconds * 1000)
   return text ? text.slice(5, 16) : ''
+}
+
+export function formatChartCrosshairTime(value) {
+  const seconds = normalizeChartTimeValue(value)
+  if (!Number.isFinite(seconds)) return ''
+  const text = formatBeijingDateTime(seconds * 1000)
+  return text ? text.slice(5) : ''
 }
