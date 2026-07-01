@@ -725,24 +725,31 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, klines []
 	if sig.Breakout == nil || sig.Breakout.BuyPoint == nil {
 		return model.TradeSignalMessage{}, model.PriceLevel{}, errors.New("breakout signal missing buy point")
 	}
+	realtimeMarketCap := preferMarketCap(decisionBar.MarketCapClose, decisionBar.Close)
+	if realtimeMarketCap <= 0 {
+		return model.TradeSignalMessage{}, model.PriceLevel{}, errors.New("breakout decision bar missing realtime market cap")
+	}
 	level := model.PriceLevel{
 		Type:        sig.LevelType,
 		Price:       sig.LevelMarketCap,
 		Lower:       sig.LevelLowerMarketCap,
 		Upper:       sig.LevelUpperMarketCap,
 		Calculation: sig.Calculation,
-		Breakout:    sig.Breakout,
+		Breakout:    cloneBreakoutWithBuyMarketCap(sig.Breakout, realtimeMarketCap),
 	}
 	snapshot := buildSignalSnapshot(klines, decisionBar, entry, level)
 	metadata, err := json.Marshal(map[string]any{
-		"source":          "candidate_monitor",
-		"upstream":        json.RawMessage(state.RawPayload),
-		"realtime":        sig,
-		"snapshot":        snapshot,
-		"strategyCode":    strategyBreakoutFollow,
-		"decisionBarTime": decisionBar.OpenTime,
-		"entryBarTime":    sig.SignalTime,
-		"volumeMode":      "gmgn_volume",
+		"source":            "candidate_monitor",
+		"upstream":          json.RawMessage(state.RawPayload),
+		"realtime":          sig,
+		"snapshot":          snapshot,
+		"strategyCode":      strategyBreakoutFollow,
+		"decisionBarTime":   decisionBar.OpenTime,
+		"entryBarTime":      sig.SignalTime,
+		"strategyMarketCap": sig.SignalMarketCap,
+		"realtimeMarketCap": realtimeMarketCap,
+		"breakoutThreshold": sig.BreakoutThreshold,
+		"volumeMode":        "gmgn_volume",
 	})
 	if err != nil {
 		return model.TradeSignalMessage{}, model.PriceLevel{}, err
@@ -755,8 +762,8 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, klines []
 		TokenAddress:     state.TokenAddress,
 		Interval:         m.cfg.Interval,
 		SignalTime:       m.now(),
-		TriggerPrice:     sig.SignalMarketCap,
-		TriggerMarketCap: sig.SignalMarketCap,
+		TriggerPrice:     realtimeMarketCap,
+		TriggerMarketCap: realtimeMarketCap,
 		Reason:           fmt.Sprintf("候选池项目出现突破压力带买入场景: %s", sig.Reason),
 		Metadata:         metadata,
 	}, level, nil
@@ -812,19 +819,27 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 }
 
 func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decisionBar model.Kline, decision backtest.BandFollowExitDecision) (model.TradeSignalMessage, error) {
+	realtimeMarketCap := preferMarketCap(decisionBar.MarketCapClose, decisionBar.Close)
+	if realtimeMarketCap <= 0 {
+		return model.TradeSignalMessage{}, errors.New("sell decision bar missing realtime market cap")
+	}
+	realtimeExitPoint := model.LevelAnchorPoint{Time: decisionBar.OpenTime, Price: realtimeMarketCap, Volume: decisionBar.Volume}
 	metadata, err := json.Marshal(map[string]any{
-		"source":          "candidate_monitor",
-		"upstream":        json.RawMessage(state.RawPayload),
-		"buySignalId":     state.BuySignalID,
-		"outcome":         decision.Outcome,
-		"holdingBars":     decision.HoldingBars,
-		"profitRate":      decision.ProfitRate,
-		"exitPoint":       decision.ExitPoint,
-		"strategyCode":    strategyBreakoutFollow,
-		"entryBarTime":    state.EntryTime,
-		"exitBarTime":     decisionBar.OpenTime,
-		"decisionBarTime": decisionBar.OpenTime,
-		"volumeMode":      "gmgn_volume",
+		"source":            "candidate_monitor",
+		"upstream":          json.RawMessage(state.RawPayload),
+		"buySignalId":       state.BuySignalID,
+		"outcome":           decision.Outcome,
+		"holdingBars":       decision.HoldingBars,
+		"profitRate":        decision.ProfitRate,
+		"exitPoint":         realtimeExitPoint,
+		"strategyExitPoint": decision.ExitPoint,
+		"strategyCode":      strategyBreakoutFollow,
+		"entryBarTime":      state.EntryTime,
+		"exitBarTime":       decisionBar.OpenTime,
+		"decisionBarTime":   decisionBar.OpenTime,
+		"realtimeMarketCap": realtimeMarketCap,
+		"strategyMarketCap": decision.ExitPoint.Price,
+		"volumeMode":        "gmgn_volume",
 	})
 	if err != nil {
 		return model.TradeSignalMessage{}, err
@@ -837,11 +852,34 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 		TokenAddress:     state.TokenAddress,
 		Interval:         m.cfg.Interval,
 		SignalTime:       m.now(),
-		TriggerPrice:     decision.ExitPoint.Price,
-		TriggerMarketCap: decision.ExitPoint.Price,
+		TriggerPrice:     realtimeMarketCap,
+		TriggerMarketCap: realtimeMarketCap,
 		Reason:           decision.Reason,
 		Metadata:         metadata,
 	}, nil
+}
+
+func cloneBreakoutWithBuyMarketCap(setup *model.BreakoutSetup, marketCap float64) *model.BreakoutSetup {
+	if setup == nil {
+		return nil
+	}
+	cloned := *setup
+	if setup.BreakoutPoint != nil {
+		point := *setup.BreakoutPoint
+		cloned.BreakoutPoint = &point
+	}
+	if setup.BuyPoint != nil {
+		point := *setup.BuyPoint
+		point.Price = marketCap
+		cloned.BuyPoint = &point
+	}
+	if setup.ExitPoint != nil {
+		point := *setup.ExitPoint
+		cloned.ExitPoint = &point
+	}
+	cloned.FailedTouches = append([]model.LevelAnchorPoint(nil), setup.FailedTouches...)
+	cloned.FailedAttempts = append([]model.FailedAttemptZone(nil), setup.FailedAttempts...)
+	return &cloned
 }
 
 type signalSnapshot struct {

@@ -409,6 +409,7 @@ Birdeye K 线专用实时突破信号入口。
 - 候选池二次监控每 2 秒调用 GMGN 最近 1m K 线，保留上游真实 `volume`，并按价格乘 Solana RPC `getTokenSupply` 换算出本地 1m 市值 K 线；重启时会先从 `system_kline_cache` 预加载近 200 根，再继续增量维护，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
 - 未买入候选在最新市值低于阈值时从监控池移除；默认阈值为 `10_000`，配置了正数 `signal.min_market_cap` 时按配置值覆盖，已买入候选继续监控卖点
 - 候选池监控会把最新价格实时合并进当前 forming bar；买点判定只使用紧贴当前 bar 的最新实时窗口，满足压力突破规则就立即发出买入信号，止盈/止损满足条件则立即发出卖出信号。
+- 候选池买入/卖出信号的 `triggerMarketCap` / `triggerPrice` 使用触发当刻 CA 的实时真实市值；策略突破阈值、策略止盈/止损目标价分别保留在 metadata 的 `strategyMarketCap`、`breakoutThreshold`、`strategyExitPoint` 字段里，便于回看策略依据。
 - 候选池自维护 K 线的 `volume` 直接使用 GMGN 返回的真实成交额，用这组量能执行试压/突破量能过滤
 - 候选池卖出后如果市值仍高于阈值会重新进入 `watching`，但同一根已卖出的 bar 不允许再次买入，实时语义与回测的单持仓约束保持一致
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`

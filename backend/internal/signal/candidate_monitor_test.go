@@ -289,6 +289,9 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	if signal.SignalType != model.TradeSignalTypeBuy || signal.StrategyCode != strategyBreakoutFollow {
 		t.Fatalf("unexpected buy signal: %#v", signal)
 	}
+	if signal.TriggerMarketCap != 21900 {
+		t.Fatalf("expected buy signal to use realtime market cap, got %.2f", signal.TriggerMarketCap)
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(signal.Metadata, &payload); err != nil {
 		t.Fatalf("unmarshal signal metadata: %v", err)
@@ -303,6 +306,9 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	stored := store.states["token-a"]
 	if stored.Status != candidateStatusBought || stored.BuySignalID != signal.SignalID || stored.Level.Breakout == nil {
 		t.Fatalf("expected bought state with level, got %#v", stored)
+	}
+	if stored.EntryPrice != 21900 || stored.Level.Breakout.BuyPoint == nil || stored.Level.Breakout.BuyPoint.Price != 21900 {
+		t.Fatalf("expected bought state to use realtime entry market cap, got %#v", stored)
 	}
 	if len(monitor.systemKlines.(*fakeMonitorKlineStore).enqueued) == 0 {
 		t.Fatalf("expected latest synthetic kline to be enqueued")
@@ -454,7 +460,7 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
 	now := base.Add(2*time.Minute + 30*time.Second)
-	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.8}}, now, pub)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.9}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
 	store.states[state.TokenAddress] = state
@@ -469,6 +475,21 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 	signal := pub.tradeSignals[0]
 	if signal.SignalType != model.TradeSignalTypeSell || signal.StrategyCode != strategyBreakoutFollow {
 		t.Fatalf("unexpected sell signal: %#v", signal)
+	}
+	if signal.TriggerMarketCap != 10900 {
+		t.Fatalf("expected sell signal to use realtime market cap, got %.2f", signal.TriggerMarketCap)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(signal.Metadata, &payload); err != nil {
+		t.Fatalf("unmarshal sell metadata: %v", err)
+	}
+	exitPoint := payload["exitPoint"].(map[string]any)
+	if exitPoint["marketCap"].(float64) != 10900 {
+		t.Fatalf("expected realtime exit point, got %#v", exitPoint)
+	}
+	strategyExitPoint := payload["strategyExitPoint"].(map[string]any)
+	if strategyExitPoint["marketCap"].(float64) != 10800 {
+		t.Fatalf("expected strategy exit point to remain available, got %#v", strategyExitPoint)
 	}
 	stored := store.states["token-a"]
 	if stored.Status != candidateStatusWatching {
