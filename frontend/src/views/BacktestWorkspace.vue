@@ -812,7 +812,7 @@
                   <span>{{ row.exitReason || "-" }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="72">
+              <el-table-column label="操作" width="92">
                 <template #default="{ row }">
                   <el-button
                     v-if="row.status === 'open'"
@@ -820,6 +820,14 @@
                     type="danger"
                     @click="handleClosePosition(row)"
                     >平仓</el-button
+                  >
+                  <el-button
+                    v-else-if="row.status === 'closed'"
+                    link
+                    type="primary"
+                    :loading="viewingPositionID === row.id"
+                    @click="handleViewClosedPosition(row)"
+                    >查看</el-button
                   >
                   <span v-else>-</span>
                 </template>
@@ -1339,6 +1347,7 @@ const isStrategyConfigExpanded = ref(false);
 const hasAutoSelectedCandidateToken = ref(false);
 const tokenAddressTouched = ref(false);
 const deletingCandidateAddress = ref("");
+const viewingPositionID = ref("");
 const levelView = ref("resistance");
 const addCandidateDialogVisible = ref(false);
 const addCandidateTokenAddress = ref("");
@@ -1717,11 +1726,16 @@ async function loadPositionCandidateScenario(row) {
 
 async function focusSignalSnapshot(row) {
   const signal = await store.fetchTradeSignal(row.id);
+  await loadTradeSignalSnapshot(signal);
+  tradeTab.value = "signals";
+}
+
+async function loadTradeSignalSnapshot(signal, attachedSellSignal = null) {
   const payload = signal?.rawPayloadJson || {};
   const metadata = payload?.metadata || {};
   let snapshotPayload = signal;
   let snapshot = metadata?.snapshot || null;
-  let previewSellSignal = null;
+  let previewSellSignal = attachedSellSignal;
   if (!snapshot && signal.signalType === "sell") {
     const buySignalId = metadata?.buySignalId;
     if (!buySignalId) {
@@ -1765,10 +1779,31 @@ async function focusSignalSnapshot(row) {
   selectedWindowKey.value = windowKey(window);
   selectedLevelKey.value = levelKey(level);
   focusedTradeKey.value = tradeKey(signalPreviewTrades.value[0]);
-  tradeTab.value = "signals";
   await nextTick();
   chartPanelRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
   ElMessage.success("已跳转到 K 线并加载该次信号快照");
+}
+
+async function handleViewClosedPosition(row) {
+  if (row?.status !== "closed") return;
+  const openSignalID = String(row?.openTradeSignalId || "").trim();
+  if (!openSignalID) {
+    ElMessage.error("该仓位缺少买入信号，无法回看");
+    return;
+  }
+  viewingPositionID.value = row.id;
+  try {
+    const [buySignal, sellSignal] = await Promise.all([
+      store.fetchTradeSignal(openSignalID),
+      row.closeTradeSignalId
+        ? store.fetchTradeSignal(row.closeTradeSignalId)
+        : Promise.resolve(null),
+    ]);
+    await loadTradeSignalSnapshot(buySignal, sellSignal);
+    tradeTab.value = "positions";
+  } finally {
+    viewingPositionID.value = "";
+  }
 }
 
 function openAddCandidateDialog() {

@@ -111,6 +111,8 @@ type TradePosition struct {
 	Status               TradePositionStatus `json:"status"`
 	OpenOrderID          string              `json:"openOrderId"`
 	CloseOrderID         string              `json:"closeOrderId"`
+	OpenTradeSignalID    string              `json:"openTradeSignalId"`
+	CloseTradeSignalID   string              `json:"closeTradeSignalId"`
 	EntryMarketCap       float64             `json:"entryMarketCap"`
 	ExitMarketCap        float64             `json:"exitMarketCap"`
 	SignalEntryMarketCap float64             `json:"signalEntryMarketCap"`
