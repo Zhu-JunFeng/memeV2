@@ -1055,7 +1055,7 @@
         </el-select>
       </div>
       <KlineTradeChart
-        :klines="store.result?.klines || []"
+        :klines="chartScenarioResult.klines"
         :levels="visibleWindowLevels"
         :selected-level="selectedLevel"
         :current-window-index="selectedWindow?.windowIndex || 0"
@@ -1318,9 +1318,21 @@ const tokenAddressOptions = computed(() =>
     label: `#${index + 1} · ${shortAddress(item)}`,
   })),
 );
-const barCount = computed(() => store.result?.klines?.length || 0);
+const chartScenarioResult = computed(() => {
+  if (store.strategyBacktestResult) {
+    return {
+      klines: store.strategyBacktestResult.klines || [],
+      windows: store.strategyBacktestResult.windows || [],
+    };
+  }
+  return {
+    klines: store.result?.klines || [],
+    windows: store.result?.windows || [],
+  };
+});
+const barCount = computed(() => chartScenarioResult.value.klines.length);
 const filteredWindows = computed(() =>
-  dedupeScenarioWindows(store.result?.windows || []),
+  dedupeScenarioWindows(chartScenarioResult.value.windows),
 );
 const windowCount = computed(() => filteredWindows.value.length);
 const windowOptions = computed(() =>
