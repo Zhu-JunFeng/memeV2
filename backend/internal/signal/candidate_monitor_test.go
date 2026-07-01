@@ -309,7 +309,7 @@ func TestCandidateMonitorPublishesBuyAfterBreakout(t *testing.T) {
 	}
 }
 
-func TestCandidateMonitorPublishesBuyFromOlderSlidingWindow(t *testing.T) {
+func TestCandidateMonitorSkipsBuyFromOlderSlidingWindow(t *testing.T) {
 	base := time.Date(2026, 6, 29, 9, 0, 0, 0, time.UTC)
 	klines := []model.Kline{
 		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
@@ -359,11 +359,11 @@ func TestCandidateMonitorPublishesBuyFromOlderSlidingWindow(t *testing.T) {
 	if err := monitor.processWatchingCandidate(context.Background(), state, klines); err != nil {
 		t.Fatalf("process watching candidate: %v", err)
 	}
-	if len(pub.tradeSignals) != 1 {
-		t.Fatalf("expected older-window buy signal, got %#v", pub.tradeSignals)
+	if len(pub.tradeSignals) != 0 {
+		t.Fatalf("expected older-window breakout to be ignored, got %#v", pub.tradeSignals)
 	}
-	if !store.states["token-a"].EntryTime.Equal(base.Add(14 * time.Minute)) {
-		t.Fatalf("expected buy on current breakout bar, got %#v", store.states["token-a"])
+	if store.states["token-a"].Status != candidateStatusWatching {
+		t.Fatalf("expected candidate to keep watching, got %#v", store.states["token-a"])
 	}
 }
 

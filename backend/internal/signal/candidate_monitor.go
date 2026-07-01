@@ -649,7 +649,7 @@ func (m *CandidateMonitor) publishCandidateDelete(state candidateMonitorState) {
 }
 
 func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	entry, ok := backtest.DetectBandFollowReplayEntryAtCurrentBar(klines, m.cfg.LevelOptions)
+	entry, ok := backtest.DetectBandFollowEntryAtCurrentBar(klines, m.cfg.LevelOptions)
 	if !ok {
 		return m.saveState(ctx, state)
 	}
