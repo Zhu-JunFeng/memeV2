@@ -428,6 +428,7 @@
             table-layout="auto"
             empty-text="暂无上游候选项目"
           >
+            <el-table-column type="index" label="#" width="56" align="center" />
             <el-table-column label="状态" width="96">
               <template #default="{ row }">
                 <el-tag size="small" :type="candidateStatusTagType(row.status)">
