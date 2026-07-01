@@ -219,38 +219,22 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 	if len(groups) == 0 {
 		return nil
 	}
-	latestGroup := groups[len(groups)-1]
 	minTouches := options.MinTouches
 	if minTouches <= 0 {
 		minTouches = 3
 	}
-	// 实时信号只接受“试压刚形成后不久就突破”的结构，避免旧结构在很久以后被误判成新信号。
-	if len(window) > latestGroup.lastTouchIndex+minTouches {
-		return nil
-	}
 	series := append(append([]model.Kline{}, window...), current)
 	currentIndex := len(series) - 1
-	if !hasLimitedUpperBandPierces(series, level, latestGroup.lastTouchIndex+1, currentIndex) {
-		return nil
-	}
-	if hasTooManyClosesAboveUpperUntilBreakout(series, level, latestGroup, currentIndex, maxAllowedClosesAboveUpperBeforeBreakout) {
-		return nil
-	}
-	// 实时/回放都只把“第一次确认突破”的 bar 记成买点。
-	// 如果更早的 bar 已经满足突破确认，后续持续站在压力带上方的 bar 不能重复记成新突破。
-	firstBreakoutIndex := findBreakoutIndexInRange(series, level, latestGroup.lastTouchIndex+1, currentIndex+1, options)
-	if firstBreakoutIndex != currentIndex {
-		return nil
-	}
-	if !isBreakoutConfirmedAtIndex(series, level, currentIndex, options) {
+	qualifiedGroup := findRealtimeBreakoutTouchGroup(series, level, groups, currentIndex, minTouches, options)
+	if qualifiedGroup == nil {
 		return nil
 	}
 	breakoutPrice := breakoutThreshold(level, options.BreakTolerance)
 	breakoutPoint := anchorFromKline(current, breakoutPrice)
 	setup := &model.BreakoutSetup{
 		Triggered:       true,
-		FailedTouches:   anchorPointsFromTouchGroup(latestGroup.touches),
-		Consolidation:   latestGroup.consolidation,
+		FailedTouches:   anchorPointsFromTouchGroup(qualifiedGroup.touches),
+		Consolidation:   qualifiedGroup.consolidation,
 		BreakoutPoint:   &breakoutPoint,
 		BuyPoint:        &breakoutPoint,
 		AttemptStrategy: "n_bullish_high_touches_then_realtime_breakout_signal",
@@ -269,6 +253,33 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 		Calculation:         level.Calculation,
 		Breakout:            setup,
 	}
+}
+
+func findRealtimeBreakoutTouchGroup(series []model.Kline, level model.PriceLevel, groups []breakoutTouchGroup, currentIndex int, minTouches int, options LevelOptions) *breakoutTouchGroup {
+	if currentIndex <= 0 {
+		return nil
+	}
+	for i := range groups {
+		group := groups[i]
+		start := group.lastTouchIndex + 1
+		end := minInt(len(series), group.lastTouchIndex+1+minTouches)
+		if currentIndex < start || currentIndex >= end {
+			continue
+		}
+		if !hasLimitedUpperBandPierces(series, level, start, currentIndex) {
+			continue
+		}
+		if hasTooManyClosesAboveUpperUntilBreakout(series, level, group, currentIndex, maxAllowedClosesAboveUpperBeforeBreakout) {
+			continue
+		}
+		// 实时信号与回放保持同一条规则：某组试压一旦形成，
+		// 只把该组试压后“第一个确认突破”的 bar 记成买点。
+		firstBreakoutIndex := findBreakoutIndexInRange(series, level, start, end, options)
+		if firstBreakoutIndex == currentIndex {
+			return &groups[i]
+		}
+	}
+	return nil
 }
 
 func rollingAverageVolumeBefore(klines []model.Kline, index int, window int) float64 {

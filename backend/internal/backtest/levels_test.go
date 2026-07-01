@@ -456,6 +456,67 @@ func TestCalculateRealtimeScenarioSignalsByWindowsSkipsStaleOldWindowBreakout(t 
 	}
 }
 
+func TestDetectRealtimeBreakoutSignalUsesFirstBreakoutAfterThirdTouch(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	window := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.2, MarketCapLow: 8.8, MarketCapClose: 9.0, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 10.4, MarketCapLow: 8.9, MarketCapClose: 9.8, Volume: 220},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+		// 第 4 次试压先出现，但当前 bar 仍然应该归属于“试压1/2/3 之后的第一次有效突破”。
+		{Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 10.48, MarketCapLow: 9.8, MarketCapClose: 9.96, Volume: 300},
+	}
+	current := model.Kline{
+		Interval:       "1m",
+		OpenTime:       base.Add(7 * time.Minute),
+		CloseTime:      base.Add(8 * time.Minute),
+		MarketCapOpen:  9.96,
+		MarketCapHigh:  11.2,
+		MarketCapLow:   9.9,
+		MarketCapClose: 10.95,
+		Volume:         320,
+	}
+	level := model.PriceLevel{
+		Type:   model.LevelTypeResistance,
+		Price:  10.3,
+		Lower:  10.25,
+		Upper:  10.5,
+		Calculation: model.LevelCalculation{
+			ResistanceVotes: 3,
+		},
+	}
+	signal := detectRealtimeBreakoutSignal(level, window, current, LevelOptions{
+		PriceTolerance:   0.02,
+		BreakTolerance:   0.01,
+		ConfirmBars:      1,
+		VolumeWindow:     3,
+		VolumeMultiplier: 1.0,
+		MinTouches:       3,
+	})
+	if signal == nil || signal.Breakout == nil {
+		t.Fatalf("expected realtime breakout signal, got %#v", signal)
+	}
+	failedTouches := signal.Breakout.FailedTouches
+	if len(failedTouches) != 3 {
+		t.Fatalf("expected 3 failed touches, got %#v", failedTouches)
+	}
+	expected := []time.Time{
+		base.Add(1 * time.Minute),
+		base.Add(3 * time.Minute),
+		base.Add(5 * time.Minute),
+	}
+	for index, expectTime := range expected {
+		if !failedTouches[index].Time.Equal(expectTime) {
+			t.Fatalf("expected touch %d at %s, got %#v", index+1, expectTime, failedTouches)
+		}
+	}
+	if signal.Breakout.BuyPoint == nil || !signal.Breakout.BuyPoint.Time.Equal(current.OpenTime) {
+		t.Fatalf("expected current bar to be buy point, got %#v", signal.Breakout.BuyPoint)
+	}
+}
+
 func TestDedupeBreakoutsByKlineSignatureKeepsHighestScore(t *testing.T) {
 	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
 	duplicateBreakout := &model.BreakoutSetup{
