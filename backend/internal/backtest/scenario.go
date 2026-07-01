@@ -67,6 +67,7 @@ func (pressureBreakoutScenarioDetector) DetectRealtimeSignals(levels []model.Pri
 		if signal == nil {
 			continue
 		}
+		levels[levelIndex].Type = model.LevelTypeResistance
 		levels[levelIndex].Breakout = signal.Breakout
 		signal.ScenarioCode = "pressure_breakout"
 		signal.ScenarioName = "压力带实时突破"

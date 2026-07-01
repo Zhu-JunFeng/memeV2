@@ -479,10 +479,10 @@ func TestDetectRealtimeBreakoutSignalUsesFirstBreakoutAfterThirdTouch(t *testing
 		Volume:         320,
 	}
 	level := model.PriceLevel{
-		Type:   model.LevelTypeResistance,
-		Price:  10.3,
-		Lower:  10.25,
-		Upper:  10.5,
+		Type:  model.LevelTypeResistance,
+		Price: 10.3,
+		Lower: 10.25,
+		Upper: 10.5,
 		Calculation: model.LevelCalculation{
 			ResistanceVotes: 3,
 		},
@@ -514,6 +514,56 @@ func TestDetectRealtimeBreakoutSignalUsesFirstBreakoutAfterThirdTouch(t *testing
 	}
 	if signal.Breakout.BuyPoint == nil || !signal.Breakout.BuyPoint.Time.Equal(current.OpenTime) {
 		t.Fatalf("expected current bar to be buy point, got %#v", signal.Breakout.BuyPoint)
+	}
+}
+
+func TestPressureBreakoutScenarioOutputsResistanceLevel(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	window := []model.Kline{
+		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.2, MarketCapLow: 8.8, MarketCapClose: 9.0, Volume: 100},
+		{Interval: "1m", OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 10.4, MarketCapLow: 8.9, MarketCapClose: 9.8, Volume: 220},
+		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+	}
+	current := model.Kline{
+		Interval:       "1m",
+		OpenTime:       base.Add(6 * time.Minute),
+		CloseTime:      base.Add(7 * time.Minute),
+		MarketCapOpen:  9.9,
+		MarketCapHigh:  11.2,
+		MarketCapLow:   9.8,
+		MarketCapClose: 10.95,
+		Volume:         320,
+	}
+	levels := []model.PriceLevel{{
+		Type:  model.LevelTypeSupport,
+		Price: 10.3,
+		Lower: 10.25,
+		Upper: 10.5,
+		Calculation: model.LevelCalculation{
+			SupportVotes:    4,
+			ResistanceVotes: 3,
+		},
+	}}
+
+	signals := pressureBreakoutDetector().DetectRealtimeSignals(levels, window, current, LevelOptions{
+		PriceTolerance:   0.02,
+		BreakTolerance:   0.01,
+		ConfirmBars:      1,
+		VolumeWindow:     3,
+		VolumeMultiplier: 1.0,
+		MinTouches:       3,
+	})
+	if len(signals) != 1 {
+		t.Fatalf("expected one pressure breakout signal, got %#v", signals)
+	}
+	if signals[0].LevelType != model.LevelTypeResistance {
+		t.Fatalf("expected signal level type resistance, got %s", signals[0].LevelType)
+	}
+	if levels[0].Type != model.LevelTypeResistance {
+		t.Fatalf("expected annotated level type resistance, got %s", levels[0].Type)
 	}
 }
 

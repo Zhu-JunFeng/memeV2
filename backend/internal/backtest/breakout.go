@@ -32,6 +32,7 @@ func annotateBreakoutSetups(levels []model.PriceLevel, window []model.Kline, fut
 		if setup == nil {
 			continue
 		}
+		levels[i].Type = model.LevelTypeResistance
 		levels[i].Breakout = setup
 	}
 }
@@ -242,7 +243,7 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 	}
 	level.Breakout = setup
 	return &RealtimeScenarioSignal{
-		LevelType:           level.Type,
+		LevelType:           model.LevelTypeResistance,
 		LevelMarketCap:      level.Price,
 		LevelLowerMarketCap: level.Lower,
 		LevelUpperMarketCap: level.Upper,
