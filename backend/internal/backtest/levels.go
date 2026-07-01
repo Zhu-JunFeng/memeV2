@@ -67,7 +67,7 @@ func DefaultLevelOptions() LevelOptions {
 		VolumeWindow:     20,
 		VolumeMultiplier: 1.2,
 		MaxLevels:        8,
-		WindowSize:       120,
+		WindowSize:       240,
 		WindowStep:       1,
 		LevelWindowSize:  240,
 		LevelWindowStep:  50,

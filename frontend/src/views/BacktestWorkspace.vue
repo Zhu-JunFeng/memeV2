@@ -1313,7 +1313,7 @@ const form = reactive({
   tokenAddress: "",
   interval: "1m",
   dataSource: "system",
-  windowSize: 120,
+  windowSize: 240,
   levelWindowSize: 240,
   levelWindowStep: 50,
   bandRangePercent: 2,

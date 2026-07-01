@@ -172,7 +172,7 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
   "startTime": "2026-06-25T08:00:00+08:00",
   "endTime": "2026-06-30T08:00:00+08:00",
   "levelOptions": {
-    "windowSize": 120,
+    "windowSize": 240,
     "levelWindowSize": 240,
     "levelWindowStep": 50,
     "priceTolerance": 0.005,
@@ -247,7 +247,7 @@ Birdeye K 线专用实时突破信号入口。
   "startTime": "2026-06-25T08:00:00+08:00",
   "endTime": "2026-06-30T08:00:00+08:00",
   "levelOptions": {
-    "windowSize": 120,
+    "windowSize": 240,
     "levelWindowSize": 240,
     "levelWindowStep": 50,
     "priceTolerance": 0.005,
