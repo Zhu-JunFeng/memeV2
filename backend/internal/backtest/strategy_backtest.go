@@ -52,6 +52,9 @@ type StrategyBacktestContext struct {
 	EndTime      time.Time
 	Klines       []model.Kline
 	Windows      []WindowLevelResult
+	// ReplayEntries 允许调用方直接注入“逐 bar 回放后得到的买点”，
+	// 方便测试和后续扩展复用；正常 API 回测不传，统一由 CollectBandFollowReplayEntries 生成。
+	ReplayEntries []BandFollowReplayEntry
 	LevelOptions LevelOptions
 }
 
@@ -262,15 +265,16 @@ func (breakoutBandFollowMethod) Run(ctx StrategyBacktestContext, raw json.RawMes
 	if err != nil {
 		return StrategyBacktestResult{}, err
 	}
-	replayEntries, replayWindows := CollectBandFollowReplayEntries(ctx.Klines, ctx.LevelOptions)
-	if len(replayWindows) == 0 && len(ctx.Windows) > 0 {
-		replayWindows = cloneWindowLevelResults(ctx.Windows)
+	replayEntries := ctx.ReplayEntries
+	replayWindows := cloneWindowLevelResults(ctx.Windows)
+	if len(replayEntries) == 0 {
+		replayEntries, replayWindows = CollectBandFollowReplayEntries(ctx.Klines, ctx.LevelOptions)
 	}
 	groups := make([]StrategyBacktestGroup, 0, len(takeProfitRates))
 	for _, takeProfitRate := range takeProfitRates {
 		groupConfig := config
 		groupConfig.TakeProfitRate = takeProfitRate
-		trades := runBandFollowTrades(replayEntries, ctx.Windows, ctx.Klines, groupConfig)
+		trades := runBandFollowTrades(replayEntries, ctx.Klines, groupConfig)
 		groups = append(groups, StrategyBacktestGroup{
 			Label:          fmt.Sprintf("止盈 %s", formatPercentValue(takeProfitRate)),
 			TakeProfitRate: takeProfitRate,
@@ -318,12 +322,9 @@ func resolveTakeProfitRates(config BreakoutBandFollowConfig) ([]float64, error) 
 	return []float64{config.TakeProfitRate}, nil
 }
 
-func runBandFollowTrades(entries []BandFollowReplayEntry, windows []WindowLevelResult, klines []model.Kline, config BreakoutBandFollowConfig) []StrategyBacktestTrade {
+func runBandFollowTrades(entries []BandFollowReplayEntry, klines []model.Kline, config BreakoutBandFollowConfig) []StrategyBacktestTrade {
 	if len(klines) == 0 {
 		return nil
-	}
-	if len(entries) == 0 {
-		return runBandFollowTradesLegacy(windows, klines, config)
 	}
 	timeIndex := make(map[string]int, len(klines))
 	for index, item := range klines {
@@ -373,90 +374,6 @@ func runBandFollowTrades(entries []BandFollowReplayEntry, windows []WindowLevelR
 			Breakout:              entry.Level.Breakout,
 		})
 		activeExitIndex = exitIndex
-	}
-	return trades
-}
-
-func runBandFollowTradesLegacy(windows []WindowLevelResult, klines []model.Kline, config BreakoutBandFollowConfig) []StrategyBacktestTrade {
-	timeIndex := make(map[string]int, len(klines))
-	for index, item := range klines {
-		timeIndex[item.OpenTime.Format(time.RFC3339Nano)] = index
-	}
-	type candidateTrade struct {
-		trade      StrategyBacktestTrade
-		entryIndex int
-		exitIndex  int
-	}
-	candidates := make([]candidateTrade, 0)
-	for windowIndex, window := range windows {
-		for levelIndex, level := range window.Levels {
-			if level.Breakout == nil || level.Breakout.BuyPoint == nil || level.Breakout.BreakoutPoint == nil {
-				continue
-			}
-			entryIndex, ok := timeIndex[level.Breakout.BuyPoint.Time.Format(time.RFC3339Nano)]
-			if !ok {
-				continue
-			}
-			outcome, exitPoint, holdingBars, grossProfitRate, exitReason, initialStopLoss, trailingStop, trailingArmed := simulateBandFollowExit(klines, entryIndex, level, config)
-			if exitPoint == nil {
-				continue
-			}
-			exitIndex, ok := timeIndex[exitPoint.Time.Format(time.RFC3339Nano)]
-			if !ok {
-				continue
-			}
-			feeUSD := config.PositionSizeUSD * config.FeeRate
-			netProfitRate := grossProfitRate - config.FeeRate
-			candidates = append(candidates, candidateTrade{
-				entryIndex: entryIndex,
-				exitIndex:  exitIndex,
-				trade: StrategyBacktestTrade{
-					WindowIndex:           windowIndex + 1,
-					LevelIndex:            levelIndex + 1,
-					LevelType:             level.Type,
-					LevelMarketCap:        level.Price,
-					LevelLowerMarketCap:   level.Lower,
-					LevelUpperMarketCap:   level.Upper,
-					BuyPoint:              *level.Breakout.BuyPoint,
-					SellPoint:             *exitPoint,
-					ProfitRate:            netProfitRate,
-					ProfitUSD:             config.PositionSizeUSD*grossProfitRate - feeUSD,
-					GrossProfitRate:       grossProfitRate,
-					GrossProfitUSD:        config.PositionSizeUSD * grossProfitRate,
-					FeeRate:               config.FeeRate,
-					FeeUSD:                feeUSD,
-					PositionSizeUSD:       config.PositionSizeUSD,
-					Outcome:               outcome,
-					ExitReason:            exitReason,
-					TakeProfitRate:        config.TakeProfitRate,
-					StopLossMarketCap:     initialStopLoss,
-					TakeProfitMarketCap:   level.Breakout.BuyPoint.Price * (1 + config.TakeProfitRate),
-					TrailingArmed:         trailingArmed,
-					TrailingStopMarketCap: trailingStop,
-					HoldingBars:           holdingBars,
-					Calculation:           level.Calculation,
-					Breakout:              level.Breakout,
-				},
-			})
-		}
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].entryIndex == candidates[j].entryIndex {
-			if candidates[i].exitIndex == candidates[j].exitIndex {
-				return candidates[i].trade.LevelIndex < candidates[j].trade.LevelIndex
-			}
-			return candidates[i].exitIndex < candidates[j].exitIndex
-		}
-		return candidates[i].entryIndex < candidates[j].entryIndex
-	})
-	trades := make([]StrategyBacktestTrade, 0, len(candidates))
-	activeExitIndex := -1
-	for _, candidate := range candidates {
-		if candidate.entryIndex <= activeExitIndex {
-			continue
-		}
-		trades = append(trades, candidate.trade)
-		activeExitIndex = candidate.exitIndex
 	}
 	return trades
 }

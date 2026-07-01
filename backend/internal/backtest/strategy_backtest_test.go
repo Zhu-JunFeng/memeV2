@@ -26,10 +26,9 @@ func TestBreakoutBandFollowMethodStopsOnNextBarUpperBandBreak(t *testing.T) {
 		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 10.9, MarketCapHigh: 11.0, MarketCapLow: 10.5, MarketCapClose: 10.7, Volume: 120},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
-		Klines: klines,
-		Windows: []WindowLevelResult{
-			{WindowIndex: 1, Levels: []model.PriceLevel{level}},
-		},
+		Klines:        klines,
+		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 2, 1, 1)},
+		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{TakeProfitRate: 0.08, PositionSizeUSD: 10, HardStopLossRate: 0.05, ActivationProfitRate: 0.05, LockedProfitRate: 0.03}))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -64,10 +63,9 @@ func TestBreakoutBandFollowMethodArmsTrailingStopAfterFivePercent(t *testing.T) 
 		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 11.3, MarketCapHigh: 11.35, MarketCapLow: 11.1, MarketCapClose: 11.15, Volume: 130},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
-		Klines: klines,
-		Windows: []WindowLevelResult{
-			{WindowIndex: 1, Levels: []model.PriceLevel{level}},
-		},
+		Klines:        klines,
+		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 1, 1, 1)},
+		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{TakeProfitRate: 0.15, PositionSizeUSD: 10, HardStopLossRate: 0.05, ActivationProfitRate: 0.05, LockedProfitRate: 0.03}))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -103,8 +101,9 @@ func TestBreakoutBandFollowMethodRaisesTrailingStopByProfitSteps(t *testing.T) {
 		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 11.42, MarketCapHigh: 11.43, MarketCapLow: 11.22, MarketCapClose: 11.25, Volume: 130},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
-		Klines:  klines,
-		Windows: []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
+		Klines:        klines,
+		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 1, 1, 1)},
+		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.15,
 		PositionSizeUSD:      10,
@@ -142,8 +141,9 @@ func TestBreakoutBandFollowMethodSupportsTakeProfitRangeAndFees(t *testing.T) {
 		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 10.8, MarketCapHigh: 12.7, MarketCapLow: 10.8, MarketCapClose: 12.2, Volume: 180},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
-		Klines:  klines,
-		Windows: []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
+		Klines:        klines,
+		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 1, 1, 1)},
+		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRateStart:  0.08,
 		TakeProfitRateEnd:    0.10,
@@ -190,8 +190,9 @@ func TestBreakoutBandFollowMethodStopsOnHardStopLoss(t *testing.T) {
 		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 10.9, MarketCapHigh: 11.0, MarketCapLow: 10.2, MarketCapClose: 10.3, Volume: 130},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
-		Klines:  klines,
-		Windows: []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
+		Klines:        klines,
+		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 1, 1, 1)},
+		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.15,
 		PositionSizeUSD:      10,
@@ -229,8 +230,9 @@ func TestBreakoutBandFollowMethodUsesBreakoutBuyPriceForPnL(t *testing.T) {
 		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 199.70, MarketCapHigh: 201, MarketCapLow: 189.72, MarketCapClose: 193, Volume: 140},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
-		Klines:  klines,
-		Windows: []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
+		Klines:        klines,
+		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 1, 1, 1)},
+		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.15,
 		PositionSizeUSD:      10,
@@ -296,6 +298,11 @@ func TestBreakoutBandFollowMethodOnlyKeepsOnePositionOpenAtATime(t *testing.T) {
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
 		Klines: klines,
+		ReplayEntries: []BandFollowReplayEntry{
+			singleReplayEntry(klines, levelA, 1, 1, 1),
+			singleReplayEntry(klines, levelB, 2, 2, 1),
+			singleReplayEntry(klines, levelC, 5, 3, 1),
+		},
 		Windows: []WindowLevelResult{
 			{WindowIndex: 1, Levels: []model.PriceLevel{levelA}},
 			{WindowIndex: 2, Levels: []model.PriceLevel{levelB}},
@@ -366,6 +373,21 @@ func mustStrategyConfig(t *testing.T, config BreakoutBandFollowConfig) json.RawM
 		t.Fatalf("marshal config: %v", err)
 	}
 	return raw
+}
+
+func singleReplayEntry(klines []model.Kline, level model.PriceLevel, entryIndex int, levelIndex int, windowIndex int) BandFollowReplayEntry {
+	signalTime := klines[entryIndex].OpenTime
+	return BandFollowReplayEntry{
+		EntryIndex: entryIndex,
+		Signal: RealtimeScenarioSignal{
+			WindowIndex: windowIndex,
+			LevelIndex:  levelIndex,
+			SignalTime:  signalTime,
+			Breakout:    level.Breakout,
+		},
+		Level:        level,
+		GlobalWindow: windowIndex,
+	}
 }
 
 func almostEqual(left float64, right float64) bool {
