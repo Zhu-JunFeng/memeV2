@@ -514,6 +514,18 @@
                 shortAddress(row.buySignalId || "-")
               }}</template>
             </el-table-column>
+            <el-table-column label="操作" width="86" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  link
+                  type="danger"
+                  :loading="deletingCandidateAddress === row.tokenAddress"
+                  @click="handleDeleteCandidate(row)"
+                >
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </el-tab-pane>
         <el-tab-pane label="Signals" name="signals">
@@ -1326,6 +1338,7 @@ const chartPanelRef = ref(null);
 const isStrategyConfigExpanded = ref(false);
 const hasAutoSelectedCandidateToken = ref(false);
 const tokenAddressTouched = ref(false);
+const deletingCandidateAddress = ref("");
 const levelView = ref("resistance");
 const addCandidateDialogVisible = ref(false);
 const addCandidateTokenAddress = ref("");
@@ -1773,6 +1786,41 @@ async function submitAddCandidate() {
   addCandidateDialogVisible.value = false;
   tradeTab.value = "candidates";
   ElMessage.success("已加入候选池");
+}
+
+async function handleDeleteCandidate(row) {
+  const tokenAddress = String(row?.tokenAddress || "").trim();
+  if (!tokenAddress) {
+    ElMessage.error("候选项目缺少 CA");
+    return;
+  }
+  const symbol = row.symbol || shortAddress(tokenAddress);
+  try {
+    await ElMessageBox.confirm(
+      `确认从 Candidates 监控池删除 ${symbol}？删除后该项目不再参与候选池监控。`,
+      "删除候选项目",
+      {
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+  deletingCandidateAddress.value = tokenAddress;
+  try {
+    await store.deleteCandidateMonitor(tokenAddress);
+    if (form.tokenAddress === tokenAddress) {
+      const nextCandidate = store.candidateMonitorItems[0];
+      form.tokenAddress = nextCandidate?.tokenAddress || "";
+      hasAutoSelectedCandidateToken.value = Boolean(nextCandidate);
+      tokenAddressTouched.value = false;
+    }
+    ElMessage.success("已从候选池删除");
+  } finally {
+    deletingCandidateAddress.value = "";
+  }
 }
 
 async function refreshTradeDashboard() {

@@ -414,7 +414,7 @@ Birdeye K 线专用实时突破信号入口。
 
 ### GET /api/signal/candidate-monitor
 
-返回当前仍在 V2 信号模块 active 监控池里的上游候选项目，供前端展示“上游发出来但尚未一定触发买卖”的项目。
+返回当前仍在 V2 信号模块 active 监控池里的上游候选项目，供前端展示“上游发出来但尚未一定触发买卖”的项目。列表按 `candidateAt` 入池时间升序返回。
 
 返回字段：
 
@@ -447,6 +447,18 @@ Birdeye K 线专用实时突破信号入口。
 返回：
 
 - `item`：新增或已存在的候选池项目。
+
+### DELETE /api/signal/candidate-monitor/:tokenAddress
+
+手动从 V2 active 监控池删除一个 CA。后端会把该候选状态标记为 `stopped`，从 Redis active 集合移除，并通过 Candidates SSE 推送 `delete`。
+
+路径参数：
+
+- `tokenAddress`：候选项目 CA。
+
+返回：
+
+- `item`：被删除的候选池项目。
 
 ### GET /api/signal/candidate-monitor/stream
 

@@ -66,6 +66,10 @@ export function addCandidateMonitor(tokenAddress) {
   return http.post("/signal/candidate-monitor", { tokenAddress });
 }
 
+export function deleteCandidateMonitor(tokenAddress) {
+  return http.delete(`/signal/candidate-monitor/${encodeURIComponent(tokenAddress)}`);
+}
+
 export function listTradeOrders(params) {
   return http.get("/trade/orders", { params });
 }

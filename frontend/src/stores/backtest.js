@@ -5,6 +5,7 @@ import {
   candidateMonitorStreamURL,
   closeTradePosition,
   createBacktest,
+  deleteCandidateMonitor,
   fetchKlines,
   fetchSupportResistance,
   fetchTradeRuntime,
@@ -215,6 +216,22 @@ export const useBacktestStore = defineStore("backtest", {
             compareCandidates,
           );
         }
+        return data.item;
+      } catch (error) {
+        this.error = error.message;
+        throw error;
+      } finally {
+        this.tradeLoading = false;
+      }
+    },
+    async deleteCandidateMonitor(tokenAddress) {
+      this.tradeLoading = true;
+      this.error = "";
+      try {
+        const data = await deleteCandidateMonitor(tokenAddress);
+        this.candidateMonitorItems = this.candidateMonitorItems.filter(
+          (item) => String(item.tokenAddress) !== String(tokenAddress),
+        );
         return data.item;
       } catch (error) {
         this.error = error.message;

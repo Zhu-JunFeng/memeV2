@@ -60,6 +60,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.POST("/gmgn/api-keys", h.createGMGNAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
 	api.POST("/signal/candidate-monitor", h.addCandidateMonitor)
+	api.DELETE("/signal/candidate-monitor/:tokenAddress", h.deleteCandidateMonitor)
 	api.GET("/signal/candidate-monitor/stream", h.streamCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
 	api.GET("/strategy-backtests/methods", h.listStrategyMethods)
@@ -342,6 +343,24 @@ func (h *Handler) addCandidateMonitor(c *gin.Context) {
 		return
 	}
 	item, err := h.candidateMonitor.AddManualCandidate(c.Request.Context(), tokenAddress)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"item": item})
+}
+
+func (h *Handler) deleteCandidateMonitor(c *gin.Context) {
+	tokenAddress := strings.TrimSpace(c.Param("tokenAddress"))
+	if tokenAddress == "" {
+		response.Fail(c, http.StatusBadRequest, "CA 不能为空")
+		return
+	}
+	if h.candidateMonitor == nil {
+		response.Fail(c, http.StatusBadRequest, "候选池监控未启用")
+		return
+	}
+	item, err := h.candidateMonitor.DeleteCandidate(c.Request.Context(), tokenAddress)
 	if err != nil {
 		h.handleError(c, err)
 		return

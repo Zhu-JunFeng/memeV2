@@ -9,6 +9,7 @@ import (
 
 	"solana-meme-backtest/backend/internal/backtest"
 	"solana-meme-backtest/backend/internal/datasource"
+	"solana-meme-backtest/backend/internal/eventbus"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -530,26 +531,68 @@ func TestCandidateMonitorListCandidates(t *testing.T) {
 		t.Fatalf("expected 2 candidates, got %d", len(items))
 	}
 	first := items[0]
-	if first.TokenAddress != "token-new" || first.UpstreamScore == nil || *first.UpstreamScore != 91.2 || first.UpstreamMarketCap == nil || *first.UpstreamMarketCap != 26000 {
+	if first.TokenAddress != "token-old" {
+		t.Fatalf("expected oldest candidate first, got %#v", first)
+	}
+	second := items[1]
+	if second.TokenAddress != "token-new" || second.UpstreamScore == nil || *second.UpstreamScore != 91.2 || second.UpstreamMarketCap == nil || *second.UpstreamMarketCap != 26000 {
 		t.Fatalf("unexpected first item: %#v", first)
 	}
-	if first.EntryTime == nil || !first.EntryTime.Equal(base.Add(2*time.Minute)) {
-		t.Fatalf("expected entry time, got %#v", first.EntryTime)
+	if second.EntryTime == nil || !second.EntryTime.Equal(base.Add(2*time.Minute)) {
+		t.Fatalf("expected entry time, got %#v", second.EntryTime)
 	}
-	if first.CurrentMarketCap == nil || *first.CurrentMarketCap != 25500 {
-		t.Fatalf("expected current market cap, got %#v", first.CurrentMarketCap)
+	if second.CurrentMarketCap == nil || *second.CurrentMarketCap != 25500 {
+		t.Fatalf("expected current market cap, got %#v", second.CurrentMarketCap)
 	}
-	if first.CurrentMarketCapAt == nil || !first.CurrentMarketCapAt.Equal(base.Add(3*time.Minute)) {
-		t.Fatalf("expected current market cap time, got %#v", first.CurrentMarketCapAt)
+	if second.CurrentMarketCapAt == nil || !second.CurrentMarketCapAt.Equal(base.Add(3*time.Minute)) {
+		t.Fatalf("expected current market cap time, got %#v", second.CurrentMarketCapAt)
 	}
-	if first.BirdeyeKlineFetchedAt == nil || !first.BirdeyeKlineFetchedAt.Equal(base.Add(3*time.Minute+10*time.Second)) {
-		t.Fatalf("expected kline fetch time, got %#v", first.BirdeyeKlineFetchedAt)
+	if second.BirdeyeKlineFetchedAt == nil || !second.BirdeyeKlineFetchedAt.Equal(base.Add(3*time.Minute+10*time.Second)) {
+		t.Fatalf("expected kline fetch time, got %#v", second.BirdeyeKlineFetchedAt)
 	}
-	if first.LevelMarketCap != 23000 || first.LevelLowerMarketCap != 22800 || first.LevelUpperMarketCap != 23200 {
-		t.Fatalf("unexpected level fields: %#v", first)
+	if second.LevelMarketCap != 23000 || second.LevelLowerMarketCap != 22800 || second.LevelUpperMarketCap != 23200 {
+		t.Fatalf("unexpected level fields: %#v", second)
 	}
-	if items[1].EntryTime != nil {
-		t.Fatalf("watching candidate should not expose empty entry time: %#v", items[1].EntryTime)
+	if items[0].EntryTime != nil {
+		t.Fatalf("watching candidate should not expose empty entry time: %#v", items[0].EntryTime)
+	}
+}
+
+func TestCandidateMonitorDeleteCandidate(t *testing.T) {
+	base := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	store := newFakeCandidateStore()
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	bus := eventbus.NewBroker()
+	events, cancel := bus.Subscribe(eventbus.TopicCandidates)
+	defer cancel()
+	monitor.eventBus = bus
+	store.states["token-a"] = candidateMonitorState{
+		TokenAddress: "token-a",
+		Symbol:       "TOK",
+		CandidateAt:  base,
+		Status:       candidateStatusWatching,
+	}
+
+	item, err := monitor.DeleteCandidate(context.Background(), "token-a")
+	if err != nil {
+		t.Fatalf("delete candidate: %v", err)
+	}
+	if item.TokenAddress != "token-a" {
+		t.Fatalf("unexpected deleted item: %#v", item)
+	}
+	if _, ok := store.states["token-a"]; ok {
+		t.Fatalf("expected candidate to be removed from active set")
+	}
+	if store.stopped["token-a"] != candidateStatusStopped {
+		t.Fatalf("expected stopped status, got %#v", store.stopped)
+	}
+	select {
+	case event := <-events:
+		if event.Type != eventbus.EventDelete || event.ID != "token-a" {
+			t.Fatalf("unexpected event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected candidate delete event")
 	}
 }
 

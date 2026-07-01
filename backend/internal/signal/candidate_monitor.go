@@ -249,9 +249,38 @@ func (m *CandidateMonitor) ListCandidates(ctx context.Context) ([]CandidateMonit
 		items = append(items, newCandidateMonitorItem(state))
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].CandidateAt.After(items[j].CandidateAt)
+		if !items[i].CandidateAt.Equal(items[j].CandidateAt) {
+			return items[i].CandidateAt.Before(items[j].CandidateAt)
+		}
+		return items[i].TokenAddress < items[j].TokenAddress
 	})
 	return items, nil
+}
+
+func (m *CandidateMonitor) DeleteCandidate(ctx context.Context, tokenAddress string) (CandidateMonitorItem, error) {
+	tokenAddress = strings.TrimSpace(tokenAddress)
+	if tokenAddress == "" {
+		return CandidateMonitorItem{}, errors.New("CA 不能为空")
+	}
+	if m == nil || m.store == nil {
+		return CandidateMonitorItem{}, errors.New("候选池监控未启用")
+	}
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return CandidateMonitorItem{}, err
+	}
+	for _, state := range states {
+		if state.TokenAddress != tokenAddress {
+			continue
+		}
+		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
+			return CandidateMonitorItem{}, err
+		}
+		m.publishCandidateDelete(state)
+		log.Printf("candidate monitor deleted candidate: ca=%s", state.TokenAddress)
+		return newCandidateMonitorItem(state), nil
+	}
+	return CandidateMonitorItem{}, errors.New("候选项目不存在或已不在监控池")
 }
 
 func (m *CandidateMonitor) AddManualCandidate(ctx context.Context, tokenAddress string) (CandidateMonitorItem, error) {
