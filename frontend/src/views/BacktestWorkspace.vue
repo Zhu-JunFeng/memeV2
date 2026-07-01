@@ -1344,7 +1344,9 @@ const selectedWindowColor = computed(
     windowOptions.value.find((option) => option.key === selectedWindowKey.value)
       ?.color || WINDOW_COLORS[0],
 );
-const selectedWindowLevels = computed(() => selectedWindow.value?.levels || []);
+const selectedWindowLevels = computed(() =>
+  dedupeLevelsByBand(selectedWindow.value?.levels || []),
+);
 const visibleWindowLevels = computed(() =>
   filterLevelsByView(selectedWindowLevels.value, levelView.value),
 );
@@ -1803,12 +1805,19 @@ function focusTrade(trade) {
   if (window) {
     selectedWindowKey.value = windowKey(window);
   }
-  const level = (window?.levels || []).find(
+  const matchedLevels = (window?.levels || []).filter(
     (item) =>
       Number(item.marketCap) === Number(trade.levelMarketCap) &&
       Number(item.lowerMarketCap) === Number(trade.levelLowerMarketCap) &&
       Number(item.upperMarketCap) === Number(trade.levelUpperMarketCap),
   );
+  const level =
+    matchedLevels.find(
+      (item) =>
+        item.breakout?.breakoutPoint?.time === trade.breakout?.breakoutPoint?.time,
+    ) ||
+    matchedLevels.find((item) => item.breakout?.breakoutPoint) ||
+    matchedLevels[0];
   if (level) {
     selectedLevelKey.value = levelKey(level);
   }
@@ -2337,6 +2346,33 @@ function dedupeScenarioWindows(windows) {
     }
   }
   return deduped;
+}
+
+function dedupeLevelsByBand(levels) {
+  const bestByKey = new Map();
+  (levels || []).forEach((level) => {
+    const key = [
+      level?.type || "",
+      Number(level?.marketCap || 0).toPrecision(12),
+      Number(level?.lowerMarketCap || 0).toPrecision(12),
+      Number(level?.upperMarketCap || 0).toPrecision(12),
+    ].join("|");
+    const current = bestByKey.get(key);
+    if (!current) {
+      bestByKey.set(key, level);
+      return;
+    }
+    const currentHasBreakout = Boolean(current?.breakout?.breakoutPoint);
+    const nextHasBreakout = Boolean(level?.breakout?.breakoutPoint);
+    if (currentHasBreakout !== nextHasBreakout) {
+      if (nextHasBreakout) bestByKey.set(key, level);
+      return;
+    }
+    if (Number(level?.score || 0) > Number(current?.score || 0)) {
+      bestByKey.set(key, level);
+    }
+  });
+  return Array.from(bestByKey.values());
 }
 
 function levelScenarioSignature(level) {

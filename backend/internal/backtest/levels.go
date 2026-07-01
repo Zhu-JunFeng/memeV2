@@ -780,7 +780,7 @@ func selectTopLevels(levels []model.PriceLevel, maxPerType int) []model.PriceLev
 }
 
 func selectTopLevelsKeepingBreakout(levels []model.PriceLevel, maxPerType int) []model.PriceLevel {
-	selected := selectTopLevels(levels, maxPerType)
+	selected := dedupeLevelsBySelectionKey(selectTopLevels(levels, maxPerType))
 	if len(levels) == 0 {
 		return selected
 	}
@@ -799,8 +799,48 @@ func selectTopLevelsKeepingBreakout(levels []model.PriceLevel, maxPerType int) [
 		selected = append(selected, level)
 		exists[key] = struct{}{}
 	}
+	selected = dedupeLevelsBySelectionKey(selected)
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Price < selected[j].Price })
 	return selected
+}
+
+// 同一价格带可能会同时出现“普通 level”和“带 breakout 的 level”两条记录。
+// 图表和回测只应该保留一条，优先保留带 breakout 的版本，其次保留分数更高的版本。
+func dedupeLevelsBySelectionKey(levels []model.PriceLevel) []model.PriceLevel {
+	if len(levels) <= 1 {
+		return levels
+	}
+	bestByKey := make(map[string]model.PriceLevel, len(levels))
+	order := make([]string, 0, len(levels))
+	for _, level := range levels {
+		key := levelBandKey(level)
+		if existing, ok := bestByKey[key]; ok {
+			if shouldReplaceLevelForSelection(existing, level) {
+				bestByKey[key] = level
+			}
+			continue
+		}
+		bestByKey[key] = level
+		order = append(order, key)
+	}
+	items := make([]model.PriceLevel, 0, len(bestByKey))
+	for _, key := range order {
+		items = append(items, bestByKey[key])
+	}
+	return items
+}
+
+func shouldReplaceLevelForSelection(current model.PriceLevel, next model.PriceLevel) bool {
+	currentHasBreakout := current.Breakout != nil && current.Breakout.BreakoutPoint != nil
+	nextHasBreakout := next.Breakout != nil && next.Breakout.BreakoutPoint != nil
+	if currentHasBreakout != nextHasBreakout {
+		return nextHasBreakout
+	}
+	return next.Score > current.Score
+}
+
+func levelBandKey(level model.PriceLevel) string {
+	return string(level.Type) + "|" + strconvFormatFloat(level.Price) + "|" + strconvFormatFloat(level.Lower) + "|" + strconvFormatFloat(level.Upper)
 }
 
 func levelSelectionKey(level model.PriceLevel) string {

@@ -541,6 +541,33 @@ func TestDedupeBreakoutsByKlineSignatureKeepsHighestScore(t *testing.T) {
 	}
 }
 
+func TestSelectTopLevelsKeepingBreakoutPrefersBreakoutVersionForSameBand(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	plain := model.PriceLevel{
+		Type:  model.LevelTypeSupport,
+		Price: 100,
+		Lower: 98,
+		Upper: 102,
+		Score: 9,
+	}
+	withBreakout := plain
+	withBreakout.Score = 7
+	withBreakout.Breakout = &model.BreakoutSetup{
+		Consolidation: &model.ConsolidationZone{
+			StartTime: base.Add(-3 * time.Minute),
+			EndTime:   base.Add(-1 * time.Minute),
+		},
+		BreakoutPoint: &model.LevelAnchorPoint{Time: base.Add(1 * time.Minute), Price: 102},
+	}
+	selected := selectTopLevelsKeepingBreakout([]model.PriceLevel{plain, withBreakout}, 8)
+	if len(selected) != 1 {
+		t.Fatalf("expected duplicate band to collapse into one level, got %#v", selected)
+	}
+	if selected[0].Breakout == nil || selected[0].Breakout.BreakoutPoint == nil {
+		t.Fatalf("expected breakout version to be kept, got %#v", selected[0])
+	}
+}
+
 func makeKlines(base time.Time, step time.Duration, interval string, prices []struct{ high, low, close float64 }) []model.Kline {
 	klines := make([]model.Kline, 0, len(prices))
 	for i, price := range prices {

@@ -162,12 +162,12 @@ func mergeWindowLevels(existing []model.PriceLevel, level model.PriceLevel) []mo
 	if len(existing) == 0 {
 		return []model.PriceLevel{level}
 	}
-	key := levelSelectionKey(level)
+	key := levelBandKey(level)
 	items := make([]model.PriceLevel, 0, len(existing)+1)
 	replaced := false
 	for _, item := range existing {
-		if levelSelectionKey(item) == key {
-			if level.Score > item.Score {
+		if levelBandKey(item) == key {
+			if shouldReplaceLevelForSelection(item, level) {
 				items = append(items, level)
 			} else {
 				items = append(items, item)
