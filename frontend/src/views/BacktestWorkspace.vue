@@ -50,7 +50,8 @@
                 default-first-option
                 clearable
                 :reserve-keyword="false"
-                placeholder="输入或选择 token CA"
+                placeholder="选择监控池 CA，或直接输入"
+                @change="markTokenAddressTouched"
               >
                 <el-option
                   v-for="option in tokenAddressOptions"
@@ -140,11 +141,29 @@
         </section>
 
         <section class="query-group query-group-strategy">
-          <div class="query-group-title strategy-group-title-row">
+          <div
+            class="query-group-title strategy-group-title-row strategy-toggle-row"
+            role="button"
+            tabindex="0"
+            :aria-expanded="isStrategyConfigExpanded"
+            @click="toggleStrategyConfig"
+            @keydown.enter.prevent="toggleStrategyConfig"
+            @keydown.space.prevent="toggleStrategyConfig"
+          >
             <span>回测方法</span>
-            <span class="strategy-group-title-note">区间止盈 + 扣费净收益</span>
+            <div class="strategy-title-actions">
+              <span class="strategy-group-title-note">区间止盈 + 扣费净收益</span>
+              <el-button
+                link
+                type="primary"
+                class="strategy-toggle-button"
+                @click.stop="toggleStrategyConfig"
+              >
+                {{ isStrategyConfigExpanded ? "收起" : "展开" }}
+              </el-button>
+            </div>
           </div>
-          <div class="strategy-config-panel">
+          <div v-show="isStrategyConfigExpanded" class="strategy-config-panel">
             <div class="strategy-topline">
               <label class="query-field strategy-method-select">
                 <span class="query-label">方法</span>
@@ -1271,7 +1290,7 @@ const PRESET_TOKEN_ADDRESSES = [
   "adTviJVnMWtw46uBo4PQWCkCHXePJwxspojMkBDpump",
 ];
 const form = reactive({
-  tokenAddress: "cY435H7F4wcZ4NgWQFM3wUjBDffdb3qdsQST2EVpump",
+  tokenAddress: "",
   interval: "1m",
   dataSource: "system",
   windowSize: 120,
@@ -1304,6 +1323,9 @@ const signalPreviewTrades = ref([]);
 const selectedChartRange = ref(null);
 const loadedRange = ref(null);
 const chartPanelRef = ref(null);
+const isStrategyConfigExpanded = ref(false);
+const hasAutoSelectedCandidateToken = ref(false);
+const tokenAddressTouched = ref(false);
 const levelView = ref("resistance");
 const addCandidateDialogVisible = ref(false);
 const addCandidateTokenAddress = ref("");
@@ -1313,12 +1335,29 @@ const levelViewOptions = [
   { label: "压力", value: "resistance" },
 ];
 
-const tokenAddressOptions = computed(() =>
-  PRESET_TOKEN_ADDRESSES.map((item, index) => ({
+const candidateTokenAddressOptions = computed(() => {
+  const seen = new Set();
+  return (store.candidateMonitorItems || [])
+    .filter((item) => {
+      const tokenAddress = String(item.tokenAddress || "").trim();
+      if (!tokenAddress || seen.has(tokenAddress)) return false;
+      seen.add(tokenAddress);
+      return true;
+    })
+    .map((item, index) => ({
+      value: item.tokenAddress,
+      label: `${index + 1}. ${item.symbol || "未命名"} · ${shortAddress(item.tokenAddress)} · 入池 ${formatShortTime(item.candidateAt)}`,
+    }));
+});
+const tokenAddressOptions = computed(() => {
+  if (candidateTokenAddressOptions.value.length) {
+    return candidateTokenAddressOptions.value;
+  }
+  return PRESET_TOKEN_ADDRESSES.map((item, index) => ({
     value: item,
-    label: `#${index + 1} · ${shortAddress(item)}`,
-  })),
-);
+    label: `预设 ${index + 1} · ${shortAddress(item)}`,
+  }));
+});
 const chartScenarioResult = computed(() => {
   if (store.strategyBacktestResult) {
     return {
@@ -1488,6 +1527,14 @@ const candidateMonitorMap = computed(() =>
   ),
 );
 
+function markTokenAddressTouched() {
+  tokenAddressTouched.value = true;
+}
+
+function toggleStrategyConfig() {
+  isStrategyConfigExpanded.value = !isStrategyConfigExpanded.value;
+}
+
 async function loadKlineLevels() {
   selectedChartRange.value = null;
   const info = resolveDefaultRange();
@@ -1596,6 +1643,7 @@ async function loadCandidateSystemKlines(row) {
     ElMessage.error("候选项目缺少 CA");
     return;
   }
+  tokenAddressTouched.value = true;
   form.tokenAddress = tokenAddress;
   const result = await store.loadRawKlines({
     source: "system",
@@ -1635,6 +1683,7 @@ async function loadPositionCandidateScenario(row) {
     ElMessage.error("该持仓缺少入池时间，无法按入池后 K 线加载");
     return;
   }
+  tokenAddressTouched.value = true;
   form.tokenAddress = tokenAddress;
   form.dataSource = "system";
   const range = {
@@ -1952,6 +2001,22 @@ watch(levelView, () => {
   const firstLevel = sortedLevels.value[0];
   selectedLevelKey.value = firstLevel ? levelKey(firstLevel) : "";
 });
+
+watch(
+  candidateTokenAddressOptions,
+  (options) => {
+    if (
+      hasAutoSelectedCandidateToken.value ||
+      tokenAddressTouched.value ||
+      !options.length
+    ) {
+      return;
+    }
+    form.tokenAddress = options[0].value;
+    hasAutoSelectedCandidateToken.value = true;
+  },
+  { immediate: true },
+);
 
 function windowKey(window) {
   return `${window.windowIndex}-${window.startTime}-${window.endTime}`;
@@ -2969,11 +3034,36 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.strategy-toggle-row {
+  cursor: pointer;
+  user-select: none;
+}
+
+.strategy-toggle-row:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+.strategy-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .strategy-group-title-note {
   color: #94a3b8;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
+}
+
+.strategy-toggle-button {
+  min-height: 0;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .strategy-config-panel {

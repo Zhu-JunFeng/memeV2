@@ -172,7 +172,10 @@ export const useBacktestStore = defineStore("backtest", {
           compareSignals,
           listLimit,
         );
-        this.candidateMonitorItems = candidates.items || [];
+        this.candidateMonitorItems = limitSortedItems(
+          candidates.items || [],
+          compareCandidates,
+        );
         this.tradeOrders = limitSortedItems(orders.items || [], compareOrders, listLimit);
         this.tradePositions = limitSortedItems(
           positions.items || [],
@@ -413,7 +416,9 @@ function timestamp(value) {
 }
 
 function compareCandidates(left, right) {
-  return timestamp(right.candidateAt) - timestamp(left.candidateAt);
+  const byCandidateAt = timestamp(left.candidateAt) - timestamp(right.candidateAt);
+  if (byCandidateAt !== 0) return byCandidateAt;
+  return String(left.tokenAddress || "").localeCompare(String(right.tokenAddress || ""));
 }
 
 function compareSignals(left, right) {
