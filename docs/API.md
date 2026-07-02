@@ -117,6 +117,11 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
 - `volumeMultiplier`：可选，放量突破倍数，默认 `1.2`。
 - `maxLevels`：可选，每类最多返回多少个强支撑/压力位，默认 `8`。
 - `minTouches`：可选，定义“多次试压”最少需要几次触及压力带，默认 `3`；每根试压阳线除满足阳线且最高点进入压力带外，还必须满足更高的成交量门槛，当前按最近 `volumeWindow` 根均量的至少 `1.35x` 与 `volumeMultiplier` 中较高者执行。
+- `minWindowRange`：可选，场景窗口最低到最高的最小振幅，默认 `0.08`，低于该值不输出压力突破信号。
+- `minLevelSpace`：可选，压力带上沿到窗口低点的最小空间，默认 `0.06`，用于过滤窄幅震荡里的假压力带。
+- `minRetestPullback`：可选，相邻试压之间最低价相对压力带下沿的最小回撤，默认 `0.03`。
+- `minRetestSpanBars`：可选，第一次试压到最后一次试压至少跨越的 K 线数量，默认 `4`。
+- `retestLookbackBars`：可选，查找试压点时向前回看的 K 线数量，默认 `720`；压力带仍由 `levelWindowSize` 控制，避免短压力带窗口裁掉更早的有效试压点。
 - `entryOffsetBars`：可选，突破后延迟多少根 K 线再买入，默认 `1`，即下一根开盘买入。
 - `takeProfitRR`：可选，止盈盈亏比，默认 `2`。
 - `maxHoldBars`：可选，买入后最多持有多少根 K 线，默认 `30`。
@@ -177,6 +182,11 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
     "levelWindowStep": 50,
     "priceTolerance": 0.005,
     "minTouches": 3,
+    "minWindowRange": 0.08,
+    "minLevelSpace": 0.06,
+    "minRetestPullback": 0.03,
+    "minRetestSpanBars": 4,
+    "retestLookbackBars": 720,
     "confirmBars": 1
   }
 }
@@ -252,6 +262,11 @@ Birdeye K 线专用实时突破信号入口。
     "levelWindowStep": 50,
     "priceTolerance": 0.005,
     "minTouches": 3,
+    "minWindowRange": 0.08,
+    "minLevelSpace": 0.06,
+    "minRetestPullback": 0.03,
+    "minRetestSpanBars": 4,
+    "retestLookbackBars": 720,
     "confirmBars": 1
   },
   "currentKline": {

@@ -12,21 +12,26 @@ import (
 const lowVolumeIncludeRatio = 0.5
 
 type LevelOptions struct {
-	PivotWindow      int
-	PriceTolerance   float64
-	BreakTolerance   float64
-	ConfirmBars      int
-	VolumeWindow     int
-	VolumeMultiplier float64
-	MaxLevels        int
-	WindowSize       int
-	WindowStep       int
-	LevelWindowSize  int
-	LevelWindowStep  int
-	MinTouches       int
-	EntryOffsetBars  int
-	TakeProfitRR     float64
-	MaxHoldBars      int
+	PivotWindow        int
+	PriceTolerance     float64
+	BreakTolerance     float64
+	ConfirmBars        int
+	VolumeWindow       int
+	VolumeMultiplier   float64
+	MaxLevels          int
+	WindowSize         int
+	WindowStep         int
+	LevelWindowSize    int
+	LevelWindowStep    int
+	MinTouches         int
+	MinWindowRange     float64
+	MinLevelSpace      float64
+	MinRetestPullback  float64
+	MinRetestSpanBars  int
+	RetestLookbackBars int
+	EntryOffsetBars    int
+	TakeProfitRR       float64
+	MaxHoldBars        int
 }
 
 type pivotPoint struct {
@@ -60,21 +65,26 @@ type indexedWindow struct {
 
 func DefaultLevelOptions() LevelOptions {
 	return LevelOptions{
-		PivotWindow:      5,
-		PriceTolerance:   0.02,
-		BreakTolerance:   0.01,
-		ConfirmBars:      2,
-		VolumeWindow:     20,
-		VolumeMultiplier: 1.2,
-		MaxLevels:        8,
-		WindowSize:       240,
-		WindowStep:       1,
-		LevelWindowSize:  240,
-		LevelWindowStep:  50,
-		MinTouches:       3,
-		EntryOffsetBars:  1,
-		TakeProfitRR:     2,
-		MaxHoldBars:      30,
+		PivotWindow:        5,
+		PriceTolerance:     0.02,
+		BreakTolerance:     0.01,
+		ConfirmBars:        2,
+		VolumeWindow:       20,
+		VolumeMultiplier:   1.2,
+		MaxLevels:          8,
+		WindowSize:         240,
+		WindowStep:         1,
+		LevelWindowSize:    240,
+		LevelWindowStep:    50,
+		MinTouches:         3,
+		MinWindowRange:     0.08,
+		MinLevelSpace:      0.06,
+		MinRetestPullback:  0.03,
+		MinRetestSpanBars:  4,
+		RetestLookbackBars: 720,
+		EntryOffsetBars:    1,
+		TakeProfitRR:       2,
+		MaxHoldBars:        30,
 	}
 }
 
@@ -125,13 +135,13 @@ func CalculateLevelScenariosByWindows(klines []model.Kline, options LevelOptions
 			if start >= end {
 				continue
 			}
-			intersection := items[start:end]
-			if len(intersection) == 0 {
+			scenarioWindow := scenarioLookbackWindow(items, start, end, options)
+			if len(scenarioWindow) == 0 {
 				continue
 			}
 			candidates := clonePriceLevels(levelSets[levelIndex])
 			// 不同场景只关心自己的结构识别，窗口切分和价位计算保持通用。
-			detector.AnnotateHistorical(candidates, intersection, items[end:], options)
+			detector.AnnotateHistorical(candidates, scenarioWindow, items[end:], options)
 			for _, level := range candidates {
 				if level.Breakout != nil && level.Breakout.Consolidation != nil && level.Breakout.BreakoutPoint != nil {
 					levels = append(levels, level)
@@ -213,12 +223,12 @@ func calculateRealtimeScenarioSignalsByWindows(klines []model.Kline, current mod
 			if start >= end {
 				continue
 			}
-			intersection := items[start:end]
-			if len(intersection) == 0 {
+			scenarioWindow := scenarioLookbackWindow(items, start, end, options)
+			if len(scenarioWindow) == 0 {
 				continue
 			}
 			candidates := clonePriceLevels(levelSets[levelIndex])
-			detected := detector.DetectRealtimeSignals(candidates, intersection, current, options)
+			detected := detector.DetectRealtimeSignals(candidates, scenarioWindow, current, options)
 			for _, signal := range detected {
 				level := candidates[signal.LevelIndex-1]
 				if level.Breakout != nil || (signal.Breakout != nil && signal.Breakout.Consolidation != nil) {
@@ -366,6 +376,36 @@ func normalizeLevelOptions(options LevelOptions, itemCount int) LevelOptions {
 	if options.MinTouches <= 0 {
 		options.MinTouches = defaults.MinTouches
 	}
+	if options.MinWindowRange < 0 {
+		options.MinWindowRange = defaults.MinWindowRange
+	}
+	if options.MinWindowRange == 0 {
+		options.MinWindowRange = defaults.MinWindowRange
+	}
+	if options.MinLevelSpace < 0 {
+		options.MinLevelSpace = defaults.MinLevelSpace
+	}
+	if options.MinLevelSpace == 0 {
+		options.MinLevelSpace = defaults.MinLevelSpace
+	}
+	if options.MinRetestPullback < 0 {
+		options.MinRetestPullback = defaults.MinRetestPullback
+	}
+	if options.MinRetestPullback == 0 {
+		options.MinRetestPullback = defaults.MinRetestPullback
+	}
+	if options.MinRetestSpanBars < 0 {
+		options.MinRetestSpanBars = defaults.MinRetestSpanBars
+	}
+	if options.MinRetestSpanBars == 0 {
+		options.MinRetestSpanBars = defaults.MinRetestSpanBars
+	}
+	if options.RetestLookbackBars < 0 {
+		options.RetestLookbackBars = defaults.RetestLookbackBars
+	}
+	if options.RetestLookbackBars == 0 {
+		options.RetestLookbackBars = defaults.RetestLookbackBars
+	}
 	if options.EntryOffsetBars < 0 {
 		options.EntryOffsetBars = defaults.EntryOffsetBars
 	}
@@ -376,6 +416,23 @@ func normalizeLevelOptions(options LevelOptions, itemCount int) LevelOptions {
 		options.MaxHoldBars = defaults.MaxHoldBars
 	}
 	return options
+}
+
+func scenarioLookbackWindow(items []model.Kline, start int, end int, options LevelOptions) []model.Kline {
+	if end <= start || end > len(items) {
+		return nil
+	}
+	lookbackStart := start
+	if options.RetestLookbackBars > 0 {
+		lookbackStart = end - options.RetestLookbackBars
+		if lookbackStart < 0 {
+			lookbackStart = 0
+		}
+		if lookbackStart > start {
+			lookbackStart = start
+		}
+	}
+	return items[lookbackStart:end]
 }
 
 func normalizedKlines(klines []model.Kline, options LevelOptions) []model.Kline {

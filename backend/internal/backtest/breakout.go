@@ -38,6 +38,9 @@ func annotateBreakoutSetups(levels []model.PriceLevel, window []model.Kline, fut
 }
 
 func findBreakoutSetup(level model.PriceLevel, window []model.Kline, future []model.Kline, options LevelOptions) *model.BreakoutSetup {
+	if !hasSufficientBreakoutContext(window, level, options) {
+		return nil
+	}
 	windowTouches := collectBullishRetestTouches(window, level, options)
 	breakoutIndex, touchGroup := findBreakoutAfterTouches(window, future, level, windowTouches, options)
 	if breakoutIndex < 0 || len(touchGroup.touches) == 0 {
@@ -115,6 +118,9 @@ func buildQualifiedTouchGroups(window []model.Kline, level model.PriceLevel, tou
 	groups := make([]breakoutTouchGroup, 0)
 	for endTouch := minTouches - 1; endTouch < len(touches); endTouch++ {
 		group := append([]indexedTouch{}, touches[endTouch-minTouches+1:endTouch+1]...)
+		if !hasSufficientRetestStructure(window, level, group, options) {
+			continue
+		}
 		consolidation := collectConsolidationZone(window, level, anchorPointsFromTouchGroup(group))
 		groups = append(groups, breakoutTouchGroup{
 			touches:        group,
@@ -215,6 +221,9 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 	if level.Calculation.ResistanceVotes == 0 || len(window) == 0 {
 		return nil
 	}
+	if !hasSufficientBreakoutContext(window, level, options) {
+		return nil
+	}
 	touches := collectBullishRetestTouches(window, level, options)
 	groups := buildQualifiedTouchGroups(window, level, touches, options)
 	if len(groups) == 0 {
@@ -254,6 +263,98 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 		Calculation:         level.Calculation,
 		Breakout:            setup,
 	}
+}
+
+func hasSufficientBreakoutContext(window []model.Kline, level model.PriceLevel, options LevelOptions) bool {
+	return hasSufficientWindowRange(window, options.MinWindowRange) &&
+		hasSufficientLevelSpace(window, level, options.MinLevelSpace)
+}
+
+func hasSufficientWindowRange(window []model.Kline, minRange float64) bool {
+	if minRange <= 0 {
+		return true
+	}
+	low, high := windowLowHigh(window)
+	if low <= 0 || high <= low {
+		return false
+	}
+	return (high-low)/low >= minRange
+}
+
+func hasSufficientLevelSpace(window []model.Kline, level model.PriceLevel, minSpace float64) bool {
+	if minSpace <= 0 {
+		return true
+	}
+	low, _ := windowLowHigh(window)
+	upper := level.Upper
+	if low <= 0 || upper <= low {
+		return false
+	}
+	return (upper-low)/low >= minSpace
+}
+
+func hasSufficientRetestStructure(window []model.Kline, level model.PriceLevel, group []indexedTouch, options LevelOptions) bool {
+	if len(group) == 0 {
+		return false
+	}
+	if options.MinRetestSpanBars > 0 {
+		span := group[len(group)-1].index - group[0].index
+		if span < options.MinRetestSpanBars {
+			return false
+		}
+	}
+	if options.MinRetestPullback <= 0 || len(group) < 2 {
+		return true
+	}
+	requiredPullbacks := len(group) - 1
+	confirmedPullbacks := 0
+	for i := 0; i < len(group)-1; i++ {
+		if hasPullbackBetweenTouches(window, level, group[i].index, group[i+1].index, options.MinRetestPullback) {
+			confirmedPullbacks++
+		}
+	}
+	return confirmedPullbacks >= requiredPullbacks
+}
+
+func hasPullbackBetweenTouches(window []model.Kline, level model.PriceLevel, left int, right int, minPullback float64) bool {
+	if minPullback <= 0 {
+		return true
+	}
+	if left < 0 {
+		left = 0
+	}
+	if right > len(window) {
+		right = len(window)
+	}
+	if right-left <= 1 || level.Lower <= 0 {
+		return false
+	}
+	threshold := level.Lower * (1 - minPullback)
+	for i := left + 1; i < right; i++ {
+		if marketLow(window[i]) <= threshold {
+			return true
+		}
+	}
+	return false
+}
+
+func windowLowHigh(window []model.Kline) (float64, float64) {
+	low := 0.0
+	high := 0.0
+	for _, item := range window {
+		itemLow := marketLow(item)
+		itemHigh := marketHigh(item)
+		if itemLow <= 0 || itemHigh <= 0 {
+			continue
+		}
+		if low == 0 || itemLow < low {
+			low = itemLow
+		}
+		if itemHigh > high {
+			high = itemHigh
+		}
+	}
+	return low, high
 }
 
 func findRealtimeBreakoutTouchGroup(series []model.Kline, level model.PriceLevel, groups []breakoutTouchGroup, currentIndex int, minTouches int, options LevelOptions) *breakoutTouchGroup {

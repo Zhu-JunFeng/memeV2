@@ -141,20 +141,25 @@ type strategyBacktestRunRequest struct {
 }
 
 type levelOptionsBody struct {
-	PivotWindow      int     `json:"pivotWindow"`
-	PriceTolerance   float64 `json:"priceTolerance"`
-	BreakTolerance   float64 `json:"breakTolerance"`
-	ConfirmBars      int     `json:"confirmBars"`
-	VolumeWindow     int     `json:"volumeWindow"`
-	VolumeMultiplier float64 `json:"volumeMultiplier"`
-	MaxLevels        int     `json:"maxLevels"`
-	WindowSize       int     `json:"windowSize"`
-	LevelWindowSize  int     `json:"levelWindowSize"`
-	LevelWindowStep  int     `json:"levelWindowStep"`
-	MinTouches       int     `json:"minTouches"`
-	EntryOffsetBars  int     `json:"entryOffsetBars"`
-	MaxHoldBars      int     `json:"maxHoldBars"`
-	TakeProfitRR     float64 `json:"takeProfitRR"`
+	PivotWindow        int     `json:"pivotWindow"`
+	PriceTolerance     float64 `json:"priceTolerance"`
+	BreakTolerance     float64 `json:"breakTolerance"`
+	ConfirmBars        int     `json:"confirmBars"`
+	VolumeWindow       int     `json:"volumeWindow"`
+	VolumeMultiplier   float64 `json:"volumeMultiplier"`
+	MaxLevels          int     `json:"maxLevels"`
+	WindowSize         int     `json:"windowSize"`
+	LevelWindowSize    int     `json:"levelWindowSize"`
+	LevelWindowStep    int     `json:"levelWindowStep"`
+	MinTouches         int     `json:"minTouches"`
+	MinWindowRange     float64 `json:"minWindowRange"`
+	MinLevelSpace      float64 `json:"minLevelSpace"`
+	MinRetestPullback  float64 `json:"minRetestPullback"`
+	MinRetestSpanBars  int     `json:"minRetestSpanBars"`
+	RetestLookbackBars int     `json:"retestLookbackBars"`
+	EntryOffsetBars    int     `json:"entryOffsetBars"`
+	MaxHoldBars        int     `json:"maxHoldBars"`
+	TakeProfitRR       float64 `json:"takeProfitRR"`
 }
 
 type realtimeSignalRequest struct {
@@ -456,6 +461,21 @@ func (h *Handler) parseLevelOptions(c *gin.Context) (backtest.LevelOptions, bool
 	if options.MinTouches, ok = parseOptionalInt(c, "minTouches", options.MinTouches); !ok {
 		return options, false
 	}
+	if options.MinWindowRange, ok = parseOptionalFloat(c, "minWindowRange", options.MinWindowRange); !ok {
+		return options, false
+	}
+	if options.MinLevelSpace, ok = parseOptionalFloat(c, "minLevelSpace", options.MinLevelSpace); !ok {
+		return options, false
+	}
+	if options.MinRetestPullback, ok = parseOptionalFloat(c, "minRetestPullback", options.MinRetestPullback); !ok {
+		return options, false
+	}
+	if options.MinRetestSpanBars, ok = parseOptionalInt(c, "minRetestSpanBars", options.MinRetestSpanBars); !ok {
+		return options, false
+	}
+	if options.RetestLookbackBars, ok = parseOptionalInt(c, "retestLookbackBars", options.RetestLookbackBars); !ok {
+		return options, false
+	}
 	if options.EntryOffsetBars, ok = parseOptionalNonNegativeInt(c, "entryOffsetBars", options.EntryOffsetBars); !ok {
 		return options, false
 	}
@@ -549,6 +569,21 @@ func applyLevelOptionsBody(options *backtest.LevelOptions, body levelOptionsBody
 	}
 	if body.MinTouches > 0 {
 		options.MinTouches = body.MinTouches
+	}
+	if body.MinWindowRange > 0 {
+		options.MinWindowRange = body.MinWindowRange
+	}
+	if body.MinLevelSpace > 0 {
+		options.MinLevelSpace = body.MinLevelSpace
+	}
+	if body.MinRetestPullback > 0 {
+		options.MinRetestPullback = body.MinRetestPullback
+	}
+	if body.MinRetestSpanBars > 0 {
+		options.MinRetestSpanBars = body.MinRetestSpanBars
+	}
+	if body.RetestLookbackBars > 0 {
+		options.RetestLookbackBars = body.RetestLookbackBars
 	}
 	if body.EntryOffsetBars >= 0 {
 		options.EntryOffsetBars = body.EntryOffsetBars

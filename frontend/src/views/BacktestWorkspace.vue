@@ -118,7 +118,7 @@
 
         <section class="query-group">
           <div class="query-group-title">突破规则</div>
-          <div class="query-group-grid query-group-grid-compact">
+          <div class="query-group-grid">
             <label class="query-field">
               <span class="query-label">n值(阳线/后续K线)</span>
               <el-input-number
@@ -135,6 +135,54 @@
                 class="query-number"
                 :min="1"
                 :step="1"
+              />
+            </label>
+            <label class="query-field">
+              <span class="query-label">最小窗口振幅(%)</span>
+              <el-input-number
+                v-model="form.minWindowRangePercent"
+                class="query-number"
+                :min="0.1"
+                :step="0.5"
+                :precision="1"
+              />
+            </label>
+            <label class="query-field">
+              <span class="query-label">最小压力空间(%)</span>
+              <el-input-number
+                v-model="form.minLevelSpacePercent"
+                class="query-number"
+                :min="0.1"
+                :step="0.5"
+                :precision="1"
+              />
+            </label>
+            <label class="query-field">
+              <span class="query-label">试压间回撤(%)</span>
+              <el-input-number
+                v-model="form.minRetestPullbackPercent"
+                class="query-number"
+                :min="0.1"
+                :step="0.5"
+                :precision="1"
+              />
+            </label>
+            <label class="query-field">
+              <span class="query-label">试压跨度K线数</span>
+              <el-input-number
+                v-model="form.minRetestSpanBars"
+                class="query-number"
+                :min="1"
+                :step="1"
+              />
+            </label>
+            <label class="query-field">
+              <span class="query-label">试压回看K线数</span>
+              <el-input-number
+                v-model="form.retestLookbackBars"
+                class="query-number"
+                :min="form.minTouches"
+                :step="20"
               />
             </label>
           </div>
@@ -1239,6 +1287,7 @@ import { useBacktestStore } from "../stores/backtest.js";
 import KlineTradeChart from "../components/KlineTradeChart.vue";
 import TokenAddressLink from "../components/TokenAddressLink.vue";
 import { copyText } from "../utils/clipboard.js";
+import { buildLevelOptions } from "../utils/levelOptions.js";
 import { formatBeijingDateTime, formatBeijingRFC3339 } from "../utils/time.js";
 
 const store = useBacktestStore();
@@ -1319,6 +1368,11 @@ const form = reactive({
   bandRangePercent: 2,
   minTouches: 3,
   confirmBars: 2,
+  minWindowRangePercent: 8,
+  minLevelSpacePercent: 6,
+  minRetestPullbackPercent: 3,
+  minRetestSpanBars: 4,
+  retestLookbackBars: 720,
 });
 const strategyForm = reactive({
   methodCode: "breakout_band_follow",
@@ -1588,12 +1642,7 @@ async function loadRangeLevels(range, sourceLabel, title) {
     interval: form.interval,
     startTime: formatBeijingRFC3339(range.start),
     endTime: formatBeijingRFC3339(range.end),
-    windowSize: form.windowSize,
-    levelWindowSize: form.levelWindowSize,
-    levelWindowStep: form.levelWindowStep,
-    priceTolerance: form.bandRangePercent / 100,
-    minTouches: form.minTouches,
-    confirmBars: form.confirmBars,
+    ...buildLevelOptions(form),
   });
   const firstWindow = dedupeScenarioWindows(result.windows || [])[0] || null;
   const initialLevel = sortLevels(
@@ -1638,14 +1687,7 @@ async function runStrategyForLoadedRange() {
     interval: form.interval,
     startTime: formatBeijingRFC3339(range.start),
     endTime: formatBeijingRFC3339(range.end),
-    levelOptions: {
-      windowSize: form.windowSize,
-      levelWindowSize: form.levelWindowSize,
-      levelWindowStep: form.levelWindowStep,
-      priceTolerance: form.bandRangePercent / 100,
-      minTouches: form.minTouches,
-      confirmBars: form.confirmBars,
-    },
+    levelOptions: buildLevelOptions(form),
   });
   signalPreviewTrades.value = [];
   const bestGroup = pickBestStrategyGroup(result.groups || []);
