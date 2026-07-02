@@ -148,6 +148,14 @@ func (e *JupiterExecutor) Execute(ctx context.Context, req ExecutionRequest) (Ex
 	return result, nil
 }
 
+func (e *JupiterExecutor) Quote(ctx context.Context, req ExecutionRequest) (QuoteResult, error) {
+	quoteResp, err := e.getQuote(ctx, req)
+	if err != nil {
+		return QuoteResult{}, err
+	}
+	return e.buildQuoteResult(ctx, req, quoteResp)
+}
+
 func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req ExecutionRequest, quoteResp jupiterQuoteResponse) (ExecutionResult, error) {
 	solPriceUSD, err := e.priceProvider.GetTokenPrice(ctx, wrappedSOLMint)
 	if err != nil {
@@ -223,6 +231,55 @@ func (e *JupiterExecutor) buildPaperExecutionResult(ctx context.Context, req Exe
 		return ExecutionResult{}, fmt.Errorf("不支持的交易方向: %s", req.Order.Side)
 	}
 	return result, nil
+}
+
+func (e *JupiterExecutor) buildQuoteResult(ctx context.Context, req ExecutionRequest, quoteResp jupiterQuoteResponse) (QuoteResult, error) {
+	solPriceUSD, err := e.priceProvider.GetTokenPrice(ctx, wrappedSOLMint)
+	if err != nil {
+		return QuoteResult{}, fmt.Errorf("获取 SOL 美元价格失败: %w", err)
+	}
+	switch req.Order.Side {
+	case model.TradeSignalTypeBuy:
+		decimals, err := e.fetchMintDecimals(ctx, req.Signal.TokenAddress)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		filledToken, err := rawAmountToDecimal(quoteResp.OutAmount, decimals)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		spentSOL, err := rawAmountToDecimal(quoteResp.InAmount, 9)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		filledQuote := spentSOL * solPriceUSD
+		result := QuoteResult{FilledToken: filledToken, FilledQuote: filledQuote}
+		if filledToken > 0 {
+			result.AvgPrice = filledQuote / filledToken
+		}
+		return result, nil
+	case model.TradeSignalTypeSell:
+		decimals, err := e.fetchMintDecimals(ctx, req.Signal.TokenAddress)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		soldToken, err := rawAmountToDecimal(quoteResp.InAmount, decimals)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		receivedSOL, err := rawAmountToDecimal(quoteResp.OutAmount, 9)
+		if err != nil {
+			return QuoteResult{}, err
+		}
+		filledQuote := receivedSOL * solPriceUSD
+		result := QuoteResult{FilledToken: soldToken, FilledQuote: filledQuote}
+		if soldToken > 0 {
+			result.AvgPrice = filledQuote / soldToken
+		}
+		return result, nil
+	default:
+		return QuoteResult{}, fmt.Errorf("不支持的交易方向: %s", req.Order.Side)
+	}
 }
 
 func (e *JupiterExecutor) getQuote(ctx context.Context, req ExecutionRequest) (jupiterQuoteResponse, error) {

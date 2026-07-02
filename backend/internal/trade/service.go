@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,8 @@ var ErrTradeDisabled = errors.New("交易模块未启用")
 var ErrTradeExecutionNotReady = errors.New("Jupiter 执行器尚未配置完成")
 var ErrInvalidTradeMode = errors.New("交易模式不合法")
 
+const maxBuyQuoteSignalSlippageRate = 0.03
+
 type Repository interface {
 	EnsureAccount(ctx context.Context, account model.TradeAccount) (model.TradeAccount, error)
 	GetAccountByName(ctx context.Context, name string) (model.TradeAccount, error)
@@ -30,6 +33,7 @@ type Repository interface {
 	SetTradeMode(ctx context.Context, mode model.TradeMode) error
 	InsertSignalIfAbsent(ctx context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error)
 	UpdateSignalStatus(ctx context.Context, signalID string, status string) error
+	UpdateSignalStatusAndReason(ctx context.Context, signalID string, status string, reason string) error
 	GetSignalByID(ctx context.Context, id string) (model.TradeSignal, error)
 	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
 	ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error)
@@ -47,6 +51,7 @@ type Repository interface {
 }
 
 type Executor interface {
+	Quote(ctx context.Context, req ExecutionRequest) (QuoteResult, error)
 	Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error)
 }
 
@@ -71,6 +76,17 @@ type ExecutionResult struct {
 	ExecutedAt       time.Time
 	Simulated        bool
 	ExecutionChannel string
+}
+
+type QuoteResult struct {
+	FilledToken float64
+	FilledQuote float64
+	AvgPrice    float64
+}
+
+type signalProcessResult struct {
+	status string
+	reason string
 }
 
 type Service struct {
@@ -261,9 +277,14 @@ func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMe
 		return signal, nil
 	}
 	s.enqueuePersistSignal(signal)
-	if err := s.handleSignal(ctx, signal); err != nil {
+	result, err := s.handleSignal(ctx, signal)
+	if err != nil {
 		s.enqueueSignalStatus(signal.ID, "failed")
 		return signal, err
+	}
+	if result.status != "" {
+		s.enqueueSignalResult(signal.ID, result.status, result.reason)
+		return signal, nil
 	}
 	s.enqueueSignalStatus(signal.ID, "executed")
 	return signal, nil
@@ -271,21 +292,21 @@ func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMe
 
 // handleSignal 只负责“信号 -> 意图 -> 执行 -> 持仓状态”这条主链路，
 // 这样 Redis 消费、HTTP 手动触发、后续定时补单都能复用同一套交易语义。
-func (s *Service) handleSignal(ctx context.Context, signal model.TradeSignal) error {
+func (s *Service) handleSignal(ctx context.Context, signal model.TradeSignal) (signalProcessResult, error) {
 	switch signal.SignalType {
 	case model.TradeSignalTypeBuy:
 		if !s.tryBeginBuy(signal.TokenAddress) {
-			return nil
+			return signalProcessResult{}, nil
 		}
 		return s.executeBuy(ctx, signal)
 	case model.TradeSignalTypeSell:
 		position, ok := s.tryBeginSell(signal.TokenAddress)
 		if !ok {
-			return nil
+			return signalProcessResult{}, nil
 		}
-		return s.executeSell(ctx, signal, position)
+		return signalProcessResult{}, s.executeSell(ctx, signal, position)
 	default:
-		return fmt.Errorf("不支持的信号类型: %s", signal.SignalType)
+		return signalProcessResult{}, fmt.Errorf("不支持的信号类型: %s", signal.SignalType)
 	}
 }
 
@@ -298,7 +319,8 @@ func (s *Service) RetryOrder(ctx context.Context, orderID string) (model.TradeOr
 	if err != nil {
 		return model.TradeOrder{}, err
 	}
-	return order, s.handleSignal(ctx, signal)
+	_, err = s.handleSignal(ctx, signal)
+	return order, err
 }
 
 func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.TradePosition, error) {
@@ -359,7 +381,7 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) error {
+func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (signalProcessResult, error) {
 	mode := signal.TradeMode
 	order := model.TradeOrder{
 		ID:                uuid.NewString(),
@@ -374,12 +396,21 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 		IntentTokenAmount: 0,
 		Status:            model.TradeOrderStatusPending,
 	}
+	blocked, reason, err := s.rejectBuyForQuoteSlippage(ctx, signal, order)
+	if err != nil {
+		s.finishInFlight(signal.TokenAddress)
+		return signalProcessResult{}, err
+	}
+	if blocked {
+		s.finishInFlight(signal.TokenAddress)
+		return signalProcessResult{status: "rejected", reason: reason}, nil
+	}
 	s.enqueueCreateOrder(order, map[string]any{"signalId": signal.SignalID})
 	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: mode})
 	if err != nil {
 		s.finishInFlight(signal.TokenAddress)
 		s.enqueueOrderFailure(order.ID, err.Error())
-		return err
+		return signalProcessResult{}, err
 	}
 	position := model.TradePosition{
 		ID:           uuid.NewString(),
@@ -413,7 +444,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) erro
 	}
 	s.markOpenPosition(position)
 	s.enqueueFilledBuy(order, position, fill, result)
-	return nil
+	return signalProcessResult{}, nil
 }
 
 func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, position model.TradePosition) error {
@@ -456,6 +487,33 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	s.finishInFlight(signal.TokenAddress)
 	s.enqueueFilledSell(position, order, fill, result)
 	return nil
+}
+
+func (s *Service) rejectBuyForQuoteSlippage(ctx context.Context, signal model.TradeSignal, order model.TradeOrder) (bool, string, error) {
+	if signal.TriggerMarketCap <= 0 || s.supplyProvider == nil {
+		return false, "", nil
+	}
+	supply, err := s.supplyProvider.GetTokenSupply(ctx, signal.TokenAddress)
+	if err != nil {
+		return false, "", err
+	}
+	if supply <= 0 {
+		return false, "", nil
+	}
+	quote, err := s.executor.Quote(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: signal.TradeMode})
+	if err != nil {
+		return false, "", err
+	}
+	if quote.AvgPrice <= 0 {
+		return false, "", nil
+	}
+	quoteMarketCap := quote.AvgPrice * supply
+	slippageRate := math.Abs(quoteMarketCap-signal.TriggerMarketCap) / signal.TriggerMarketCap
+	if slippageRate <= maxBuyQuoteSignalSlippageRate {
+		return false, "", nil
+	}
+	reason := fmt.Sprintf("不买入：滑点为 %.2f%% 大于 %.2f%%", slippageRate*100, maxBuyQuoteSignalSlippageRate*100)
+	return true, reason, nil
 }
 
 func (s *Service) loadRuntimePositions(ctx context.Context) error {
@@ -548,6 +606,19 @@ func (s *Service) enqueueSignalStatus(signalID string, status string) {
 		name: "update_signal_status",
 		run: func(ctx context.Context) error {
 			if err := s.repo.UpdateSignalStatus(ctx, signalID, status); err != nil {
+				return err
+			}
+			s.publishSignal(ctx, signalID)
+			return nil
+		},
+	})
+}
+
+func (s *Service) enqueueSignalResult(signalID string, status string, reason string) {
+	s.persister.Enqueue(persistTask{
+		name: "update_signal_result",
+		run: func(ctx context.Context) error {
+			if err := s.repo.UpdateSignalStatusAndReason(ctx, signalID, status, reason); err != nil {
 				return err
 			}
 			s.publishSignal(ctx, signalID)

@@ -415,6 +415,7 @@ Birdeye K 线专用实时突破信号入口。
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并按固定 `trade.buy_amount_sol` 数量直接向 Jupiter 下单
+- 交易模块接收到买入信号后，会先用同一笔买入数量调用 Jupiter `quote`，按报价均价乘当前 token supply 折算报价市值；如果该报价市值与信号 `triggerMarketCap` 的绝对滑点大于 `3%`，不再创建买入订单，Signals 的状态记为 `rejected`，原因显示 `不买入：滑点为 x% 大于 3.00%`
 - GMGN、Jupiter 的外网请求固定通过服务器本机 clash 代理 `http://127.0.0.1:7890`；DexScreener 仅在 `trade.price_source=dexscreener` 时使用。
 
 ### GET /api/signal/candidate-monitor

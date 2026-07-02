@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,17 @@ func (r *fakeRepo) InsertSignalIfAbsent(_ context.Context, signal model.TradeSig
 }
 func (r *fakeRepo) UpdateSignalStatus(_ context.Context, signalID string, status string) error {
 	r.updatedSignal[signalID] = status
+	return nil
+}
+func (r *fakeRepo) UpdateSignalStatusAndReason(_ context.Context, signalID string, status string, reason string) error {
+	r.updatedSignal[signalID] = status
+	for index := range r.signals {
+		if r.signals[index].ID == signalID {
+			r.signals[index].ConsumeStatus = status
+			r.signals[index].Reason = reason
+			return nil
+		}
+	}
 	return nil
 }
 func (r *fakeRepo) GetSignalByID(_ context.Context, id string) (model.TradeSignal, error) {
@@ -160,11 +172,21 @@ func (r *fakeRepo) UpdatePositionMark(context.Context, string, float64, float64,
 }
 
 type fakeExecutor struct {
-	lastRequest ExecutionRequest
+	lastRequest  ExecutionRequest
+	quoteResult  QuoteResult
+	quoteCalls   int
+	executeCalls int
+}
+
+func (f *fakeExecutor) Quote(_ context.Context, req ExecutionRequest) (QuoteResult, error) {
+	f.lastRequest = req
+	f.quoteCalls++
+	return f.quoteResult, nil
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, req ExecutionRequest) (ExecutionResult, error) {
 	f.lastRequest = req
+	f.executeCalls++
 	result := ExecutionResult{
 		TxHash:           "tx-1",
 		FilledToken:      100,
@@ -181,6 +203,14 @@ func (f *fakeExecutor) Execute(_ context.Context, req ExecutionRequest) (Executi
 		result.ExecutionChannel = string(model.TradeExecutionChannelJupiterPaper)
 	}
 	return result, nil
+}
+
+type fakeSupplyProvider struct {
+	supply float64
+}
+
+func (p fakeSupplyProvider) GetTokenSupply(context.Context, string) (float64, error) {
+	return p.supply, nil
 }
 
 func testTradeConfig(t *testing.T) config.TradeConfig {
@@ -278,6 +308,40 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected duplicate open-position buy to be skipped, orders=%d", len(repo.orders))
+	}
+}
+
+func TestProcessBuySignalRejectsWhenJupiterQuoteSlippageTooLarge(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{quoteResult: QuoteResult{AvgPrice: 0.104}}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithSupplyProvider(fakeSupplyProvider{supply: 1000}))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID:         "sig-slippage",
+		SignalType:       model.TradeSignalTypeBuy,
+		StrategyCode:     "pressure_breakout",
+		TokenAddress:     "token-a",
+		Interval:         "1m",
+		SignalTime:       time.Now().UTC(),
+		TriggerMarketCap: 100,
+		Reason:           "buy",
+	})
+	if err != nil {
+		t.Fatalf("process signal: %v", err)
+	}
+	waitFor(t, func() bool {
+		return len(repo.signals) == 1 && repo.signals[0].ConsumeStatus == "rejected"
+	})
+	if len(repo.orders) != 0 {
+		t.Fatalf("expected no order when quote slippage is too large, got %d", len(repo.orders))
+	}
+	if executor.executeCalls != 0 {
+		t.Fatalf("expected executor Execute not to be called, got %d", executor.executeCalls)
+	}
+	if !strings.Contains(repo.signals[0].Reason, "滑点为 4.00% 大于 3.00%") {
+		t.Fatalf("expected slippage rejection reason, got %q", repo.signals[0].Reason)
 	}
 }
 

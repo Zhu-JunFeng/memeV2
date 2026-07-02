@@ -135,6 +135,15 @@ func (r *TradeRepository) UpdateSignalStatus(ctx context.Context, signalID strin
 	return err
 }
 
+func (r *TradeRepository) UpdateSignalStatusAndReason(ctx context.Context, signalID string, status string, reason string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE trade_signals
+		SET consume_status = $2,
+			reason = $3
+		WHERE id = $1`, signalID, status, reason)
+	return err
+}
+
 func (r *TradeRepository) GetSignalByExternalID(ctx context.Context, externalID string) (model.TradeSignal, error) {
 	return r.getSignal(ctx, `WHERE signal_id = $1`, externalID)
 }
