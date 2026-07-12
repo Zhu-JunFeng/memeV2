@@ -138,7 +138,7 @@ func Load() (Config, error) {
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
 	v.SetDefault("xxyy.enabled", false)
 	v.SetDefault("xxyy.base_url", "https://www.xxyy.io")
-	v.SetDefault("xxyy.poll_interval_seconds", 60)
+	v.SetDefault("xxyy.poll_interval_seconds", 30)
 	v.SetDefault("telegram.enabled", false)
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
 	v.SetDefault("redis.consumer_channel", "")

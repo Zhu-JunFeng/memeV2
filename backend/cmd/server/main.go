@@ -16,6 +16,7 @@ import (
 	"solana-meme-backtest/backend/internal/datasource"
 	"solana-meme-backtest/backend/internal/db"
 	"solana-meme-backtest/backend/internal/eventbus"
+	"solana-meme-backtest/backend/internal/integration/gmgnprojects"
 	"solana-meme-backtest/backend/internal/integration/telegram"
 	"solana-meme-backtest/backend/internal/integration/xxyy"
 	"solana-meme-backtest/backend/internal/logger"
@@ -103,7 +104,12 @@ func main() {
 		candidateMonitor.Start(context.Background())
 		if cfg.XXYY.Enabled {
 			xxyyClient := xxyy.NewClient(cfg.XXYY.BaseURL, cfg.XXYY.APIKey, nil)
-			signal.NewXXYYCandidatePoller(xxyyClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(context.Background())
+			gmgnProjectKey := cfg.GMGN.APIKey
+			if strings.TrimSpace(gmgnProjectKey) == "" && len(cfg.GMGN.APIKeys) > 0 {
+				gmgnProjectKey = cfg.GMGN.APIKeys[0]
+			}
+			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, gmgnProjectKey, nil)
+			signal.NewProjectCandidatePoller(xxyyClient, gmgnProjectClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(context.Background())
 		}
 	}
 	priceSource, err := selectPriceSource(cfg.Trade.PriceSource, datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL), gmgnSource)

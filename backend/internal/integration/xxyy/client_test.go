@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func TestFetchNewProjects(t *testing.T) {
+func TestFetchCompletedProjects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/trade/open/api/feed/NEW" || r.URL.Query().Get("chain") != "sol" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/trade/open/api/feed/COMPLETED" || r.URL.Query().Get("chain") != "sol" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
@@ -27,7 +27,7 @@ func TestFetchNewProjects(t *testing.T) {
 	}))
 	defer server.Close()
 
-	items, err := NewClient(server.URL, "test-key", server.Client()).FetchNewProjects(context.Background())
+	items, err := NewClient(server.URL, "test-key", server.Client()).FetchCompletedProjects(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

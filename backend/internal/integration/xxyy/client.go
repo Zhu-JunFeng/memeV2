@@ -10,14 +10,13 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"solana-meme-backtest/backend/internal/integration/project"
 )
 
 const BaseURL = "https://www.xxyy.io"
 
-type FeedItem struct {
-	TokenAddress string
-	KOL          float64
-}
+type FeedItem = project.Item
 
 type Client struct {
 	httpClient *http.Client
@@ -39,8 +38,8 @@ func NewClient(baseURL, apiKey string, httpClient *http.Client) *Client {
 	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey}
 }
 
-func (c *Client) FetchNewProjects(ctx context.Context) ([]FeedItem, error) {
-	endpoint := c.baseURL + "/api/trade/open/api/feed/" + url.PathEscape("NEW") + "?chain=sol"
+func (c *Client) FetchCompletedProjects(ctx context.Context) ([]project.Item, error) {
+	endpoint := c.baseURL + "/api/trade/open/api/feed/" + url.PathEscape("COMPLETED") + "?chain=sol"
 	body := map[string]any{
 		"dex":         []string{"pump", "pumpmayhem", "bonk", "launchlab", "mdbcbags"},
 		"mc":          "15000,",
@@ -87,10 +86,10 @@ func (c *Client) FetchNewProjects(ctx context.Context) ([]FeedItem, error) {
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return nil, fmt.Errorf("解析 XXYY feed 失败: %w", err)
 	}
-	items := make([]FeedItem, 0, len(response.Data.Items))
+	items := make([]project.Item, 0, len(response.Data.Items))
 	for _, item := range response.Data.Items {
 		address := firstString(item["ca"], item["tokenAddress"])
-		items = append(items, FeedItem{TokenAddress: address, KOL: firstFloat(item["kolNum"], item["kol"])})
+		items = append(items, project.Item{TokenAddress: address, KOL: firstFloat(item["kolNum"], item["kol"])})
 	}
 	return items, nil
 }
