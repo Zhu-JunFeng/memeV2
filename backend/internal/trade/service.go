@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"sync"
@@ -53,6 +54,11 @@ type Repository interface {
 type Executor interface {
 	Quote(ctx context.Context, req ExecutionRequest) (QuoteResult, error)
 	Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error)
+}
+
+type Notifier interface {
+	NotifySignal(ctx context.Context, signal model.TradeSignal) error
+	NotifyTrade(ctx context.Context, fill model.TradeFill) error
 }
 
 type ExecutionRequest struct {
@@ -105,6 +111,7 @@ type Service struct {
 	openPositions  map[string]model.TradePosition
 	inFlight       map[string]model.TradeSignalType
 	seenSignals    map[string]struct{}
+	notifier       Notifier
 }
 
 type ServiceOption func(*Service)
@@ -118,6 +125,12 @@ func WithEventBus(bus *eventbus.Broker) ServiceOption {
 func WithSupplyProvider(provider datasource.TokenSupplyProvider) ServiceOption {
 	return func(s *Service) {
 		s.supplyProvider = provider
+	}
+}
+
+func WithNotifier(notifier Notifier) ServiceOption {
+	return func(s *Service) {
+		s.notifier = notifier
 	}
 }
 
@@ -342,12 +355,15 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 		Reason:           "手动平仓",
 		ConsumeStatus:    "manual",
 	}
-	storedSignal, _, err := s.repo.InsertSignalIfAbsent(ctx, signal)
+	storedSignal, created, err := s.repo.InsertSignalIfAbsent(ctx, signal)
 	if err != nil {
 		return model.TradePosition{}, err
 	}
 	signal = storedSignal
 	s.publishSignal(ctx, signal.ID)
+	if created {
+		s.notifySignal(ctx, signal)
+	}
 	return position, s.executeSell(ctx, signal, position)
 }
 
@@ -591,11 +607,14 @@ func (s *Service) enqueuePersistSignal(signal model.TradeSignal) {
 	s.persister.Enqueue(persistTask{
 		name: "insert_signal",
 		run: func(ctx context.Context) error {
-			stored, _, err := s.repo.InsertSignalIfAbsent(ctx, signal)
+			stored, created, err := s.repo.InsertSignalIfAbsent(ctx, signal)
 			if err != nil {
 				return err
 			}
 			s.publishSignal(ctx, stored.ID)
+			if created {
+				s.notifySignal(ctx, stored)
+			}
 			return nil
 		},
 	})
@@ -672,6 +691,7 @@ func (s *Service) enqueueFilledBuy(order model.TradeOrder, position model.TradeP
 			}
 			s.publishOrder(ctx, order.ID)
 			s.publishPosition(ctx, position.ID)
+			s.notifyTrade(ctx, fill)
 			return nil
 		},
 	})
@@ -689,9 +709,28 @@ func (s *Service) enqueueFilledSell(position model.TradePosition, order model.Tr
 			}
 			s.publishOrder(ctx, order.ID)
 			s.publishPosition(ctx, position.ID)
+			s.notifyTrade(ctx, fill)
 			return nil
 		},
 	})
+}
+
+func (s *Service) notifySignal(ctx context.Context, signal model.TradeSignal) {
+	if s.notifier == nil {
+		return
+	}
+	if err := s.notifier.NotifySignal(ctx, signal); err != nil {
+		log.Printf("trade signal notification failed: signal_id=%s err=%v", signal.SignalID, err)
+	}
+}
+
+func (s *Service) notifyTrade(ctx context.Context, fill model.TradeFill) {
+	if s.notifier == nil {
+		return
+	}
+	if err := s.notifier.NotifyTrade(ctx, fill); err != nil {
+		log.Printf("trade fill notification failed: order_id=%s err=%v", fill.OrderID, err)
+	}
 }
 
 func (s *Service) publishSignal(ctx context.Context, id string) {

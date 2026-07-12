@@ -35,6 +35,11 @@ xxyy:
   api_key: "" # 对应环境变量 BACKTEST_XXYY_API_KEY；不要提交真实 Key
   poll_interval_seconds: 60 # 每分钟拉取 NEW 项目，程序仅接收 kol >= 3 的 CA
 
+telegram:
+  enabled: false
+  bot_token: "" # 对应环境变量 BACKTEST_TELEGRAM_BOT_TOKEN；不要提交真实 Token
+  chat_id: "" # 对应环境变量 BACKTEST_TELEGRAM_CHAT_ID
+
 redis:
   enabled: false
   addr: "127.0.0.1:6379"

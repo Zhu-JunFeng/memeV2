@@ -14,6 +14,7 @@ type Config struct {
 	GMGN       GMGNConfig
 	Bitquery   BitqueryConfig
 	XXYY       XXYYConfig
+	Telegram   TelegramConfig
 	Redis      RedisConfig
 	Signal     SignalConfig
 	Trade      TradeConfig
@@ -61,6 +62,12 @@ type XXYYConfig struct {
 	BaseURL             string
 	APIKey              string
 	PollIntervalSeconds int
+}
+
+type TelegramConfig struct {
+	Enabled  bool
+	BotToken string
+	ChatID   string
 }
 
 type RedisConfig struct {
@@ -132,6 +139,7 @@ func Load() (Config, error) {
 	v.SetDefault("xxyy.enabled", false)
 	v.SetDefault("xxyy.base_url", "https://www.xxyy.io")
 	v.SetDefault("xxyy.poll_interval_seconds", 60)
+	v.SetDefault("telegram.enabled", false)
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
 	v.SetDefault("redis.consumer_channel", "")
 	v.SetDefault("redis.db", 0)
@@ -199,6 +207,11 @@ func Load() (Config, error) {
 			BaseURL:             v.GetString("xxyy.base_url"),
 			APIKey:              v.GetString("xxyy.api_key"),
 			PollIntervalSeconds: v.GetInt("xxyy.poll_interval_seconds"),
+		},
+		Telegram: TelegramConfig{
+			Enabled:  v.GetBool("telegram.enabled"),
+			BotToken: v.GetString("telegram.bot_token"),
+			ChatID:   v.GetString("telegram.chat_id"),
 		},
 		Redis: RedisConfig{
 			Addr:            v.GetString("redis.addr"),

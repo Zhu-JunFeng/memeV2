@@ -16,6 +16,7 @@ import (
 	"solana-meme-backtest/backend/internal/datasource"
 	"solana-meme-backtest/backend/internal/db"
 	"solana-meme-backtest/backend/internal/eventbus"
+	"solana-meme-backtest/backend/internal/integration/telegram"
 	"solana-meme-backtest/backend/internal/integration/xxyy"
 	"solana-meme-backtest/backend/internal/logger"
 	"solana-meme-backtest/backend/internal/repository"
@@ -113,7 +114,11 @@ func main() {
 	if err != nil && cfg.Trade.Enabled {
 		logg.Fatal().Err(err).Msg("初始化 Jupiter 执行器失败")
 	}
-	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource, trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider))
+	var tradeNotifier trade.Notifier
+	if cfg.Telegram.Enabled {
+		tradeNotifier = telegram.NewClient(cfg.Telegram.BotToken, cfg.Telegram.ChatID, nil)
+	}
+	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource, trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider), trade.WithNotifier(tradeNotifier))
 	if err != nil {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
 	}

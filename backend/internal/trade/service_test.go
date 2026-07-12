@@ -209,6 +209,21 @@ type fakeSupplyProvider struct {
 	supply float64
 }
 
+type fakeNotifier struct {
+	signals []model.TradeSignal
+	fills   []model.TradeFill
+}
+
+func (n *fakeNotifier) NotifySignal(_ context.Context, signal model.TradeSignal) error {
+	n.signals = append(n.signals, signal)
+	return nil
+}
+
+func (n *fakeNotifier) NotifyTrade(_ context.Context, fill model.TradeFill) error {
+	n.fills = append(n.fills, fill)
+	return nil
+}
+
 func (p fakeSupplyProvider) GetTokenSupply(context.Context, string) (float64, error) {
 	return p.supply, nil
 }
@@ -308,6 +323,24 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected duplicate open-position buy to be skipped, orders=%d", len(repo.orders))
+	}
+}
+
+func TestProcessSignalNotifiesSignalAndFilledTrade(t *testing.T) {
+	repo := newFakeRepo()
+	notifier := &fakeNotifier{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil, WithNotifier(notifier))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sig-notify", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout", TokenAddress: "token-notify", SignalTime: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("process signal: %v", err)
+	}
+	waitFor(t, func() bool { return len(notifier.signals) == 1 && len(notifier.fills) == 1 })
+	if notifier.signals[0].TradeMode != model.TradeModePaper || notifier.fills[0].TradeMode != model.TradeModePaper {
+		t.Fatalf("expected paper notifications, got signal=%s fill=%s", notifier.signals[0].TradeMode, notifier.fills[0].TradeMode)
 	}
 }
 
