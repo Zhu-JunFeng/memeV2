@@ -215,6 +215,9 @@ func detectRealtimeBreakoutSignal(level model.PriceLevel, window []model.Kline, 
 	if level.Calculation.ResistanceVotes == 0 || len(window) == 0 {
 		return nil
 	}
+	if marketClose(current) <= breakoutThreshold(level, options.BreakTolerance) {
+		return nil
+	}
 	touches := collectBullishRetestTouches(window, level, options)
 	groups := buildQualifiedTouchGroups(window, level, touches, options)
 	if len(groups) == 0 {
@@ -352,55 +355,26 @@ func findBreakoutIndex(future []model.Kline, level model.PriceLevel, options Lev
 }
 
 func findBreakoutIndexInRange(klines []model.Kline, level model.PriceLevel, start int, end int, options LevelOptions) int {
-	confirmBars := options.ConfirmBars
-	if confirmBars <= 0 {
-		confirmBars = 1
-	}
 	if start < 0 {
 		start = 0
 	}
 	if end > len(klines) {
 		end = len(klines)
 	}
-	for i := start; i+confirmBars <= end; i++ {
-		breakoutIndex := i + confirmBars - 1
-		if isBreakoutConfirmedAtIndex(klines, level, breakoutIndex, options) {
-			return breakoutIndex
+	for i := start; i < end; i++ {
+		if isIntrabarBreakoutAtIndex(klines, level, i, options) {
+			return i
 		}
 	}
 	return -1
 }
 
-func isBreakoutConfirmedAtIndex(klines []model.Kline, level model.PriceLevel, breakoutIndex int, options LevelOptions) bool {
+func isIntrabarBreakoutAtIndex(klines []model.Kline, level model.PriceLevel, breakoutIndex int, options LevelOptions) bool {
 	if breakoutIndex < 0 || breakoutIndex >= len(klines) {
 		return false
 	}
 	threshold := breakoutThreshold(level, options.BreakTolerance)
-	confirmBars := options.ConfirmBars
-	if confirmBars <= 0 {
-		confirmBars = 1
-	}
-	start := breakoutIndex - confirmBars + 1
-	if start < 0 {
-		return false
-	}
-	for i := start; i <= breakoutIndex; i++ {
-		if marketClose(klines[i]) <= threshold {
-			return false
-		}
-	}
-	return volumeBreakoutConfirmed(klines, breakoutIndex, options)
-}
-
-func volumeBreakoutConfirmed(klines []model.Kline, index int, options LevelOptions) bool {
-	if index < 0 || index >= len(klines) {
-		return false
-	}
-	avgVolume := averageRecentVolume(klines[:index+1], options.VolumeWindow)
-	if avgVolume <= 0 {
-		return true
-	}
-	return klines[index].Volume >= avgVolume*options.VolumeMultiplier
+	return marketHigh(klines[breakoutIndex]) > threshold
 }
 
 func simulateBreakoutExit(klines []model.Kline, entryIndex int, stopLoss float64, takeProfit float64, maxHoldBars int) (model.BreakoutOutcome, *model.LevelAnchorPoint, int, float64) {
@@ -438,7 +412,7 @@ func breakoutReason(level model.PriceLevel, breakoutBar model.Kline, options Lev
 	if minTouches <= 0 {
 		minTouches = 3
 	}
-	return fmt.Sprintf("%d 根阳线最高价触及压力带后，后续 %d 根 K 线内在 %s 收盘到 %.2f，站上突破阈值 %.2f", minTouches, minTouches, breakoutBar.OpenTime.Format("2006-01-02T15:04:05Z07:00"), marketClose(breakoutBar), threshold)
+	return fmt.Sprintf("%d 根阳线最高价触及压力带后，后续 %d 根 K 线内在 %s 盘中最高到 %.2f，首次突破压力带阈值 %.2f", minTouches, minTouches, breakoutBar.OpenTime.Format("2006-01-02T15:04:05Z07:00"), marketHigh(breakoutBar), threshold)
 }
 
 func breakoutThreshold(level model.PriceLevel, breakTolerance float64) float64 {

@@ -205,7 +205,7 @@ func TestCalculateSupportResistanceByWindowsSkipsLowVolumeRetestTouches(t *testi
 	}
 }
 
-func TestCalculateSupportResistanceByWindowsSkipsScenarioWithMultipleUpperPierces(t *testing.T) {
+func TestCalculateSupportResistanceByWindowsUsesFirstIntrabarThresholdBreakout(t *testing.T) {
 	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
 	klines := []model.Kline{
 		{Interval: "1m", OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 9.4, MarketCapLow: 8.8, MarketCapClose: 9.1, Volume: 100},
@@ -237,12 +237,19 @@ func TestCalculateSupportResistanceByWindowsSkipsScenarioWithMultipleUpperPierce
 		8,
 		1,
 	)
+	found := false
 	for _, result := range results {
 		for _, level := range result.Levels {
-			if level.Breakout != nil {
-				t.Fatalf("expected scenario with two upper-band pierces to be skipped, got %#v", level.Breakout)
+			if level.Breakout != nil && level.Breakout.BuyPoint != nil {
+				found = true
+				if !level.Breakout.BuyPoint.Time.Equal(base.Add(7 * time.Minute)) {
+					t.Fatalf("expected first intrabar threshold breakout at minute 7, got %#v", level.Breakout)
+				}
 			}
 		}
+	}
+	if !found {
+		t.Fatal("expected first intrabar threshold breakout to produce a setup")
 	}
 }
 
@@ -514,6 +521,63 @@ func TestDetectRealtimeBreakoutSignalUsesFirstBreakoutAfterThirdTouch(t *testing
 	}
 	if signal.Breakout.BuyPoint == nil || !signal.Breakout.BuyPoint.Time.Equal(current.OpenTime) {
 		t.Fatalf("expected current bar to be buy point, got %#v", signal.Breakout.BuyPoint)
+	}
+}
+
+func TestDetectRealtimeBreakoutSignalTriggersOnFirstIntrabarBreakout(t *testing.T) {
+	base := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	window := []model.Kline{
+		{OpenTime: base, MarketCapOpen: 9.0, MarketCapHigh: 9.2, MarketCapLow: 8.8, MarketCapClose: 9.0, Volume: 100},
+		{OpenTime: base.Add(time.Minute), MarketCapOpen: 9.0, MarketCapHigh: 10.4, MarketCapLow: 8.9, MarketCapClose: 9.8, Volume: 220},
+		{OpenTime: base.Add(2 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{OpenTime: base.Add(3 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{OpenTime: base.Add(4 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		{OpenTime: base.Add(5 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+	}
+	current := model.Kline{
+		OpenTime:       base.Add(6 * time.Minute),
+		MarketCapOpen:  9.9,
+		MarketCapHigh:  10.8,
+		MarketCapLow:   9.8,
+		MarketCapClose: 10.6,
+		Volume:         80,
+	}
+	level := model.PriceLevel{
+		Type:        model.LevelTypeResistance,
+		Price:       10.3,
+		Lower:       10.25,
+		Upper:       10.5,
+		Calculation: model.LevelCalculation{ResistanceVotes: 3},
+	}
+	signal := detectRealtimeBreakoutSignal(level, window, current, LevelOptions{
+		BreakTolerance:   0.01,
+		ConfirmBars:      2,
+		VolumeWindow:     3,
+		VolumeMultiplier: 1.2,
+		MinTouches:       3,
+	})
+	if signal == nil {
+		t.Fatal("expected the first intrabar high above the pressure band to trigger")
+	}
+	if signal.Breakout == nil || signal.Breakout.BreakoutPoint == nil || !signal.Breakout.BreakoutPoint.Time.Equal(current.OpenTime) {
+		t.Fatalf("expected current intrabar breakout as buy point, got %#v", signal.Breakout)
+	}
+}
+
+func TestDetectRealtimeBreakoutSignalRejectsRetracedIntrabarPierce(t *testing.T) {
+	base := time.Date(2026, 7, 12, 1, 0, 0, 0, time.UTC)
+	window := []model.Kline{
+		{OpenTime: base, MarketCapOpen: 9.0, MarketCapHigh: 10.4, MarketCapLow: 8.9, MarketCapClose: 9.8, Volume: 220},
+		{OpenTime: base.Add(time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
+		{OpenTime: base.Add(2 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
+		{OpenTime: base.Add(3 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 9.95, MarketCapLow: 9.4, MarketCapClose: 9.5, Volume: 140},
+		{OpenTime: base.Add(4 * time.Minute), MarketCapOpen: 9.5, MarketCapHigh: 10.5, MarketCapLow: 9.45, MarketCapClose: 9.9, Volume: 280},
+	}
+	current := model.Kline{OpenTime: base.Add(5 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 10.8, MarketCapLow: 9.8, MarketCapClose: 10.2, Volume: 320}
+	level := model.PriceLevel{Type: model.LevelTypeResistance, Price: 10.3, Lower: 10.25, Upper: 10.5, Calculation: model.LevelCalculation{ResistanceVotes: 3}}
+	signal := detectRealtimeBreakoutSignal(level, window, current, LevelOptions{BreakTolerance: 0.01, VolumeWindow: 3, VolumeMultiplier: 1.2, MinTouches: 3})
+	if signal != nil {
+		t.Fatalf("expected a retraced intrabar pierce to wait until realtime market cap breaks the threshold again, got %#v", signal)
 	}
 }
 
