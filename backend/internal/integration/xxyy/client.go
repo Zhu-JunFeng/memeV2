@@ -54,7 +54,7 @@ func (c *Client) FetchNewProjects(ctx context.Context) ([]FeedItem, error) {
 		"bundleHp":    ",35",
 		"newWalletHp": ",35",
 		"snipers":     ",35",
-		"kol":         "5,",
+		"kol":         "3,",
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

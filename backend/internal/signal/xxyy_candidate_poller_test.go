@@ -15,13 +15,13 @@ func (f fakeXXYYFeed) FetchNewProjects(context.Context) ([]xxyy.FeedItem, error)
 	return f.items, nil
 }
 
-func TestXXYYCandidatePollerOnlyAddsUniqueKOLAtLeastFive(t *testing.T) {
+func TestXXYYCandidatePollerOnlyAddsUniqueKOLAtLeastThree(t *testing.T) {
 	store := &fakeCandidateStore{states: map[string]candidateMonitorState{}}
 	monitor := &CandidateMonitor{cfg: CandidateMonitorConfig{Enabled: true}, store: store}
 	poller := NewXXYYCandidatePoller(fakeXXYYFeed{items: []xxyy.FeedItem{
 		{TokenAddress: "ca-six", KOL: 6},
-		{TokenAddress: "ca-five", KOL: 5},
-		{TokenAddress: "ca-low", KOL: 4},
+		{TokenAddress: "ca-three", KOL: 3},
+		{TokenAddress: "ca-low", KOL: 2},
 		{TokenAddress: "ca-six", KOL: 8},
 		{TokenAddress: "", KOL: 9},
 	}}, monitor, 0)
@@ -34,7 +34,7 @@ func TestXXYYCandidatePollerOnlyAddsUniqueKOLAtLeastFive(t *testing.T) {
 	if _, ok := store.states["ca-six"]; !ok {
 		t.Fatalf("expected ca-six, got %#v", store.states)
 	}
-	if _, ok := store.states["ca-five"]; !ok {
-		t.Fatalf("expected ca-five, got %#v", store.states)
+	if _, ok := store.states["ca-three"]; !ok {
+		t.Fatalf("expected ca-three, got %#v", store.states)
 	}
 }

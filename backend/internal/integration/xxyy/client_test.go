@@ -20,10 +20,10 @@ func TestFetchNewProjects(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if got := body["kol"]; got != "5," {
+		if got := body["kol"]; got != "3," {
 			t.Fatalf("unexpected kol filter: %v", got)
 		}
-		_, _ = w.Write([]byte(`{"data":{"items":[{"ca":"ca-1","kolNum":6},{"tokenAddress":"ca-2","kol":"5"}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"items":[{"ca":"ca-1","kolNum":3},{"tokenAddress":"ca-2","kol":"2"}]}}`))
 	}))
 	defer server.Close()
 
@@ -31,7 +31,7 @@ func TestFetchNewProjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 || items[0].TokenAddress != "ca-1" || items[0].KOL != 6 || items[1].TokenAddress != "ca-2" || items[1].KOL != 5 {
+	if len(items) != 2 || items[0].TokenAddress != "ca-1" || items[0].KOL != 3 || items[1].TokenAddress != "ca-2" || items[1].KOL != 2 {
 		t.Fatalf("unexpected items: %#v", items)
 	}
 }

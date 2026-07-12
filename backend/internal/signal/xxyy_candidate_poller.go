@@ -55,7 +55,7 @@ func (p *XXYYCandidatePoller) pollOnce(ctx context.Context) {
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		address := strings.TrimSpace(item.TokenAddress)
-		if item.KOL < 5 || address == "" {
+		if item.KOL < 3 || address == "" {
 			continue
 		}
 		if _, exists := seen[address]; exists {
