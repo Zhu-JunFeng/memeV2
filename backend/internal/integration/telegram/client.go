@@ -50,11 +50,13 @@ func (c *Client) NotifySignal(ctx context.Context, signal model.TradeSignal) err
 
 func (c *Client) NotifyTrade(ctx context.Context, fill model.TradeFill) error {
 	text := fmt.Sprintf(
-		"%s %s交易成功\n模式：%s\nCA：%s\n成交市值：%s\n交易哈希：%s\n时间：%s",
+		"%s %s交易成功\n模式：%s\nCA：%s",
 		directionIcon(fill.Side), directionText(fill.Side), modeText(fill.TradeMode), fill.TokenAddress,
-		formatMarketCap(fill.TriggerMarketCap), fill.TxHash,
-		fill.ExecutedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
 	)
+	if fill.ExecutedMarketCap > 0 {
+		text += "\n成交市值：" + formatMarketCap(fill.ExecutedMarketCap)
+	}
+	text += fmt.Sprintf("\n交易哈希：%s\n时间：%s", fill.TxHash, fill.ExecutedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"))
 	if fill.Side == model.TradeSignalTypeSell {
 		text += "\n盈亏（U）：" + formatPercent(fill.ProfitRate)
 	}

@@ -457,7 +457,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 		FeeAmount:         result.FeeAmount,
 		FeeAsset:          defaultString(result.FeeAsset, "USD"),
 		ExecutedAt:        result.ExecutedAt,
-		TriggerMarketCap:  signal.TriggerMarketCap,
+		ExecutedMarketCap: s.executedMarketCap(ctx, signal.TokenAddress, result.AvgPrice),
 	}
 	s.markOpenPosition(position)
 	s.enqueueFilledBuy(order, position, fill, result)
@@ -500,7 +500,7 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 		FeeAmount:         result.FeeAmount,
 		FeeAsset:          defaultString(result.FeeAsset, "USD"),
 		ExecutedAt:        result.ExecutedAt,
-		TriggerMarketCap:  signal.TriggerMarketCap,
+		ExecutedMarketCap: s.executedMarketCap(ctx, signal.TokenAddress, result.AvgPrice),
 	}
 	if position.CostAmount > 0 {
 		fill.ProfitRate = (result.FilledQuote - result.FeeAmount - position.CostAmount) / position.CostAmount
@@ -785,6 +785,17 @@ func (s *Service) enrichExecutedMarketCaps(ctx context.Context, item *model.Trad
 	if item.ExitExecutedPrice > 0 {
 		item.ExitMarketCap = item.ExitExecutedPrice * supply
 	}
+}
+
+func (s *Service) executedMarketCap(ctx context.Context, tokenAddress string, executedPrice float64) float64 {
+	if executedPrice <= 0 || s.supplyProvider == nil {
+		return 0
+	}
+	supply, err := s.supplyProvider.GetTokenSupply(ctx, tokenAddress)
+	if err != nil || supply <= 0 {
+		return 0
+	}
+	return executedPrice * supply
 }
 
 func defaultString(value string, fallback string) string {

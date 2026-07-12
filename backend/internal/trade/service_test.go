@@ -329,7 +329,7 @@ func TestProcessSignalCreatesSinglePosition(t *testing.T) {
 func TestProcessSignalNotifiesSignalAndFilledTrade(t *testing.T) {
 	repo := newFakeRepo()
 	notifier := &fakeNotifier{}
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil, WithNotifier(notifier))
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil, WithNotifier(notifier), WithSupplyProvider(fakeSupplyProvider{supply: 1000}))
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -341,6 +341,9 @@ func TestProcessSignalNotifiesSignalAndFilledTrade(t *testing.T) {
 	waitFor(t, func() bool { return len(notifier.signals) == 1 && len(notifier.fills) == 1 })
 	if notifier.signals[0].TradeMode != model.TradeModePaper || notifier.fills[0].TradeMode != model.TradeModePaper {
 		t.Fatalf("expected paper notifications, got signal=%s fill=%s", notifier.signals[0].TradeMode, notifier.fills[0].TradeMode)
+	}
+	if notifier.fills[0].ExecutedMarketCap != 100 {
+		t.Fatalf("expected executed market cap from avg price 0.1 * supply 1000, got %f", notifier.fills[0].ExecutedMarketCap)
 	}
 }
 

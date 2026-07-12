@@ -59,7 +59,7 @@ func TestNotifyTradeIncludesPaperMode(t *testing.T) {
 
 	client := NewClient("test-token", "chat-1", server.Client())
 	client.baseURL = server.URL
-	if err := client.NotifyTrade(context.Background(), model.TradeFill{TradeMode: model.TradeModePaper, Side: model.TradeSignalTypeBuy, TokenAddress: "ca-2", TriggerMarketCap: 123456.78}); err != nil {
+	if err := client.NotifyTrade(context.Background(), model.TradeFill{TradeMode: model.TradeModePaper, Side: model.TradeSignalTypeBuy, TokenAddress: "ca-2", ExecutedMarketCap: 123456.78}); err != nil {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{"买入交易成功", "模式：模拟盘", "CA：ca-2", "成交市值：123.46k"} {
@@ -83,7 +83,7 @@ func TestNotifySellTradeIncludesProfitRateBasedOnQuoteValue(t *testing.T) {
 	client.baseURL = server.URL
 	if err := client.NotifyTrade(context.Background(), model.TradeFill{
 		TradeMode: model.TradeModePaper, Side: model.TradeSignalTypeSell, TokenAddress: "ca-3",
-		TriggerMarketCap: 98765.43, ProfitRate: 0.0526,
+		ExecutedMarketCap: 98765.43, ProfitRate: 0.0526,
 	}); err != nil {
 		t.Fatal(err)
 	}
