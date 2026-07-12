@@ -40,12 +40,15 @@ func TestPaperModeUsesQuoteWithoutWalletBalance(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/swap/v1/quote") {
+			if got := r.URL.Query().Get("slippageBps"); got != "200" {
+				t.Fatalf("expected 2%% quote slippage protection, got %q", got)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"inputMint":      wrappedSOLMint,
 				"inAmount":       "50000000",
 				"outputMint":     "token-a",
 				"outAmount":      "2500000",
-				"slippageBps":    500,
+				"slippageBps":    200,
 				"priceImpactPct": "0.01",
 			})
 			return
@@ -69,7 +72,7 @@ func TestPaperModeUsesQuoteWithoutWalletBalance(t *testing.T) {
 		cfg: config.TradeConfig{
 			Jupiter:      config.JupiterConfig{BaseURL: server.URL, APIKey: "test"},
 			SolanaRPCURL: server.URL,
-			SlippageBPS:  500,
+			SlippageBPS:  200,
 		},
 		client:        server.Client(),
 		priceProvider: stubPriceProvider{prices: map[string]float64{wrappedSOLMint: 200}},
@@ -84,7 +87,7 @@ func TestPaperModeUsesQuoteWithoutWalletBalance(t *testing.T) {
 		},
 		Order: model.TradeOrder{Side: model.TradeSignalTypeBuy},
 		Config: config.TradeConfig{
-			SlippageBPS: 500,
+			SlippageBPS: 200,
 		},
 		Mode: model.TradeModePaper,
 	}

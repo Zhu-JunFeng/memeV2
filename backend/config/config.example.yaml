@@ -66,7 +66,7 @@ trade:
   wallet_address: ""
   wallet_private_key: ""
   buy_amount_sol: 0.1
-  slippage_bps: 500
+  slippage_bps: 200 # 实盘固定 2% 滑点保护；传入 /order 后会覆盖 RTSE
   priority_fee: 0
   solana_rpc_url: "https://api.mainnet-beta.solana.com"
   price_source: "gmgn" # gmgn / dexscreener；持仓估值默认使用 GMGN 最新 1m K 线 close

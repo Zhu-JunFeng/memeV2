@@ -157,7 +157,7 @@ func Load() (Config, error) {
 	v.SetDefault("trade.price_sync_interval", 15)
 	v.SetDefault("trade.account_name", "default")
 	v.SetDefault("trade.buy_amount_sol", 0.1)
-	v.SetDefault("trade.slippage_bps", 500)
+	v.SetDefault("trade.slippage_bps", 200)
 	v.SetDefault("trade.priority_fee", 0)
 	v.SetDefault("trade.solana_rpc_url", "https://api.mainnet-beta.solana.com")
 	v.SetDefault("trade.price_source", "gmgn")

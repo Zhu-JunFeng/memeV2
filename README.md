@@ -194,6 +194,7 @@ npm run build
 - `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
 - `trade.buy_amount_sol`：固定买入数量，默认 `0.1 SOL`
+- `trade.slippage_bps`：实盘 `/order` 固定滑点保护，默认 `200`（2%）；模拟盘直接采用 Jupiter 即时报价，不额外扣减滑点
 - `trade.wallet_private_key`：Solana 钱包私钥（base58）
 - `trade.solana_rpc_url`：用于查询 token decimals 的 Solana RPC
 - `trade.price_source`：持仓估值和 SOL/USD 折算价格源，支持 `gmgn` / `dexscreener`，当前默认 `gmgn`
