@@ -8,11 +8,12 @@ import (
 	"solana-meme-backtest/backend/internal/model"
 )
 
-func TestBreakoutBandFollowMethodStopsOnNextBarUpperBandBreak(t *testing.T) {
+func TestBreakoutBandFollowMethodStopsOnNextBarCloseBelowLowerBand(t *testing.T) {
 	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	level := model.PriceLevel{
 		Type:  model.LevelTypeResistance,
 		Price: 10.5,
+		Lower: 10.4,
 		Upper: 10.6,
 		Breakout: &model.BreakoutSetup{
 			BreakoutPoint: &model.LevelAnchorPoint{Time: base.Add(2 * time.Minute), Price: 10.9},
@@ -23,7 +24,7 @@ func TestBreakoutBandFollowMethodStopsOnNextBarUpperBandBreak(t *testing.T) {
 		{OpenTime: base.Add(0 * time.Minute), CloseTime: base.Add(1 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 10.3, MarketCapLow: 9.7, MarketCapClose: 10.0, Volume: 100},
 		{OpenTime: base.Add(1 * time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10.0, MarketCapHigh: 10.5, MarketCapLow: 9.9, MarketCapClose: 10.2, Volume: 110},
 		{OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 10.2, MarketCapHigh: 11.1, MarketCapLow: 10.2, MarketCapClose: 10.9, Volume: 150},
-		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 10.9, MarketCapHigh: 11.0, MarketCapLow: 10.5, MarketCapClose: 10.7, Volume: 120},
+		{OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 10.9, MarketCapHigh: 11.0, MarketCapLow: 10.2, MarketCapClose: 10.3, Volume: 120},
 	}
 	result, err := newBreakoutBandFollowMethod().Run(StrategyBacktestContext{
 		Klines:        klines,
@@ -40,8 +41,8 @@ func TestBreakoutBandFollowMethodStopsOnNextBarUpperBandBreak(t *testing.T) {
 	if trade.Outcome != model.BreakoutOutcomeStopLoss {
 		t.Fatalf("expected stop loss, got %#v", trade)
 	}
-	if trade.SellPoint.Price != 10.6 {
-		t.Fatalf("expected sell at upper band 10.6, got %#v", trade.SellPoint)
+	if trade.SellPoint.Price != 10.3 {
+		t.Fatalf("expected sell at next-bar close 10.3, got %#v", trade.SellPoint)
 	}
 }
 

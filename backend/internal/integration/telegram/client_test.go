@@ -31,10 +31,16 @@ func TestNotifySignalIncludesModeAndDirection(t *testing.T) {
 
 	client := NewClient("test-token", "chat-1", server.Client())
 	client.baseURL = server.URL
-	if err := client.NotifySignal(context.Background(), model.TradeSignal{TradeMode: model.TradeModeLive, SignalType: model.TradeSignalTypeSell, TokenAddress: "ca-1"}); err != nil {
+	if err := client.NotifySignal(context.Background(), model.TradeSignal{
+		TradeMode:        model.TradeModeLive,
+		SignalType:       model.TradeSignalTypeSell,
+		TokenAddress:     "ca-1",
+		TriggerMarketCap: 265234.41,
+		RawPayloadJSON:   json.RawMessage(`{"metadata":{"profitRate":-0.0314}}`),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"卖出信号", "模式：实盘", "CA：ca-1"} {
+	for _, expected := range []string{"卖出信号", "模式：实盘", "CA：ca-1", "触发市值：265.23k", "盈亏（U）：-3.14%"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message %q missing %q", message, expected)
 		}
@@ -53,10 +59,35 @@ func TestNotifyTradeIncludesPaperMode(t *testing.T) {
 
 	client := NewClient("test-token", "chat-1", server.Client())
 	client.baseURL = server.URL
-	if err := client.NotifyTrade(context.Background(), model.TradeFill{TradeMode: model.TradeModePaper, Side: model.TradeSignalTypeBuy, TokenAddress: "ca-2"}); err != nil {
+	if err := client.NotifyTrade(context.Background(), model.TradeFill{TradeMode: model.TradeModePaper, Side: model.TradeSignalTypeBuy, TokenAddress: "ca-2", TriggerMarketCap: 123456.78}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"买入交易成功", "模式：模拟盘", "CA：ca-2"} {
+	for _, expected := range []string{"买入交易成功", "模式：模拟盘", "CA：ca-2", "成交市值：123.46k"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("message %q missing %q", message, expected)
+		}
+	}
+}
+
+func TestNotifySellTradeIncludesProfitRateBasedOnQuoteValue(t *testing.T) {
+	var message string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		message = payload["text"]
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token", "chat-1", server.Client())
+	client.baseURL = server.URL
+	if err := client.NotifyTrade(context.Background(), model.TradeFill{
+		TradeMode: model.TradeModePaper, Side: model.TradeSignalTypeSell, TokenAddress: "ca-3",
+		TriggerMarketCap: 98765.43, ProfitRate: 0.0526,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"卖出交易成功", "成交市值：98.77k", "盈亏（U）：+5.26%"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message %q missing %q", message, expected)
 		}

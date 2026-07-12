@@ -218,7 +218,7 @@ func (breakoutBandFollowMethod) Metadata() StrategyMethodMetadata {
 	return StrategyMethodMetadata{
 		Code:        "breakout_band_follow",
 		Name:        "突破压力带买入",
-		Description: "在突破压力带的 K 线收盘买入；下一根 K 线跌回压力带上沿止损；同时支持可配置硬止损；盈利到 5% 后把止损抬到 +3%，之后每多盈利 1% 锁盈同步上移 1%；止盈比例可配置。",
+		Description: "盘中首次突破压力带时买入；下一根 K 线收盘低于压力带下沿止损；同时支持可配置硬止损；盈利到 5% 后把止损抬到 +3%，之后每多盈利 1% 锁盈同步上移 1%；止盈比例可配置。",
 		Params: []StrategyParamDefinition{
 			{Key: "takeProfitRate", Label: "止盈比例", Description: "达到该收益率后止盈卖出，例如 0.08 表示 8%。", Type: "number", Required: true, DefaultValue: 0.08, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
 			{Key: "takeProfitRateStart", Label: "止盈起点", Description: "启用区间回测时的起始止盈比例。", Type: "number", Required: false, DefaultValue: 0.08, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
@@ -399,7 +399,7 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 	if entryPrice <= 0 {
 		return model.BreakoutOutcomePending, nil, 0, 0, "", 0, 0, false
 	}
-	initialStopLoss := level.Upper
+	initialStopLoss := level.Lower
 	if initialStopLoss <= 0 {
 		initialStopLoss = level.Price
 	}
@@ -411,9 +411,10 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 	for i := entryIndex + 1; i < len(klines); i++ {
 		item := klines[i]
 		holdingBars := i - entryIndex
-		if i == entryIndex+1 && marketLow(item) <= initialStopLoss {
-			exit := anchorFromKline(item, initialStopLoss)
-			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, initialStopLoss), "买入后下一根 K 线跌破压力带上沿，按上沿止损卖出", initialStopLoss, trailingStopPrice, trailingArmed
+		if i == entryIndex+1 && marketClose(item) < initialStopLoss {
+			exitPrice := marketClose(item)
+			exit := anchorFromKline(item, exitPrice)
+			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, exitPrice), "买入后下一根 K 线收盘市值低于压力带下沿，按收盘市值卖出", initialStopLoss, trailingStopPrice, trailingArmed
 		}
 		if marketLow(item) <= hardStopLossPrice {
 			exit := anchorFromKline(item, hardStopLossPrice)
@@ -439,6 +440,10 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 }
 
 func EvaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level model.PriceLevel, config BreakoutBandFollowConfig) BandFollowExitDecision {
+	return evaluateRealtimeBandFollowExit(klines, entryIndex, level, config, time.Time{})
+}
+
+func evaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level model.PriceLevel, config BreakoutBandFollowConfig, now time.Time) BandFollowExitDecision {
 	if entryIndex < 0 || entryIndex >= len(klines) {
 		return BandFollowExitDecision{}
 	}
@@ -455,7 +460,7 @@ func EvaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level 
 	if entryPrice <= 0 {
 		return BandFollowExitDecision{}
 	}
-	initialStopLoss := level.Upper
+	initialStopLoss := level.Lower
 	if initialStopLoss <= 0 {
 		initialStopLoss = level.Price
 	}
@@ -467,9 +472,11 @@ func EvaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level 
 	for i := entryIndex + 1; i < len(klines); i++ {
 		item := klines[i]
 		holdingBars := i - entryIndex
-		if i == entryIndex+1 && marketLow(item) <= initialStopLoss {
-			exit := anchorFromKline(item, initialStopLoss)
-			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, initialStopLoss), Reason: "买入后下一根 K 线跌破压力带上沿，按上沿止损卖出", InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
+		nextBarClosed := now.IsZero() || (!item.CloseTime.IsZero() && !item.CloseTime.After(now))
+		if i == entryIndex+1 && nextBarClosed && marketClose(item) < initialStopLoss {
+			exitPrice := marketClose(item)
+			exit := anchorFromKline(item, exitPrice)
+			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, exitPrice), Reason: "买入后下一根 K 线收盘市值低于压力带下沿，按收盘市值卖出", InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
 		}
 		if marketLow(item) <= hardStopLossPrice {
 			exit := anchorFromKline(item, hardStopLossPrice)

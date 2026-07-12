@@ -100,6 +100,8 @@ type TradeFill struct {
 	FeeAsset          string          `json:"feeAsset"`
 	ExecutedAt        time.Time       `json:"executedAt"`
 	CreatedAt         time.Time       `json:"createdAt"`
+	TriggerMarketCap  float64         `json:"-"`
+	ProfitRate        float64         `json:"-"`
 }
 
 type TradePosition struct {

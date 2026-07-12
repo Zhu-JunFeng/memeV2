@@ -38,19 +38,47 @@ func (c *Client) NotifySignal(ctx context.Context, signal model.TradeSignal) err
 	text := fmt.Sprintf(
 		"%s %s信号\n模式：%s\nCA：%s\n策略：%s\n触发市值：%s\n原因：%s\n时间：%s",
 		directionIcon(signal.SignalType), directionText(signal.SignalType), modeText(signal.TradeMode), signal.TokenAddress,
-		signal.StrategyCode, formatNumber(signal.TriggerMarketCap), signal.Reason, signal.SignalTime.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
+		signal.StrategyCode, formatMarketCap(signal.TriggerMarketCap), signal.Reason, signal.SignalTime.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
 	)
+	if signal.SignalType == model.TradeSignalTypeSell {
+		if profitRate, ok := signalProfitRate(signal.RawPayloadJSON); ok {
+			text += "\n盈亏（U）：" + formatPercent(profitRate)
+		}
+	}
 	return c.sendMessage(ctx, text)
 }
 
 func (c *Client) NotifyTrade(ctx context.Context, fill model.TradeFill) error {
 	text := fmt.Sprintf(
-		"%s %s交易成功\n模式：%s\nCA：%s\n成交数量：%s\n成交金额：%s\n成交均价：%s\n交易哈希：%s\n时间：%s",
+		"%s %s交易成功\n模式：%s\nCA：%s\n成交市值：%s\n交易哈希：%s\n时间：%s",
 		directionIcon(fill.Side), directionText(fill.Side), modeText(fill.TradeMode), fill.TokenAddress,
-		formatNumber(fill.FilledTokenAmount), formatNumber(fill.FilledQuoteAmount), formatNumber(fill.AvgPrice), fill.TxHash,
+		formatMarketCap(fill.TriggerMarketCap), fill.TxHash,
 		fill.ExecutedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
 	)
+	if fill.Side == model.TradeSignalTypeSell {
+		text += "\n盈亏（U）：" + formatPercent(fill.ProfitRate)
+	}
 	return c.sendMessage(ctx, text)
+}
+
+func signalProfitRate(raw json.RawMessage) (float64, bool) {
+	var payload struct {
+		Metadata struct {
+			ProfitRate *float64 `json:"profitRate"`
+		} `json:"metadata"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil || payload.Metadata.ProfitRate == nil {
+		return 0, false
+	}
+	return *payload.Metadata.ProfitRate, true
+}
+
+func formatMarketCap(value float64) string {
+	return fmt.Sprintf("%.2fk", value/1000)
+}
+
+func formatPercent(value float64) string {
+	return fmt.Sprintf("%+.2f%%", value*100)
 }
 
 func (c *Client) sendMessage(ctx context.Context, text string) error {

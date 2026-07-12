@@ -72,7 +72,7 @@ func detectLiveBreakoutSignalsByWindowsVariant(klines []model.Kline, options Lev
 }
 
 // EvaluateClosedBarBandFollowExit 只基于已收盘 K 线复用回测退出规则，
-// 保证“下一根跌破上沿止损 / 硬止损 / 动态止损 / 止盈”在实时监控和回测里一致。
+// 保证“下一根收盘低于下沿止损 / 硬止损 / 动态止损 / 止盈”在实时监控和回测里一致。
 func EvaluateClosedBarBandFollowExit(klines []model.Kline, now time.Time, entryTime time.Time, level model.PriceLevel, config BreakoutBandFollowConfig) (BandFollowExitDecision, model.Kline, bool) {
 	closed := ClosedKlinesAt(klines, now)
 	if len(closed) == 0 {
@@ -94,6 +94,10 @@ func EvaluateClosedBarBandFollowExit(klines []model.Kline, now time.Time, entryT
 // EvaluateLiveBandFollowExit 用“已确认历史 + 当前实时 bar”执行实时卖出判定，
 // 一旦当前轮询价格已经触发止盈/止损，就在本轮直接发出卖出信号。
 func EvaluateLiveBandFollowExit(klines []model.Kline, entryBarTime time.Time, level model.PriceLevel, config BreakoutBandFollowConfig) (BandFollowExitDecision, model.Kline, bool) {
+	return EvaluateLiveBandFollowExitAt(klines, entryBarTime, level, config, time.Now().UTC())
+}
+
+func EvaluateLiveBandFollowExitAt(klines []model.Kline, entryBarTime time.Time, level model.PriceLevel, config BreakoutBandFollowConfig, now time.Time) (BandFollowExitDecision, model.Kline, bool) {
 	if len(klines) == 0 {
 		return BandFollowExitDecision{}, model.Kline{}, false
 	}
@@ -107,5 +111,5 @@ func EvaluateLiveBandFollowExit(klines []model.Kline, entryBarTime time.Time, le
 	if entryIndex < 0 {
 		return BandFollowExitDecision{}, model.Kline{}, false
 	}
-	return EvaluateRealtimeBandFollowExit(klines, entryIndex, level, config), klines[len(klines)-1], true
+	return evaluateRealtimeBandFollowExit(klines, entryIndex, level, config, now), klines[len(klines)-1], true
 }

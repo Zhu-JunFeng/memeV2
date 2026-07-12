@@ -457,6 +457,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 		FeeAmount:         result.FeeAmount,
 		FeeAsset:          defaultString(result.FeeAsset, "USD"),
 		ExecutedAt:        result.ExecutedAt,
+		TriggerMarketCap:  signal.TriggerMarketCap,
 	}
 	s.markOpenPosition(position)
 	s.enqueueFilledBuy(order, position, fill, result)
@@ -499,6 +500,10 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 		FeeAmount:         result.FeeAmount,
 		FeeAsset:          defaultString(result.FeeAsset, "USD"),
 		ExecutedAt:        result.ExecutedAt,
+		TriggerMarketCap:  signal.TriggerMarketCap,
+	}
+	if position.CostAmount > 0 {
+		fill.ProfitRate = (result.FilledQuote - result.FeeAmount - position.CostAmount) / position.CostAmount
 	}
 	s.finishInFlight(signal.TokenAddress)
 	s.enqueueFilledSell(position, order, fill, result)

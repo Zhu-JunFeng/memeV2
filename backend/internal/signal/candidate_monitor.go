@@ -905,7 +905,7 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, klines []
 }
 
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
-	decision, decisionBar, ok := backtest.EvaluateLiveBandFollowExit(klines, state.EntryTime, state.Level, m.cfg.BreakoutFollow)
+	decision, decisionBar, ok := backtest.EvaluateLiveBandFollowExitAt(klines, state.EntryTime, state.Level, m.cfg.BreakoutFollow, m.now())
 	if !ok {
 		return m.saveState(ctx, state)
 	}
@@ -959,13 +959,17 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 		return model.TradeSignalMessage{}, errors.New("sell decision bar missing realtime market cap")
 	}
 	realtimeExitPoint := model.LevelAnchorPoint{Time: decisionBar.OpenTime, Price: realtimeMarketCap, Volume: decisionBar.Volume}
+	realtimeProfitRate := 0.0
+	if state.EntryPrice > 0 {
+		realtimeProfitRate = (realtimeMarketCap - state.EntryPrice) / state.EntryPrice
+	}
 	metadata, err := json.Marshal(map[string]any{
 		"source":            "candidate_monitor",
 		"upstream":          json.RawMessage(state.RawPayload),
 		"buySignalId":       state.BuySignalID,
 		"outcome":           decision.Outcome,
 		"holdingBars":       decision.HoldingBars,
-		"profitRate":        decision.ProfitRate,
+		"profitRate":        realtimeProfitRate,
 		"exitPoint":         realtimeExitPoint,
 		"strategyExitPoint": decision.ExitPoint,
 		"strategyCode":      strategyBreakoutFollow,
