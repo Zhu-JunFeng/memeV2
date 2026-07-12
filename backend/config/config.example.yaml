@@ -53,7 +53,7 @@ signal:
   candidate_channel: "solana_scalper:candidate_pool"
   poll_interval_seconds: 2
   interval: "1m"
-  min_market_cap: 0 # GMGN 返回价格不是市值，默认不按市值阈值移除；切到 Birdeye 市值源时可设 15000
+  min_market_cap: 10000 # 入池后实时市值低于 10k 时移出候选池
   lookback_bars: 120
   redis_key_prefix: "solana_meme_v2:signal_monitor"
 

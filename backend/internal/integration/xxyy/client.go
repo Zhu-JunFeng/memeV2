@@ -89,7 +89,12 @@ func (c *Client) FetchCompletedProjects(ctx context.Context) ([]project.Item, er
 	items := make([]project.Item, 0, len(response.Data.Items))
 	for _, item := range response.Data.Items {
 		address := firstString(item["ca"], item["tokenAddress"])
-		items = append(items, project.Item{TokenAddress: address, KOL: firstFloat(item["kolNum"], item["kol"])})
+		items = append(items, project.Item{
+			TokenAddress: address,
+			Symbol:       firstString(item["symbol"], item["name"]),
+			KOL:          firstFloat(item["kolNum"], item["kol"]),
+			MarketCap:    firstFloat(item["marketCapUSD"], item["marketCap"]),
+		})
 	}
 	return items, nil
 }

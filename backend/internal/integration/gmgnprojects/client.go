@@ -84,7 +84,9 @@ func (c *Client) FetchCompletedProjects(ctx context.Context) ([]project.Item, er
 		Data    struct {
 			Completed []struct {
 				Address       string  `json:"address"`
+				Symbol        string  `json:"symbol"`
 				RenownedCount float64 `json:"renowned_count"`
+				MarketCap     float64 `json:"usd_market_cap"`
 			} `json:"completed"`
 		} `json:"data"`
 	}
@@ -96,9 +98,52 @@ func (c *Client) FetchCompletedProjects(ctx context.Context) ([]project.Item, er
 	}
 	items := make([]project.Item, 0, len(response.Data.Completed))
 	for _, item := range response.Data.Completed {
-		items = append(items, project.Item{TokenAddress: strings.TrimSpace(item.Address), KOL: item.RenownedCount})
+		items = append(items, project.Item{TokenAddress: strings.TrimSpace(item.Address), Symbol: strings.TrimSpace(item.Symbol), KOL: item.RenownedCount, MarketCap: item.MarketCap})
 	}
 	return items, nil
+}
+
+func (c *Client) FetchTokenSymbol(ctx context.Context, tokenAddress string) (string, error) {
+	u, err := url.Parse(c.baseURL + "/v1/token/info")
+	if err != nil {
+		return "", err
+	}
+	query := u.Query()
+	query.Set("chain", "sol")
+	query.Set("address", strings.TrimSpace(tokenAddress))
+	query.Set("timestamp", fmt.Sprint(time.Now().Unix()))
+	query.Set("client_id", uuid.NewString())
+	u.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-APIKEY", c.apiKey)
+	req.Header.Set("User-Agent", "solana-meme-backtest-v2/1.0")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var response struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Symbol string `json:"symbol"`
+			Name   string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || response.Code != 0 {
+		return "", fmt.Errorf("GMGN token info 返回异常: status=%d code=%d message=%s", resp.StatusCode, response.Code, response.Message)
+	}
+	symbol := strings.TrimSpace(response.Data.Symbol)
+	if symbol == "" {
+		symbol = strings.TrimSpace(response.Data.Name)
+	}
+	return symbol, nil
 }
 
 func truncate(value string, limit int) string {

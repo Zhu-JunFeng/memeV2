@@ -31,7 +31,12 @@ const (
 	monitorIncrementalBars  = 5
 	candidatePollWorkers    = 6
 	monitorMinMarketCap     = 10000
+	candidatePoolLimit      = 50
+	preferredMarketCapMin   = 50000
+	preferredMarketCapMax   = 200000
 )
+
+var ErrCandidatePoolFull = errors.New("候选池已满")
 
 type CandidateMonitorConfig struct {
 	Enabled          bool
@@ -64,6 +69,7 @@ type CandidateMonitor struct {
 	supplyMu       sync.RWMutex
 	supplyCache    map[string]float64
 	eventBus       *eventbus.Broker
+	candidateMu    sync.Mutex
 }
 
 type CandidateMonitorItem struct {
@@ -284,45 +290,174 @@ func (m *CandidateMonitor) DeleteCandidate(ctx context.Context, tokenAddress str
 }
 
 func (m *CandidateMonitor) AddManualCandidate(ctx context.Context, tokenAddress string) (CandidateMonitorItem, error) {
+	item, _, err := m.AddProjectCandidate(ctx, tokenAddress, "", 0)
+	return item, err
+}
+
+func (m *CandidateMonitor) AddProjectCandidate(ctx context.Context, tokenAddress string, symbol string, marketCap float64) (CandidateMonitorItem, bool, error) {
 	tokenAddress = strings.TrimSpace(tokenAddress)
+	symbol = strings.TrimSpace(symbol)
 	if tokenAddress == "" {
-		return CandidateMonitorItem{}, errors.New("CA 不能为空")
+		return CandidateMonitorItem{}, false, errors.New("CA 不能为空")
 	}
 	if m == nil || m.store == nil {
-		return CandidateMonitorItem{}, errors.New("候选池监控未启用")
+		return CandidateMonitorItem{}, false, errors.New("候选池监控未启用")
 	}
+	m.candidateMu.Lock()
+	defer m.candidateMu.Unlock()
 	states, err := m.store.ListActive(ctx)
 	if err != nil {
-		return CandidateMonitorItem{}, err
+		return CandidateMonitorItem{}, false, err
 	}
 	for _, state := range states {
 		if state.TokenAddress == tokenAddress {
-			return newCandidateMonitorItem(state), nil
+			changed := false
+			if state.Symbol == "" && symbol != "" {
+				state.Symbol = symbol
+				changed = true
+			}
+			if state.CurrentPrice <= 0 && marketCap > 0 {
+				state.CurrentPrice = marketCap
+				state.CurrentAt = m.now()
+				changed = true
+			}
+			if changed {
+				state.RawPayload = projectCandidatePayload(tokenAddress, state.Symbol, marketCap, state.CandidateAt)
+				if err := m.store.SaveState(ctx, state); err != nil {
+					return CandidateMonitorItem{}, false, err
+				}
+				m.publishCandidateUpsert(state)
+			}
+			return newCandidateMonitorItem(state), false, nil
 		}
 	}
-	now := m.now()
-	rawPayload, err := json.Marshal(map[string]any{
-		"event":        "manual_candidate_added",
-		"tokenAddress": tokenAddress,
-		"publishedAt":  now.UnixMilli(),
-	})
-	if err != nil {
-		return CandidateMonitorItem{}, err
+	if len(states) >= candidatePoolLimit {
+		return CandidateMonitorItem{}, false, fmt.Errorf("%w，最多保留 %d 个项目", ErrCandidatePoolFull, candidatePoolLimit)
 	}
+	now := m.now()
 	state := candidateMonitorState{
 		TokenAddress: tokenAddress,
+		Symbol:       symbol,
 		RunID:        "manual:" + strconv.FormatInt(now.UnixMilli(), 10),
 		StrategyName: "manual",
-		RawPayload:   rawPayload,
+		RawPayload:   projectCandidatePayload(tokenAddress, symbol, marketCap, now),
 		CandidateAt:  now,
 		Status:       candidateStatusWatching,
 	}
+	if marketCap > 0 {
+		state.CurrentPrice = marketCap
+		state.CurrentAt = now
+	}
 	if err := m.store.UpsertCandidate(ctx, state); err != nil {
-		return CandidateMonitorItem{}, err
+		return CandidateMonitorItem{}, false, err
 	}
 	m.publishCandidateUpsert(state)
-	log.Printf("candidate monitor accepted manual candidate: ca=%s", state.TokenAddress)
-	return newCandidateMonitorItem(state), nil
+	log.Printf("candidate monitor accepted project candidate: ca=%s symbol=%s marketCap=%.2f", state.TokenAddress, state.Symbol, marketCap)
+	return newCandidateMonitorItem(state), true, nil
+}
+
+func projectCandidatePayload(tokenAddress string, symbol string, marketCap float64, publishedAt time.Time) json.RawMessage {
+	payload, _ := json.Marshal(map[string]any{"event": "project_candidate_added", "tokenAddress": tokenAddress, "symbol": symbol, "marketCap": marketCap, "publishedAt": publishedAt.UnixMilli()})
+	return payload
+}
+
+func (m *CandidateMonitor) TrimCandidatePool(ctx context.Context) error {
+	if m == nil || m.store == nil {
+		return nil
+	}
+	m.candidateMu.Lock()
+	defer m.candidateMu.Unlock()
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return err
+	}
+	retained := make([]candidateMonitorState, 0, len(states))
+	for _, state := range states {
+		if state.CurrentPrice > 0 && state.CurrentPrice < m.minMarketCapThreshold() {
+			if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
+				return err
+			}
+			m.publishCandidateDelete(state)
+			log.Printf("candidate monitor removed low market cap candidate during reconcile: ca=%s marketCap=%.2f", state.TokenAddress, state.CurrentPrice)
+			continue
+		}
+		retained = append(retained, state)
+	}
+	states = retained
+	if len(states) <= candidatePoolLimit {
+		return nil
+	}
+	sort.SliceStable(states, func(i, j int) bool {
+		left, right := candidateRetentionRank(states[i]), candidateRetentionRank(states[j])
+		if left != right {
+			return left < right
+		}
+		return states[i].CandidateAt.Before(states[j].CandidateAt)
+	})
+	for _, state := range states[candidatePoolLimit:] {
+		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
+			return err
+		}
+		m.publishCandidateDelete(state)
+		log.Printf("candidate monitor trimmed over-limit candidate: ca=%s marketCap=%.2f", state.TokenAddress, state.CurrentPrice)
+	}
+	return nil
+}
+
+func (m *CandidateMonitor) MissingSymbolCandidates(ctx context.Context) ([]string, error) {
+	if m == nil || m.store == nil {
+		return nil, nil
+	}
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addresses := make([]string, 0)
+	for _, state := range states {
+		if strings.TrimSpace(state.Symbol) == "" {
+			addresses = append(addresses, state.TokenAddress)
+		}
+	}
+	return addresses, nil
+}
+
+func (m *CandidateMonitor) UpdateCandidateSymbol(ctx context.Context, tokenAddress string, symbol string) error {
+	symbol = strings.TrimSpace(symbol)
+	if m == nil || m.store == nil || symbol == "" {
+		return nil
+	}
+	m.candidateMu.Lock()
+	defer m.candidateMu.Unlock()
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return err
+	}
+	for _, state := range states {
+		if state.TokenAddress != tokenAddress || state.Symbol != "" {
+			continue
+		}
+		state.Symbol = symbol
+		if err := m.store.SaveState(ctx, state); err != nil {
+			return err
+		}
+		m.publishCandidateUpsert(state)
+		return nil
+	}
+	return nil
+}
+
+func candidateRetentionRank(state candidateMonitorState) int {
+	marketCap := state.CurrentPrice
+	if marketCap >= preferredMarketCapMin && marketCap <= preferredMarketCapMax {
+		return 0
+	}
+	if marketCap >= monitorMinMarketCap {
+		return 1
+	}
+	if marketCap <= 0 {
+		return 2
+	}
+	return 3
 }
 
 func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
@@ -1083,6 +1218,10 @@ func (s *redisCandidateMonitorStore) SaveState(ctx context.Context, state candid
 	fields, err := encodeCandidateState(state)
 	if err != nil {
 		return err
+	}
+	// A concurrent price poll may hold an older state; never let its empty symbol erase enrichment.
+	if strings.TrimSpace(state.Symbol) == "" {
+		delete(fields, "symbol")
 	}
 	return s.client.HSet(ctx, s.candidateKey(state.TokenAddress), fields).Err()
 }

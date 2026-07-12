@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -692,5 +693,87 @@ func TestCandidateMonitorAddManualCandidate(t *testing.T) {
 	}
 	if state.StrategyName != "manual" || state.RunID == "" || !state.CandidateAt.Equal(base) {
 		t.Fatalf("unexpected stored state: %#v", state)
+	}
+}
+
+func TestCandidateMonitorProjectCandidateStoresSymbolAndMarketCap(t *testing.T) {
+	base := time.Date(2026, 6, 29, 14, 0, 0, 0, time.UTC)
+	store := newFakeCandidateStore()
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	item, added, err := monitor.AddProjectCandidate(context.Background(), "project-token", "TOKEN", 75000)
+	if err != nil || !added {
+		t.Fatalf("add project candidate: added=%v err=%v", added, err)
+	}
+	if item.Symbol != "TOKEN" || item.CurrentMarketCap == nil || *item.CurrentMarketCap != 75000 {
+		t.Fatalf("unexpected project candidate: %#v", item)
+	}
+}
+
+func TestCandidateMonitorRejectsNewCandidateWhenPoolIsFull(t *testing.T) {
+	store := newFakeCandidateStore()
+	for index := 0; index < candidatePoolLimit; index++ {
+		address := fmt.Sprintf("token-%02d", index)
+		store.states[address] = candidateMonitorState{TokenAddress: address, Status: candidateStatusWatching, CandidateAt: time.Now().UTC()}
+	}
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	if _, _, err := monitor.AddProjectCandidate(context.Background(), "overflow", "OVER", 100000); !errors.Is(err, ErrCandidatePoolFull) {
+		t.Fatalf("expected pool full error, got %v", err)
+	}
+}
+
+func TestCandidateMonitorTrimPrefersMarketCapBand(t *testing.T) {
+	store := newFakeCandidateStore()
+	base := time.Now().UTC()
+	for index := 0; index < candidatePoolLimit+2; index++ {
+		address := fmt.Sprintf("token-%02d", index)
+		marketCap := float64(250000 + index)
+		if index == candidatePoolLimit || index == candidatePoolLimit+1 {
+			marketCap = 100000
+		}
+		store.states[address] = candidateMonitorState{TokenAddress: address, Status: candidateStatusWatching, CandidateAt: base.Add(time.Duration(index) * time.Second), CurrentPrice: marketCap}
+	}
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	if err := monitor.TrimCandidatePool(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.states) != candidatePoolLimit {
+		t.Fatalf("expected %d candidates, got %d", candidatePoolLimit, len(store.states))
+	}
+	for _, address := range []string{"token-50", "token-51"} {
+		if _, ok := store.states[address]; !ok {
+			t.Fatalf("expected preferred candidate %s to be retained", address)
+		}
+	}
+}
+
+func TestCandidateMonitorTrimRemovesKnownMarketCapBelowThreshold(t *testing.T) {
+	store := newFakeCandidateStore()
+	store.states["low"] = candidateMonitorState{TokenAddress: "low", Status: candidateStatusWatching, CurrentPrice: 9999}
+	store.states["kept"] = candidateMonitorState{TokenAddress: "kept", Status: candidateStatusWatching, CurrentPrice: 10000}
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	if err := monitor.TrimCandidatePool(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.states["low"]; ok {
+		t.Fatal("expected low market cap candidate to be removed")
+	}
+	if _, ok := store.states["kept"]; !ok {
+		t.Fatal("expected threshold candidate to be retained")
+	}
+}
+
+func TestCandidateMonitorUpdatesMissingSymbol(t *testing.T) {
+	store := newFakeCandidateStore()
+	store.states["token"] = candidateMonitorState{TokenAddress: "token", Status: candidateStatusWatching}
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	missing, err := monitor.MissingSymbolCandidates(context.Background())
+	if err != nil || len(missing) != 1 || missing[0] != "token" {
+		t.Fatalf("unexpected missing symbols: %#v err=%v", missing, err)
+	}
+	if err := monitor.UpdateCandidateSymbol(context.Background(), "token", "TOKEN"); err != nil {
+		t.Fatal(err)
+	}
+	if store.states["token"].Symbol != "TOKEN" {
+		t.Fatalf("symbol was not updated: %#v", store.states["token"])
 	}
 }

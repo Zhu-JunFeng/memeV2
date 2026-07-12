@@ -22,6 +22,7 @@ func TestProjectCandidatePollerOnlyAddsUniqueKOLAtLeastThree(t *testing.T) {
 		{TokenAddress: "ca-six", KOL: 6},
 		{TokenAddress: "ca-three", KOL: 3},
 		{TokenAddress: "ca-low", KOL: 2},
+		{TokenAddress: "ca-low-market-cap", KOL: 3, MarketCap: 9999},
 		{TokenAddress: "ca-six", KOL: 8},
 		{TokenAddress: "", KOL: 9},
 	}}

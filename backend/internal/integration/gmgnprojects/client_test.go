@@ -39,3 +39,21 @@ func TestFetchCompletedProjects(t *testing.T) {
 		t.Fatalf("unexpected items: %#v", items)
 	}
 }
+
+func TestFetchTokenSymbol(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/token/info" || r.URL.Query().Get("address") != "ca-1" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"symbol":"TOKEN","name":"Token Name"}}`))
+	}))
+	defer server.Close()
+
+	symbol, err := NewClient(server.URL, "test-key", server.Client()).FetchTokenSymbol(context.Background(), "ca-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if symbol != "TOKEN" {
+		t.Fatalf("unexpected symbol: %s", symbol)
+	}
+}
