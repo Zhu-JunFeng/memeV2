@@ -13,6 +13,7 @@ type Config struct {
 	Birdeye    BirdeyeConfig
 	GMGN       GMGNConfig
 	Bitquery   BitqueryConfig
+	XXYY       XXYYConfig
 	Redis      RedisConfig
 	Signal     SignalConfig
 	Trade      TradeConfig
@@ -53,6 +54,13 @@ type GMGNConfig struct {
 type BitqueryConfig struct {
 	BaseURL string
 	APIKey  string
+}
+
+type XXYYConfig struct {
+	Enabled             bool
+	BaseURL             string
+	APIKey              string
+	PollIntervalSeconds int
 }
 
 type RedisConfig struct {
@@ -121,6 +129,9 @@ func Load() (Config, error) {
 	v.SetDefault("gmgn.chain", "sol")
 	v.SetDefault("gmgn.max_qps", 8.0)
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
+	v.SetDefault("xxyy.enabled", false)
+	v.SetDefault("xxyy.base_url", "https://www.xxyy.io")
+	v.SetDefault("xxyy.poll_interval_seconds", 60)
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
 	v.SetDefault("redis.consumer_channel", "")
 	v.SetDefault("redis.db", 0)
@@ -182,6 +193,12 @@ func Load() (Config, error) {
 		Bitquery: BitqueryConfig{
 			BaseURL: v.GetString("bitquery.base_url"),
 			APIKey:  v.GetString("bitquery.api_key"),
+		},
+		XXYY: XXYYConfig{
+			Enabled:             v.GetBool("xxyy.enabled"),
+			BaseURL:             v.GetString("xxyy.base_url"),
+			APIKey:              v.GetString("xxyy.api_key"),
+			PollIntervalSeconds: v.GetInt("xxyy.poll_interval_seconds"),
 		},
 		Redis: RedisConfig{
 			Addr:            v.GetString("redis.addr"),
