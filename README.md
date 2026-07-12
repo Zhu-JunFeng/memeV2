@@ -105,7 +105,7 @@
 - 当前交易模块支持全局 `模拟盘 / 实盘` 两种模式，模式值落库到 `system_runtime_settings`，服务重启后继续生效。
 - 模拟盘只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行链上交易；系统会基于报价结果模拟 fill，并把相关订单、成交、持仓都打上 `paper` 标记。
 - 实盘保持原链路：`下单 -> 本地签名 -> 执行`。买入默认使用 SOL 作为输入资产，并按固定 `trade.buy_amount_sol` 数量下单。
-- GMGN、DexScreener 与 Jupiter 的外网请求当前固定走服务器本机 clash 代理 `http://127.0.0.1:7890`。
+- GMGN、DexScreener、Solana RPC 与 Jupiter 的外网请求由服务器直接访问，不经过代理。
 
 ## 本地开发
 
@@ -200,7 +200,7 @@ npm run build
 - `trade.dexscreener.base_url`：DexScreener 持仓估值接口，仅在 `trade.price_source=dexscreener` 时使用
 - `trade.jupiter.base_url`：Jupiter Ultra API 入口
 - `trade.jupiter.api_key`：Jupiter API Key
-- GMGN、Jupiter HTTP 客户端固定通过服务器本机 clash 代理 `http://127.0.0.1:7890` 出网；DexScreener 仅在启用对应价格源时使用固定代理
+- GMGN、DexScreener、Solana RPC 与 Jupiter HTTP 客户端均直接出网，不经过代理
 - 交易模式不通过配置文件固定，而是通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
 - 买入信号进入交易模块后，会先用 Jupiter 报价按当前 token supply 折算报价市值；报价市值与信号 `triggerMarketCap` 的绝对滑点大于 `3%` 时不创建买入订单，Signals 原因显示 `不买入：滑点为 x% 大于 3.00%`
 
@@ -208,7 +208,7 @@ npm run build
 
 当前线上部署目标：
 
-- URL：`http://182.92.160.46/`
+- URL：`http://47.251.140.83/`
 - 后端目录：`/data/solana-scalper-v2/backend`
 - 前端目录：`/data/solana-scalper-v2/frontend`
 - systemd 服务：`solana-meme-backtest-v2`

@@ -109,7 +109,7 @@ func NewJupiterExecutor(cfg config.TradeConfig, priceProvider datasource.TokenPr
 		priceProvider: priceProvider,
 		privateKey:    privateKey,
 		walletAddress: walletAddress,
-		client:        httpclient.NewFixedProxyClient(30*time.Second, 15*time.Second),
+		client:        httpclient.NewDirectClient(30*time.Second, 15*time.Second),
 	}, nil
 }
 

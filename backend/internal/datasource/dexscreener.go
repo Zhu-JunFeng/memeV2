@@ -40,7 +40,7 @@ func NewDexScreenerPriceSource(baseURL string) *DexScreenerPriceSource {
 		trimmed = "https://api.dexscreener.com"
 	}
 	return &DexScreenerPriceSource{
-		client:  httpclient.NewFixedProxyClient(15*time.Second, 15*time.Second),
+		client:  httpclient.NewDirectClient(15*time.Second, 15*time.Second),
 		baseURL: strings.TrimRight(trimmed, "/"),
 	}
 }

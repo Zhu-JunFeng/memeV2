@@ -51,7 +51,7 @@ func NewSolanaRPCSupplyProvider(rpcURL string) *SolanaRPCSupplyProvider {
 		trimmed = "https://api.mainnet-beta.solana.com"
 	}
 	return &SolanaRPCSupplyProvider{
-		client: httpclient.NewFixedProxyClient(15*time.Second, 15*time.Second),
+		client: httpclient.NewDirectClient(15*time.Second, 15*time.Second),
 		url:    trimmed,
 		cache:  map[string]supplyCacheItem{},
 		ttl:    10 * time.Minute,

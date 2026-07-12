@@ -78,7 +78,7 @@ func NewGMGNDataSourceWithKeys(baseURL string, apiKeys []string, chain string, m
 		chain = "sol"
 	}
 	return &GMGNDataSource{
-		client:     httpclient.NewFixedProxyClient(15*time.Second, 15*time.Second),
+		client:     httpclient.NewDirectClient(15*time.Second, 15*time.Second),
 		baseURL:    strings.TrimRight(trimmed, "/"),
 		apiKeys:    normalizeGMGNDataSourceKeys(apiKeys),
 		chain:      chain,

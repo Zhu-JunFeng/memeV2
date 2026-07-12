@@ -17,19 +17,10 @@ EnvironmentFile=-/data/solana-scalper-v2/backend/.env
 [Install]
 WantedBy=multi-user.target
 SERVICE
-python3 - <<'PY'
-from pathlib import Path
-path = Path('/etc/nginx/conf.d/typing-race.conf')
-text = path.read_text()
-old = 'server_name keyflow.zcn.world 182.92.160.46 182-92-160-46.nip.io;'
-new = 'server_name keyflow.zcn.world 182-92-160-46.nip.io;'
-if old in text:
-    path.write_text(text.replace(old, new))
-PY
 cat > /etc/nginx/conf.d/solana-meme-backtest-v2.conf <<'NGINX'
 server {
     listen 80;
-    server_name 182.92.160.46;
+    server_name 47.251.140.83;
 
     root /data/solana-scalper-v2/frontend;
     index index.html;
