@@ -30,7 +30,7 @@ func TestBreakoutBandFollowMethodStopsOnNextBarCloseBelowLowerBand(t *testing.T)
 		Klines:        klines,
 		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 2, 1, 1)},
 		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
-	}, mustStrategyConfig(t, BreakoutBandFollowConfig{TakeProfitRate: 0.08, PositionSizeUSD: 10, HardStopLossRate: 0.05, ActivationProfitRate: 0.05, LockedProfitRate: 0.03}))
+	}, mustStrategyConfig(t, BreakoutBandFollowConfig{TakeProfitRate: 0.08, PositionSizeUSD: 10, ActivationProfitRate: 0.05, LockedProfitRate: 0.03}))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestBreakoutBandFollowMethodArmsTrailingStopAfterFivePercent(t *testing.T) 
 		Klines:        klines,
 		ReplayEntries: []BandFollowReplayEntry{singleReplayEntry(klines, level, 1, 1, 1)},
 		Windows:       []WindowLevelResult{{WindowIndex: 1, Levels: []model.PriceLevel{level}}},
-	}, mustStrategyConfig(t, BreakoutBandFollowConfig{TakeProfitRate: 0.15, PositionSizeUSD: 10, HardStopLossRate: 0.05, ActivationProfitRate: 0.05, LockedProfitRate: 0.03}))
+	}, mustStrategyConfig(t, BreakoutBandFollowConfig{TakeProfitRate: 0.15, PositionSizeUSD: 10, ActivationProfitRate: 0.05, LockedProfitRate: 0.03}))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -108,7 +108,6 @@ func TestBreakoutBandFollowMethodRaisesTrailingStopByProfitSteps(t *testing.T) {
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.15,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.05,
 		LockedProfitRate:     0.03,
 	}))
@@ -150,7 +149,6 @@ func TestBreakoutBandFollowMethodSupportsTakeProfitRangeAndFees(t *testing.T) {
 		TakeProfitRateEnd:    0.10,
 		TakeProfitRateStep:   0.01,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.05,
 		LockedProfitRate:     0.03,
 		FeeRate:              0.015,
@@ -173,7 +171,7 @@ func TestBreakoutBandFollowMethodSupportsTakeProfitRangeAndFees(t *testing.T) {
 	}
 }
 
-func TestBreakoutBandFollowMethodStopsOnHardStopLoss(t *testing.T) {
+func TestBreakoutBandFollowMethodIgnoresLaterDropBelowFormerHardStop(t *testing.T) {
 	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	level := model.PriceLevel{
 		Type:  model.LevelTypeResistance,
@@ -197,7 +195,6 @@ func TestBreakoutBandFollowMethodStopsOnHardStopLoss(t *testing.T) {
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.15,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.08,
 		LockedProfitRate:     0.03,
 	}))
@@ -205,12 +202,11 @@ func TestBreakoutBandFollowMethodStopsOnHardStopLoss(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	trade := result.Trades[0]
-	expectedStop := 10.8 * 0.95
-	if trade.Outcome != model.BreakoutOutcomeStopLoss {
-		t.Fatalf("expected hard stop loss, got %#v", trade)
+	if trade.Outcome != model.BreakoutOutcomeTimeout {
+		t.Fatalf("expected later drop to remain open until backtest timeout, got %#v", trade)
 	}
-	if !almostEqual(trade.SellPoint.Price, expectedStop) {
-		t.Fatalf("expected hard stop %.4f, got %#v", expectedStop, trade.SellPoint)
+	if !almostEqual(trade.SellPoint.Price, 10.3) {
+		t.Fatalf("expected timeout exit at final close 10.3, got %#v", trade.SellPoint)
 	}
 }
 
@@ -237,7 +233,6 @@ func TestBreakoutBandFollowMethodUsesBreakoutBuyPriceForPnL(t *testing.T) {
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.15,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.05,
 		LockedProfitRate:     0.03,
 		FeeRate:              0.015,
@@ -312,7 +307,6 @@ func TestBreakoutBandFollowMethodOnlyKeepsOnePositionOpenAtATime(t *testing.T) {
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.08,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.05,
 		LockedProfitRate:     0.03,
 		FeeRate:              0.015,
@@ -351,7 +345,6 @@ func TestBreakoutBandFollowMethodUsesLoadedWindowSignals(t *testing.T) {
 	}, mustStrategyConfig(t, BreakoutBandFollowConfig{
 		TakeProfitRate:       0.08,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.05,
 		LockedProfitRate:     0.03,
 		FeeRate:              0.015,

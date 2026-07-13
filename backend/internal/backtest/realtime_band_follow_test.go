@@ -21,7 +21,7 @@ func TestNextBarBandExitWaitsForCloseBelowLowerBand(t *testing.T) {
 		{OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 108, MarketCapHigh: 112, MarketCapLow: 107, MarketCapClose: 110},
 		{OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 110, MarketCapHigh: 111, MarketCapLow: 88, MarketCapClose: 89},
 	}
-	config := BreakoutBandFollowConfig{TakeProfitRate: 0.5, HardStopLossRate: 0.5, ActivationProfitRate: 0.4, LockedProfitRate: 0.2}
+	config := BreakoutBandFollowConfig{TakeProfitRate: 0.5, ActivationProfitRate: 0.4, LockedProfitRate: 0.2}
 
 	beforeClose := evaluateRealtimeBandFollowExit(klines, 0, level, config, base.Add(90*time.Second))
 	if beforeClose.Triggered {
@@ -46,7 +46,7 @@ func TestNextBarBandExitDoesNotTriggerWhenCloseRecoversAboveLowerBand(t *testing
 		{OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapClose: 110, MarketCapHigh: 112, MarketCapLow: 107},
 		{OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 110, MarketCapHigh: 111, MarketCapLow: 85, MarketCapClose: 92},
 	}
-	config := BreakoutBandFollowConfig{TakeProfitRate: 0.5, HardStopLossRate: 0.5, ActivationProfitRate: 0.4, LockedProfitRate: 0.2}
+	config := BreakoutBandFollowConfig{TakeProfitRate: 0.5, ActivationProfitRate: 0.4, LockedProfitRate: 0.2}
 	decision := evaluateRealtimeBandFollowExit(klines, 0, level, config, base.Add(2*time.Minute))
 	if decision.Triggered {
 		t.Fatalf("expected recovered next-bar close above lower band to remain open, got %#v", decision)

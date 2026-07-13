@@ -192,7 +192,7 @@
                     {{ strategyForm.positionSizeUsd }}u</strong
                   >
                   <em
-                    >硬止损 -{{ strategyForm.hardStopLossRatePercent }}% · 触发
+                    >首根 1m 收盘跌破压力带下沿止损 · 触发
                     {{ strategyForm.activationProfitRatePercent }}% / 锁盈
                     {{ strategyForm.lockedProfitRatePercent }}%</em
                   >
@@ -263,17 +263,6 @@
                       class="query-number"
                       :min="1"
                       :step="1"
-                    />
-                  </label>
-                  <label class="query-field">
-                    <span class="query-label">硬止损(%)</span>
-                    <el-input-number
-                      v-model="strategyForm.hardStopLossRatePercent"
-                      class="query-number"
-                      :min="0.1"
-                      :max="50"
-                      :step="0.5"
-                      :precision="1"
                     />
                   </label>
                   <label class="query-field">
@@ -1329,7 +1318,6 @@ const strategyForm = reactive({
   takeProfitRateStepPercent: 1,
   feeRatePercent: 1.5,
   positionSizeUsd: 10,
-  hardStopLossRatePercent: 5,
   activationProfitRatePercent: 5,
   lockedProfitRatePercent: 3,
 });
@@ -1632,7 +1620,6 @@ async function runStrategyForLoadedRange() {
       takeProfitRateEnd: strategyForm.takeProfitRateEndPercent / 100,
       takeProfitRateStep: strategyForm.takeProfitRateStepPercent / 100,
       positionSizeUsd: strategyForm.positionSizeUsd,
-      hardStopLossRate: strategyForm.hardStopLossRatePercent / 100,
       activationProfitRate: strategyForm.activationProfitRatePercent / 100,
       lockedProfitRate: strategyForm.lockedProfitRatePercent / 100,
       feeRate: strategyForm.feeRatePercent / 100,

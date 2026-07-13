@@ -162,7 +162,6 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
     "takeProfitRateEnd": 0.15,
     "takeProfitRateStep": 0.01,
     "positionSizeUsd": 10,
-    "hardStopLossRate": 0.05,
     "activationProfitRate": 0.05,
     "lockedProfitRate": 0.03,
     "feeRate": 0.015
@@ -210,7 +209,7 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
 - 在突破压力带的那根 K 线按突破阈值对应市值买入。
 - 单个 token 同一时刻最多只保留 `1` 笔持仓；若前一笔尚未卖出，则后续买点信号全部跳过。
 - 如果买入后下一根 K 线正式收盘且收盘市值低于压力带下沿，则按该根实际收盘市值止损卖出。
-- 如果买入后任意后续 K 线最低点触发 `hardStopLossRate`，则按硬止损价卖出，默认 `0.05` 即 `-5%`。
+- 不再使用固定百分比硬止损，也不因任意后续 K 线盘中最低点下跌而止损。
 - 如果后续最高点先达到 `activationProfitRate`，则从下一根 K 线开始启用动态止损；默认达到 `5%` 后回撤到 `3%` 卖出。之后每多盈利 `1%`，锁定收益率同步上移 `1%`，例如达到 `6%` 后回撤到 `4%` 卖出，直到达到配置的止盈比例。
 - 如果最高点达到 `takeProfitRate`，则按止盈价卖出。
 - 如果同时传 `takeProfitRateStart`、`takeProfitRateEnd`、`takeProfitRateStep`，则会在该范围内按步长逐个止盈比例执行回测，并按止盈比例分组返回盈亏情况。

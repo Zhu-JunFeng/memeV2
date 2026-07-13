@@ -179,7 +179,6 @@ type BreakoutBandFollowConfig struct {
 	TakeProfitRateEnd    float64 `json:"takeProfitRateEnd"`
 	TakeProfitRateStep   float64 `json:"takeProfitRateStep"`
 	PositionSizeUSD      float64 `json:"positionSizeUsd"`
-	HardStopLossRate     float64 `json:"hardStopLossRate"`
 	ActivationProfitRate float64 `json:"activationProfitRate"`
 	LockedProfitRate     float64 `json:"lockedProfitRate"`
 	FeeRate              float64 `json:"feeRate"`
@@ -207,7 +206,6 @@ func DefaultBreakoutBandFollowConfig() BreakoutBandFollowConfig {
 	return BreakoutBandFollowConfig{
 		TakeProfitRate:       0.08,
 		PositionSizeUSD:      10,
-		HardStopLossRate:     0.05,
 		ActivationProfitRate: 0.05,
 		LockedProfitRate:     0.03,
 		FeeRate:              0.015,
@@ -218,14 +216,13 @@ func (breakoutBandFollowMethod) Metadata() StrategyMethodMetadata {
 	return StrategyMethodMetadata{
 		Code:        "breakout_band_follow",
 		Name:        "突破压力带买入",
-		Description: "盘中首次突破压力带时买入；下一根 K 线收盘低于压力带下沿止损；同时支持可配置硬止损；盈利到 5% 后把止损抬到 +3%，之后每多盈利 1% 锁盈同步上移 1%；止盈比例可配置。",
+		Description: "盘中首次突破压力带时买入；仅当买入后的第一根 1 分钟 K 线收盘低于压力带下沿时止损；盈利到 5% 后把止损抬到 +3%，之后每多盈利 1% 锁盈同步上移 1%；止盈比例可配置。",
 		Params: []StrategyParamDefinition{
 			{Key: "takeProfitRate", Label: "止盈比例", Description: "达到该收益率后止盈卖出，例如 0.08 表示 8%。", Type: "number", Required: true, DefaultValue: 0.08, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
 			{Key: "takeProfitRateStart", Label: "止盈起点", Description: "启用区间回测时的起始止盈比例。", Type: "number", Required: false, DefaultValue: 0.08, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
 			{Key: "takeProfitRateEnd", Label: "止盈终点", Description: "启用区间回测时的结束止盈比例。", Type: "number", Required: false, DefaultValue: 0.15, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
 			{Key: "takeProfitRateStep", Label: "止盈步长", Description: "启用区间回测时的止盈递增步长。", Type: "number", Required: false, DefaultValue: 0.01, MinValue: 0.001, MaxValue: 0.1, Step: 0.001},
 			{Key: "positionSizeUsd", Label: "单笔投入(U)", Description: "每个买点固定投入金额。", Type: "number", Required: true, DefaultValue: 10, MinValue: 1, MaxValue: 100000, Step: 1},
-			{Key: "hardStopLossRate", Label: "硬止损比例", Description: "买入后任意时刻亏损达到该比例立即止损，例如 0.05 表示 -5%。", Type: "number", Required: true, DefaultValue: 0.05, MinValue: 0.001, MaxValue: 0.5, Step: 0.001},
 			{Key: "activationProfitRate", Label: "动态止损触发收益率", Description: "盈利达到该比例后开始保护利润；之后每多盈利 1%，锁定收益率同步上移 1%。", Type: "number", Required: true, DefaultValue: 0.05, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
 			{Key: "lockedProfitRate", Label: "动态止损锁定收益率", Description: "动态止损触发后，回撤到该收益率卖出；例如 5%/3%、6%/4%。", Type: "number", Required: true, DefaultValue: 0.03, MinValue: 0.001, MaxValue: 0.5, Step: 0.01},
 			{Key: "feeRate", Label: "总手续费比例", Description: "单笔买入加卖出的总手续费比例，默认 1.5%。", Type: "number", Required: false, DefaultValue: 0.015, MinValue: 0, MaxValue: 0.3, Step: 0.001},
@@ -247,9 +244,6 @@ func (breakoutBandFollowMethod) Run(ctx StrategyBacktestContext, raw json.RawMes
 	}
 	if config.PositionSizeUSD <= 0 {
 		return StrategyBacktestResult{}, errors.New("单笔投入金额必须大于 0")
-	}
-	if config.HardStopLossRate <= 0 || config.HardStopLossRate >= 1 {
-		return StrategyBacktestResult{}, errors.New("硬止损比例必须大于 0 且小于 1")
 	}
 	if config.ActivationProfitRate <= 0 {
 		return StrategyBacktestResult{}, errors.New("动态止损触发收益率必须大于 0")
@@ -404,7 +398,6 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 		initialStopLoss = level.Price
 	}
 	takeProfitPrice := entryPrice * (1 + config.TakeProfitRate)
-	hardStopLossPrice := entryPrice * (1 - config.HardStopLossRate)
 	trailingStopPrice := entryPrice * (1 + config.LockedProfitRate)
 	trailingArmed := false
 
@@ -415,10 +408,6 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 			exitPrice := marketClose(item)
 			exit := anchorFromKline(item, exitPrice)
 			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, exitPrice), "买入后下一根 K 线收盘市值低于压力带下沿，按收盘市值卖出", initialStopLoss, trailingStopPrice, trailingArmed
-		}
-		if marketLow(item) <= hardStopLossPrice {
-			exit := anchorFromKline(item, hardStopLossPrice)
-			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, hardStopLossPrice), fmt.Sprintf("买入后触发硬止损 %s，按硬止损价卖出", formatPercentValue(config.HardStopLossRate)), initialStopLoss, trailingStopPrice, trailingArmed
 		}
 		if trailingArmed && marketLow(item) <= trailingStopPrice {
 			exit := anchorFromKline(item, trailingStopPrice)
@@ -465,7 +454,6 @@ func evaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level 
 		initialStopLoss = level.Price
 	}
 	takeProfitPrice := entryPrice * (1 + config.TakeProfitRate)
-	hardStopLossPrice := entryPrice * (1 - config.HardStopLossRate)
 	trailingStopPrice := entryPrice * (1 + config.LockedProfitRate)
 	trailingArmed := false
 
@@ -477,10 +465,6 @@ func evaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level 
 			exitPrice := marketClose(item)
 			exit := anchorFromKline(item, exitPrice)
 			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, exitPrice), Reason: "买入后下一根 K 线收盘市值低于压力带下沿，按收盘市值卖出", InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
-		}
-		if marketLow(item) <= hardStopLossPrice {
-			exit := anchorFromKline(item, hardStopLossPrice)
-			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, hardStopLossPrice), Reason: fmt.Sprintf("买入后触发硬止损 %s，按硬止损价卖出", formatPercentValue(config.HardStopLossRate)), InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
 		}
 		if trailingArmed && marketLow(item) <= trailingStopPrice {
 			exit := anchorFromKline(item, trailingStopPrice)
