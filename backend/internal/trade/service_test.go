@@ -401,7 +401,8 @@ func TestRetryBuyOrderRespectsExistingPosition(t *testing.T) {
 
 func TestClosePositionPersistsManualSignal(t *testing.T) {
 	repo := newFakeRepo()
-	position := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15, LastPrice: 0.11}
+	repo.tradeMode = model.TradeModePaper
+	position := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TradeMode: model.TradeModeLive, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15, LastPrice: 0.11}
 	repo.positions[repo.account.ID+":token-a"] = position
 	repo.positionByID[position.ID] = position
 	executor := &fakeExecutor{}
@@ -418,6 +419,31 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	}
 	if len(repo.orders) != 1 || repo.orders[0].SignalID == "" {
 		t.Fatalf("expected sell order to be linked to persisted signal, orders=%#v", repo.orders)
+	}
+	if executor.lastRequest.Mode != model.TradeModeLive || repo.orders[0].TradeMode != model.TradeModeLive {
+		t.Fatalf("expected manual close to use position mode live, request=%s order=%s", executor.lastRequest.Mode, repo.orders[0].TradeMode)
+	}
+	if repo.signals[0].TradeMode != model.TradeModeLive {
+		t.Fatalf("expected manual close signal to use position mode live, got %s", repo.signals[0].TradeMode)
+	}
+}
+
+func TestClosePositionRejectsDuplicateSubmission(t *testing.T) {
+	repo := newFakeRepo()
+	position := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TradeMode: model.TradeModePaper, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15, LastPrice: 0.11}
+	repo.positions[repo.account.ID+":"+position.TokenAddress] = position
+	repo.positionByID[position.ID] = position
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	svc.inFlight[position.TokenAddress] = model.TradeSignalTypeSell
+	if _, err := svc.ClosePosition(context.Background(), position.ID); !errors.Is(err, ErrPositionSellInFlight) {
+		t.Fatalf("expected duplicate close rejection, got %v", err)
+	}
+	if executor.executeCalls != 0 {
+		t.Fatalf("expected no duplicate execution, got %d calls", executor.executeCalls)
 	}
 }
 

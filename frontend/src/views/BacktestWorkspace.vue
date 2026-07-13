@@ -818,6 +818,8 @@
                     v-if="row.status === 'open'"
                     link
                     type="danger"
+                    :loading="closingPositionID === row.id"
+                    :disabled="Boolean(closingPositionID)"
                     @click="handleClosePosition(row)"
                     >平仓</el-button
                   >
@@ -1348,6 +1350,7 @@ const hasAutoSelectedCandidateToken = ref(false);
 const tokenAddressTouched = ref(false);
 const deletingCandidateAddress = ref("");
 const viewingPositionID = ref("");
+const closingPositionID = ref("");
 const levelView = ref("resistance");
 const addCandidateDialogVisible = ref(false);
 const addCandidateTokenAddress = ref("");
@@ -1902,11 +1905,33 @@ async function handleRetryOrder(row) {
 }
 
 async function handleClosePosition(row) {
-  await store.closeTradePosition(row.id, {
-    tradeMode: tradeFilterMode.value,
-    limit: TRADE_LIST_LIMIT,
-  });
-  ElMessage.success("平仓指令已提交");
+  if (closingPositionID.value) return;
+  const mode = tradeModeText(row.tradeMode);
+  try {
+    await ElMessageBox.confirm(
+      `确认平掉该${mode}仓位？系统将按该仓位的交易模式执行卖出。`,
+      "确认平仓",
+      {
+        type: "warning",
+        confirmButtonText: "确认平仓",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+  closingPositionID.value = row.id;
+  try {
+    await store.closeTradePosition(row.id, {
+      tradeMode: tradeFilterMode.value,
+      limit: TRADE_LIST_LIMIT,
+    });
+    ElMessage.success("平仓指令已提交");
+  } catch (error) {
+    ElMessage.error(error.message || "平仓失败");
+  } finally {
+    closingPositionID.value = "";
+  }
 }
 
 async function copyOrderTx(row) {

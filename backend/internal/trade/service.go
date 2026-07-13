@@ -23,6 +23,8 @@ import (
 var ErrTradeDisabled = errors.New("交易模块未启用")
 var ErrTradeExecutionNotReady = errors.New("Jupiter 执行器尚未配置完成")
 var ErrInvalidTradeMode = errors.New("交易模式不合法")
+var ErrPositionNotOpen = errors.New("持仓已平仓或不在可平仓状态")
+var ErrPositionSellInFlight = errors.New("持仓正在卖出，请勿重复提交")
 
 const maxBuyQuoteSignalSlippageRate = 0.03
 
@@ -341,10 +343,17 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	if err != nil {
 		return model.TradePosition{}, err
 	}
+	if position.Status != model.TradePositionStatusOpen {
+		return model.TradePosition{}, ErrPositionNotOpen
+	}
+	position, err = s.beginManualSell(position)
+	if err != nil {
+		return model.TradePosition{}, err
+	}
 	signal := model.TradeSignal{
 		ID:               uuid.NewString(),
 		SignalID:         uuid.NewString(),
-		TradeMode:        s.GetTradeMode(),
+		TradeMode:        position.TradeMode,
 		SignalType:       model.TradeSignalTypeSell,
 		StrategyCode:     "manual_close",
 		TokenAddress:     position.TokenAddress,
@@ -357,6 +366,7 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	}
 	storedSignal, created, err := s.repo.InsertSignalIfAbsent(ctx, signal)
 	if err != nil {
+		s.restoreOpenPosition(position)
 		return model.TradePosition{}, err
 	}
 	signal = storedSignal
@@ -365,6 +375,21 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 		s.notifySignal(ctx, signal)
 	}
 	return position, s.executeSell(ctx, signal, position)
+}
+
+func (s *Service) beginManualSell(position model.TradePosition) (model.TradePosition, error) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	if _, busy := s.inFlight[position.TokenAddress]; busy {
+		return model.TradePosition{}, ErrPositionSellInFlight
+	}
+	current, exists := s.openPositions[position.TokenAddress]
+	if !exists || current.ID != position.ID {
+		return model.TradePosition{}, ErrPositionNotOpen
+	}
+	delete(s.openPositions, position.TokenAddress)
+	s.inFlight[position.TokenAddress] = model.TradeSignalTypeSell
+	return current, nil
 }
 
 func (s *Service) RefreshOpenPositions(ctx context.Context) error {

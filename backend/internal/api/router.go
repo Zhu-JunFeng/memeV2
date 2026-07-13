@@ -753,6 +753,10 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.Fail(c, http.StatusBadRequest, "Jupiter 执行器尚未配置完成")
 	case errors.Is(err, trade.ErrInvalidTradeMode):
 		response.Fail(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, trade.ErrPositionNotOpen):
+		response.Fail(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, trade.ErrPositionSellInFlight):
+		response.Fail(c, http.StatusConflict, err.Error())
 	default:
 		response.Fail(c, http.StatusInternalServerError, err.Error())
 	}
