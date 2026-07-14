@@ -100,6 +100,7 @@ func main() {
 			KlineSource:      gmgnSource,
 			SystemKlines:     systemKlineStore,
 			EventBus:         events,
+			SignalStatus:     tradeRepo,
 		})
 		candidateMonitor.Start(context.Background())
 		if cfg.XXYY.Enabled {

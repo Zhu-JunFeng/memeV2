@@ -78,6 +78,18 @@ type fakeCandidateStore struct {
 	released []string
 }
 
+type fakeTradeSignalStatusProvider struct {
+	signals map[string]model.TradeSignal
+}
+
+func (p fakeTradeSignalStatusProvider) GetSignalBySignalID(_ context.Context, signalID string) (model.TradeSignal, error) {
+	item, ok := p.signals[signalID]
+	if !ok {
+		return model.TradeSignal{}, errors.New("signal not found")
+	}
+	return item, nil
+}
+
 type fakeMonitorKlineStore struct {
 	recent   map[string][]model.Kline
 	enqueued [][]model.Kline
@@ -775,5 +787,25 @@ func TestCandidateMonitorUpdatesMissingSymbol(t *testing.T) {
 	}
 	if store.states["token"].Symbol != "TOKEN" {
 		t.Fatalf("symbol was not updated: %#v", store.states["token"])
+	}
+}
+
+func TestCandidateMonitorRearmsAfterBuyRejection(t *testing.T) {
+	store := newFakeCandidateStore()
+	state := candidateMonitorState{
+		TokenAddress: "token-rejected", Status: candidateStatusBought, BuySignalID: "buy-rejected",
+		EntryTime: time.Now().UTC(), EntryPrice: 100, Level: model.PriceLevel{Price: 90},
+	}
+	store.states[state.TokenAddress] = state
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	monitor.signalStatus = fakeTradeSignalStatusProvider{signals: map[string]model.TradeSignal{
+		state.BuySignalID: {SignalID: state.BuySignalID, ConsumeStatus: "rejected"},
+	}}
+	if err := monitor.processBoughtCandidate(context.Background(), state, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := store.states[state.TokenAddress]
+	if got.Status != candidateStatusWatching || got.BuySignalID != "" || !got.EntryTime.IsZero() || got.EntryPrice != 0 || got.Level.Price != 0 {
+		t.Fatalf("expected rejected buy to rearm candidate, got %#v", got)
 	}
 }

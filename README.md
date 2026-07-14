@@ -203,7 +203,7 @@ npm run build
 - `trade.jupiter.api_key`：Jupiter API Key
 - GMGN、DexScreener、Solana RPC 与 Jupiter HTTP 客户端均直接出网，不经过代理
 - 交易模式不通过配置文件固定，而是通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
-- 买入信号进入交易模块后，会先用 Jupiter 报价按当前 token supply 折算报价市值；报价市值与信号 `triggerMarketCap` 的绝对滑点大于 `3%` 时不创建买入订单，Signals 原因显示 `不买入：滑点为 x% 大于 3.00%`
+- 买入信号进入交易模块后，会用 Jupiter 报价按当前 token supply 折算报价市值；首次相对 `triggerMarketCap` 的绝对滑点大于 `3%` 时连续重试 3 次，任意一次回落到 `<=3%` 即继续买入，四次均超限才拒绝
 
 ## 部署
 

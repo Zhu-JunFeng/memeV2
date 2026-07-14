@@ -174,6 +174,7 @@ func (r *fakeRepo) UpdatePositionMark(context.Context, string, float64, float64,
 type fakeExecutor struct {
 	lastRequest  ExecutionRequest
 	quoteResult  QuoteResult
+	quoteResults []QuoteResult
 	quoteCalls   int
 	executeCalls int
 }
@@ -181,6 +182,13 @@ type fakeExecutor struct {
 func (f *fakeExecutor) Quote(_ context.Context, req ExecutionRequest) (QuoteResult, error) {
 	f.lastRequest = req
 	f.quoteCalls++
+	if len(f.quoteResults) > 0 {
+		index := f.quoteCalls - 1
+		if index >= len(f.quoteResults) {
+			index = len(f.quoteResults) - 1
+		}
+		return f.quoteResults[index], nil
+	}
 	return f.quoteResult, nil
 }
 
@@ -376,8 +384,34 @@ func TestProcessBuySignalRejectsWhenJupiterQuoteSlippageTooLarge(t *testing.T) {
 	if executor.executeCalls != 0 {
 		t.Fatalf("expected executor Execute not to be called, got %d", executor.executeCalls)
 	}
-	if !strings.Contains(repo.signals[0].Reason, "滑点为 4.00% 大于 3.00%") {
+	if executor.quoteCalls != 4 {
+		t.Fatalf("expected initial quote plus 3 retries, got %d", executor.quoteCalls)
+	}
+	if !strings.Contains(repo.signals[0].Reason, "连续 4 次报价滑点均大于 3.00%") {
 		t.Fatalf("expected slippage rejection reason, got %q", repo.signals[0].Reason)
+	}
+}
+
+func TestProcessBuySignalBuysWhenThirdRetryFallsWithinSlippageLimit(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{quoteResults: []QuoteResult{{AvgPrice: 0.104}, {AvgPrice: 0.105}, {AvgPrice: 0.106}, {AvgPrice: 0.102}}}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithSupplyProvider(fakeSupplyProvider{supply: 1000}))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sig-slippage-recovered", SignalType: model.TradeSignalTypeBuy, StrategyCode: "pressure_breakout",
+		TokenAddress: "token-a", Interval: "1m", SignalTime: time.Now().UTC(), TriggerMarketCap: 100, Reason: "buy",
+	})
+	if err != nil {
+		t.Fatalf("process signal: %v", err)
+	}
+	if executor.quoteCalls != 4 || executor.executeCalls != 1 {
+		t.Fatalf("expected buy after third retry, quote=%d execute=%d", executor.quoteCalls, executor.executeCalls)
+	}
+	waitFor(t, func() bool { return len(repo.orders) == 1 })
+	if len(repo.orders) != 1 {
+		t.Fatalf("expected one buy order, got %d", len(repo.orders))
 	}
 }
 

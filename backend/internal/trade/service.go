@@ -27,6 +27,7 @@ var ErrPositionNotOpen = errors.New("持仓已平仓或不在可平仓状态")
 var ErrPositionSellInFlight = errors.New("持仓正在卖出，请勿重复提交")
 
 const maxBuyQuoteSignalSlippageRate = 0.03
+const buyQuoteMaxAttempts = 4
 
 type Repository interface {
 	EnsureAccount(ctx context.Context, account model.TradeAccount) (model.TradeAccount, error)
@@ -311,13 +312,13 @@ func (s *Service) handleSignal(ctx context.Context, signal model.TradeSignal) (s
 	switch signal.SignalType {
 	case model.TradeSignalTypeBuy:
 		if !s.tryBeginBuy(signal.TokenAddress) {
-			return signalProcessResult{}, nil
+			return signalProcessResult{status: "skipped", reason: "已有持仓或买入正在处理中"}, nil
 		}
 		return s.executeBuy(ctx, signal)
 	case model.TradeSignalTypeSell:
 		position, ok := s.tryBeginSell(signal.TokenAddress)
 		if !ok {
-			return signalProcessResult{}, nil
+			return signalProcessResult{status: "skipped", reason: "未找到可卖持仓或卖出正在处理中"}, nil
 		}
 		return signalProcessResult{}, s.executeSell(ctx, signal, position)
 	default:
@@ -546,19 +547,22 @@ func (s *Service) rejectBuyForQuoteSlippage(ctx context.Context, signal model.Tr
 	if supply <= 0 {
 		return false, "", nil
 	}
-	quote, err := s.executor.Quote(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: signal.TradeMode})
-	if err != nil {
-		return false, "", err
+	var slippageRate float64
+	for attempt := 1; attempt <= buyQuoteMaxAttempts; attempt++ {
+		quote, err := s.executor.Quote(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: signal.TradeMode})
+		if err != nil {
+			return false, "", err
+		}
+		if quote.AvgPrice <= 0 {
+			return false, "", nil
+		}
+		quoteMarketCap := quote.AvgPrice * supply
+		slippageRate = math.Abs(quoteMarketCap-signal.TriggerMarketCap) / signal.TriggerMarketCap
+		if slippageRate <= maxBuyQuoteSignalSlippageRate {
+			return false, "", nil
+		}
 	}
-	if quote.AvgPrice <= 0 {
-		return false, "", nil
-	}
-	quoteMarketCap := quote.AvgPrice * supply
-	slippageRate := math.Abs(quoteMarketCap-signal.TriggerMarketCap) / signal.TriggerMarketCap
-	if slippageRate <= maxBuyQuoteSignalSlippageRate {
-		return false, "", nil
-	}
-	reason := fmt.Sprintf("不买入：滑点为 %.2f%% 大于 %.2f%%", slippageRate*100, maxBuyQuoteSignalSlippageRate*100)
+	reason := fmt.Sprintf("不买入：连续 %d 次报价滑点均大于 %.2f%%，最后一次为 %.2f%%", buyQuoteMaxAttempts, maxBuyQuoteSignalSlippageRate*100, slippageRate*100)
 	return true, reason, nil
 }
 

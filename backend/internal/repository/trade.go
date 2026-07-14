@@ -463,7 +463,7 @@ func (r *TradeRepository) ListPositions(ctx context.Context, status string, trad
 			open_signal.trigger_market_cap, close_signal.trigger_market_cap, open_fill.avg_price, close_fill.avg_price, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
 			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
 			open_signal.signal_time, close_signal.signal_time, close_signal.reason,
-			open_signal.raw_payload_json #>> '{metadata,upstream,token}',
+			COALESCE(NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,token}', ''), NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,symbol}', '')),
 			NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,publishedAt}', '')::bigint
 		FROM trade_positions p
 		LEFT JOIN trade_orders open_order ON open_order.id = p.open_order_id
@@ -511,7 +511,7 @@ func (r *TradeRepository) GetPosition(ctx context.Context, id string) (model.Tra
 			open_signal.trigger_market_cap, close_signal.trigger_market_cap, open_fill.avg_price, close_fill.avg_price, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl,
 			p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at,
 			open_signal.signal_time, close_signal.signal_time, close_signal.reason,
-			open_signal.raw_payload_json #>> '{metadata,upstream,token}',
+			COALESCE(NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,token}', ''), NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,symbol}', '')),
 			NULLIF(open_signal.raw_payload_json #>> '{metadata,upstream,publishedAt}', '')::bigint
 		FROM trade_positions p
 		LEFT JOIN trade_orders open_order ON open_order.id = p.open_order_id

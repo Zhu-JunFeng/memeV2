@@ -53,6 +53,7 @@ type CandidateMonitorConfig struct {
 	KlineSource      datasource.KlineDataSource
 	SystemKlines     monitorKlineStore
 	EventBus         *eventbus.Broker
+	SignalStatus     tradeSignalStatusProvider
 	Now              func() time.Time
 }
 
@@ -69,7 +70,12 @@ type CandidateMonitor struct {
 	supplyMu       sync.RWMutex
 	supplyCache    map[string]float64
 	eventBus       *eventbus.Broker
+	signalStatus   tradeSignalStatusProvider
 	candidateMu    sync.Mutex
+}
+
+type tradeSignalStatusProvider interface {
+	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
 }
 
 type CandidateMonitorItem struct {
@@ -174,6 +180,7 @@ func NewCandidateMonitor(redisClient *redis.Client, priceProvider datasource.Tok
 		klineCache:     newCandidateKlineCache(0),
 		supplyCache:    map[string]float64{},
 		eventBus:       cfg.EventBus,
+		signalStatus:   cfg.SignalStatus,
 	}
 }
 
@@ -905,6 +912,24 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, klines []
 }
 
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
+	if m.signalStatus != nil && strings.TrimSpace(state.BuySignalID) != "" {
+		signal, err := m.signalStatus.GetSignalBySignalID(ctx, state.BuySignalID)
+		if err != nil {
+			return m.saveState(ctx, state)
+		}
+		switch signal.ConsumeStatus {
+		case "rejected", "failed", "skipped":
+			state.Status = candidateStatusWatching
+			state.BuySignalID = ""
+			state.EntryTime = time.Time{}
+			state.EntryPrice = 0
+			state.Level = model.PriceLevel{}
+			return m.saveState(ctx, state)
+		case "executed":
+		default:
+			return m.saveState(ctx, state)
+		}
+	}
 	decision, decisionBar, ok := backtest.EvaluateLiveBandFollowExitAt(klines, state.EntryTime, state.Level, m.cfg.BreakoutFollow, m.now())
 	if !ok {
 		return m.saveState(ctx, state)
