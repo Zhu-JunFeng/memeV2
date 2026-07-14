@@ -40,6 +40,9 @@ func TestPaperModeUsesQuoteWithoutWalletBalance(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/swap/v1/quote") {
+			if got := r.URL.Query().Get("amount"); got != "50000000" {
+				t.Fatalf("expected 10 USD to convert to 0.05 SOL, got raw amount %q", got)
+			}
 			if got := r.URL.Query().Get("slippageBps"); got != "200" {
 				t.Fatalf("expected 2%% quote slippage protection, got %q", got)
 			}
@@ -80,7 +83,7 @@ func TestPaperModeUsesQuoteWithoutWalletBalance(t *testing.T) {
 		walletAddress: privateKey.PublicKey().String(),
 	}
 	req := ExecutionRequest{
-		Account: model.TradeAccount{BuyAmountSOL: 0.1},
+		Account: model.TradeAccount{BuyAmountUSD: 10},
 		Signal: model.TradeSignal{
 			TokenAddress: "token-a",
 			SignalType:   model.TradeSignalTypeBuy,

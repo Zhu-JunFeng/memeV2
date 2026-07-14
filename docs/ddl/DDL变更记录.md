@@ -351,3 +351,19 @@ ALTER TABLE trade_orders
 - `trade_accounts.buy_amount_sol` 作为新的固定买入数量字段，当前默认 `0.1 SOL`
 - `trade_orders.intent_amount_sol` 用于记录买单计划投入的 SOL 数量
 - `buy_amount_usd`、`intent_amount_usd` 保留为历史兼容字段，不再作为新交易主语义
+
+## 008-交易买入数量切回固定美元金额（PostgreSQL）
+
+```sql
+ALTER TABLE trade_accounts
+  ALTER COLUMN buy_amount_usd SET DEFAULT 10;
+
+ALTER TABLE trade_accounts
+  ALTER COLUMN buy_amount_sol SET DEFAULT 0;
+```
+
+说明：
+
+- `trade_accounts.buy_amount_usd` 恢复为当前单次买入金额，生产配置为 `10u`
+- 下单时直接使用当前 SOL/USD 价格把美元金额换算为 lamports，不读取备用价格源
+- `buy_amount_sol`、`intent_amount_sol` 仅保留历史兼容，不再作为新买单主语义

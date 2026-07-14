@@ -164,7 +164,8 @@ func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, ex
 		Name:                defaultString(cfg.AccountName, "default"),
 		WalletAddress:       walletAddress,
 		Status:              "active",
-		BuyAmountSOL:        cfg.BuyAmountSOL,
+		BuyAmountUSD:        cfg.BuyAmountUSD,
+		BuyAmountSOL:        0,
 		SlippageBPS:         cfg.SlippageBPS,
 		PriorityFeeLamports: cfg.PriorityFee,
 	})
@@ -444,8 +445,8 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 		ExecutionChannel:  executionChannelForMode(mode),
 		TokenAddress:      signal.TokenAddress,
 		Side:              model.TradeSignalTypeBuy,
-		IntentAmountUSD:   0,
-		IntentAmountSOL:   s.account.BuyAmountSOL,
+		IntentAmountUSD:   s.account.BuyAmountUSD,
+		IntentAmountSOL:   0,
 		IntentTokenAmount: 0,
 		Status:            model.TradeOrderStatusPending,
 	}

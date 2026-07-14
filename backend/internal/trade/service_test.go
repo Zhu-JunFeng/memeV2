@@ -33,7 +33,7 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		account:       model.TradeAccount{ID: "acc-1", Name: "default", BuyAmountSOL: 0.1, SlippageBPS: 500},
+		account:       model.TradeAccount{ID: "acc-1", Name: "default", BuyAmountUSD: 10, SlippageBPS: 500},
 		positions:     map[string]model.TradePosition{},
 		updatedSignal: map[string]string{},
 		positionByID:  map[string]model.TradePosition{},
@@ -245,7 +245,7 @@ func testTradeConfig(t *testing.T) config.TradeConfig {
 	return config.TradeConfig{
 		Enabled:          true,
 		AccountName:      "default",
-		BuyAmountSOL:     0.1,
+		BuyAmountUSD:     10,
 		SlippageBPS:      500,
 		WalletPrivateKey: privateKey.String(),
 	}

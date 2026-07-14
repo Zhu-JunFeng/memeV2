@@ -65,7 +65,7 @@ trade:
   account_name: "default"
   wallet_address: ""
   wallet_private_key: ""
-  buy_amount_sol: 0.1
+  buy_amount_usd: 10 # 单次买入美元金额；执行时按当前 SOL/USD 价格换算输入 SOL
   slippage_bps: 200 # 实盘固定 2% 滑点保护；传入 /order 后会覆盖 RTSE
   priority_fee: 0
   solana_rpc_url: "https://api.mainnet-beta.solana.com"

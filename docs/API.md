@@ -414,7 +414,7 @@ Birdeye K 线专用实时突破信号入口。
 - 候选池卖出后如果市值仍高于阈值会重新进入 `watching`，但同一根已卖出的 bar 不允许再次买入，实时语义与回测的单持仓约束保持一致
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
-- `live` 模式保持真实 Jupiter 执行；买入默认用 SOL 作为输入资产，并按固定 `trade.buy_amount_sol` 数量直接向 Jupiter 下单
+- `live` 模式保持真实 Jupiter 执行；买入使用 SOL 作为输入资产，按固定 `trade.buy_amount_usd` 美元金额和下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单
 - 交易模块接收到买入信号后，会用同一笔买入数量调用 Jupiter `quote`，按报价均价乘当前 token supply 折算报价市值；首次与信号 `triggerMarketCap` 的绝对滑点大于 `3%` 时连续重试 3 次，任意一次回落到 `<=3%` 即继续买入，四次均超限才不创建订单并把 Signals 状态记为 `rejected`。
 - GMGN、DexScreener、Solana RPC 与 Jupiter 的外网请求均由服务器直接访问，不经过代理。
 
@@ -558,7 +558,7 @@ Signals 实时 SSE 流。参数同 `/api/trade/signals`。连接后先推 `snaps
 - `tradeMode`
 - `executionChannel`：当前为 `jupiter_paper` 或 `jupiter_live`
 - `side`：买/卖方向
-- `intentAmountSol` / `intentTokenAmount`：下单意图数量；买单默认展示固定 `0.1 SOL`，卖单展示待卖出的 token 数量
+- `intentAmountUsd` / `intentTokenAmount`：下单意图数量；买单展示固定美元金额，卖单展示待卖出的 token 数量
 - `status`：`pending` / `submitted` / `filled` / `failed`
 - `submitTxHash`
 - `failReason`

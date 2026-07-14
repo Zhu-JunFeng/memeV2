@@ -2399,9 +2399,6 @@ function formatOrderIntent(row) {
     const soldSol = orderReceivedSol(row);
     return Number.isFinite(soldSol) ? `${formatSolAmount(soldSol)} SOL` : "-";
   }
-  if (Number(row?.intentAmountSol) > 0) {
-    return `${formatTokenAmount(row.intentAmountSol)} SOL`;
-  }
   if (Number(row?.intentAmountUsd) > 0) {
     return formatUsd(row.intentAmountUsd).replace("+", "");
   }
