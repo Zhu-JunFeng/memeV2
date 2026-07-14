@@ -20,6 +20,9 @@ birdeye:
 
 gmgn:
   base_url: "https://openapi.gmgn.ai"
+  api_keys:
+    - "gmgn_64cf11c4b8ef5c9426dcfcb6d4a7daf6"
+    - "gmgn_084c4c4f375a015021611267c5d0848c"
   api_key: ""
   chain: "sol"
   max_qps: 8
