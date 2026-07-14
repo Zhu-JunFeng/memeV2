@@ -15,6 +15,13 @@ type TradeMode string
 
 type TradeExecutionChannel string
 
+type TradeModeChange struct {
+	PreviousMode  TradeMode
+	CurrentMode   TradeMode
+	WalletAddress string
+	ChangedAt     time.Time
+}
+
 const (
 	TradeSignalTypeBuy  TradeSignalType = "buy"
 	TradeSignalTypeSell TradeSignalType = "sell"

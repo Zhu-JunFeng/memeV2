@@ -218,8 +218,9 @@ type fakeSupplyProvider struct {
 }
 
 type fakeNotifier struct {
-	signals []model.TradeSignal
-	fills   []model.TradeFill
+	signals     []model.TradeSignal
+	fills       []model.TradeFill
+	modeChanges []model.TradeModeChange
 }
 
 func (n *fakeNotifier) NotifySignal(_ context.Context, signal model.TradeSignal) error {
@@ -229,6 +230,11 @@ func (n *fakeNotifier) NotifySignal(_ context.Context, signal model.TradeSignal)
 
 func (n *fakeNotifier) NotifyTrade(_ context.Context, fill model.TradeFill) error {
 	n.fills = append(n.fills, fill)
+	return nil
+}
+
+func (n *fakeNotifier) NotifyTradeModeChange(_ context.Context, change model.TradeModeChange) error {
+	n.modeChanges = append(n.modeChanges, change)
 	return nil
 }
 
@@ -281,7 +287,8 @@ func TestNewServiceDefaultsTradeModeToPaper(t *testing.T) {
 func TestUpdateTradeModePersistsState(t *testing.T) {
 	repo := newFakeRepo()
 	executor := &fakeExecutor{}
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	notifier := &fakeNotifier{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithNotifier(notifier))
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -294,6 +301,19 @@ func TestUpdateTradeModePersistsState(t *testing.T) {
 	}
 	if repo.tradeMode != model.TradeModeLive {
 		t.Fatalf("expected repo to persist live mode, got %s", repo.tradeMode)
+	}
+	if len(notifier.modeChanges) != 1 {
+		t.Fatalf("expected one mode change notification, got %d", len(notifier.modeChanges))
+	}
+	change := notifier.modeChanges[0]
+	if change.PreviousMode != model.TradeModePaper || change.CurrentMode != model.TradeModeLive || change.WalletAddress != repo.account.WalletAddress {
+		t.Fatalf("unexpected mode change notification: %+v", change)
+	}
+	if _, err := svc.UpdateTradeMode(context.Background(), model.TradeModePaper); err != nil {
+		t.Fatalf("switch back to paper: %v", err)
+	}
+	if len(notifier.modeChanges) != 2 || notifier.modeChanges[1].PreviousMode != model.TradeModeLive || notifier.modeChanges[1].CurrentMode != model.TradeModePaper {
+		t.Fatalf("expected live-to-paper notification, got %+v", notifier.modeChanges)
 	}
 }
 

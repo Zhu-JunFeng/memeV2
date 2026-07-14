@@ -62,6 +62,7 @@ type Executor interface {
 type Notifier interface {
 	NotifySignal(ctx context.Context, signal model.TradeSignal) error
 	NotifyTrade(ctx context.Context, fill model.TradeFill) error
+	NotifyTradeModeChange(ctx context.Context, change model.TradeModeChange) error
 }
 
 type ExecutionRequest struct {
@@ -214,12 +215,21 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 	if !isValidTradeMode(mode) {
 		return "", fmt.Errorf("%w: %s", ErrInvalidTradeMode, mode)
 	}
+	previousMode := s.GetTradeMode()
 	if err := s.repo.SetTradeMode(ctx, mode); err != nil {
 		return "", err
 	}
 	s.modeMu.Lock()
 	s.tradeMode = mode
 	s.modeMu.Unlock()
+	if previousMode != mode {
+		s.notifyTradeModeChange(ctx, model.TradeModeChange{
+			PreviousMode:  previousMode,
+			CurrentMode:   mode,
+			WalletAddress: s.account.WalletAddress,
+			ChangedAt:     time.Now().UTC(),
+		})
+	}
 	return mode, nil
 }
 
@@ -776,6 +786,15 @@ func (s *Service) notifyTrade(ctx context.Context, fill model.TradeFill) {
 	}
 	if err := s.notifier.NotifyTrade(ctx, fill); err != nil {
 		log.Printf("trade fill notification failed: order_id=%s err=%v", fill.OrderID, err)
+	}
+}
+
+func (s *Service) notifyTradeModeChange(ctx context.Context, change model.TradeModeChange) {
+	if s.notifier == nil {
+		return
+	}
+	if err := s.notifier.NotifyTradeModeChange(ctx, change); err != nil {
+		log.Printf("trade mode change notification failed: previous=%s current=%s err=%v", change.PreviousMode, change.CurrentMode, err)
 	}
 }
 

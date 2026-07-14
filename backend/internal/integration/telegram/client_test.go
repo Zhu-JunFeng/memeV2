@@ -7,9 +7,38 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"solana-meme-backtest/backend/internal/model"
 )
+
+func TestNotifyTradeModeChangeIncludesModesWalletAndTime(t *testing.T) {
+	var message string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		message = payload["text"]
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token", "chat-1", server.Client())
+	client.baseURL = server.URL
+	err := client.NotifyTradeModeChange(context.Background(), model.TradeModeChange{
+		PreviousMode:  model.TradeModePaper,
+		CurrentMode:   model.TradeModeLive,
+		WalletAddress: "wallet-1",
+		ChangedAt:     time.Date(2026, 7, 14, 11, 30, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"交易模式已切换", "原模式：模拟盘", "新模式：实盘", "钱包：wallet-1", "时间：2026-07-14 19:30:00"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("message %q missing %q", message, expected)
+		}
+	}
+}
 
 func TestNotifySignalIncludesModeAndDirection(t *testing.T) {
 	var message string

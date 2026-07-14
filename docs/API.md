@@ -500,6 +500,7 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 - `paper`：只请求 Jupiter `quote`，不依赖真实钱包余额，也不会执行签名和链上提交
 - `live`：恢复真实下单执行
 - 切换后新进来的信号、订单、成交、持仓都会记录对应 `tradeMode`
+- 模式持久化成功后向 Telegram 发送切换通知，内容包含原模式、新模式、当前交易钱包和切换时间；重复提交当前模式不重复通知
 
 ### GET /api/trade/summary
 

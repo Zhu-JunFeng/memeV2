@@ -63,6 +63,15 @@ func (c *Client) NotifyTrade(ctx context.Context, fill model.TradeFill) error {
 	return c.sendMessage(ctx, text)
 }
 
+func (c *Client) NotifyTradeModeChange(ctx context.Context, change model.TradeModeChange) error {
+	text := fmt.Sprintf(
+		"🔄 交易模式已切换\n原模式：%s\n新模式：%s\n钱包：%s\n时间：%s",
+		modeText(change.PreviousMode), modeText(change.CurrentMode), change.WalletAddress,
+		change.ChangedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
+	)
+	return c.sendMessage(ctx, text)
+}
+
 func signalProfitRate(raw json.RawMessage) (float64, bool) {
 	var payload struct {
 		Metadata struct {
