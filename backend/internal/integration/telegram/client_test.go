@@ -24,16 +24,22 @@ func TestNotifyTradeModeChangeIncludesModesWalletAndTime(t *testing.T) {
 
 	client := NewClient("test-token", "chat-1", server.Client())
 	client.baseURL = server.URL
+	balance := 0.998
 	err := client.NotifyTradeModeChange(context.Background(), model.TradeModeChange{
 		PreviousMode:  model.TradeModePaper,
 		CurrentMode:   model.TradeModeLive,
 		WalletAddress: "wallet-1",
 		ChangedAt:     time.Date(2026, 7, 14, 11, 30, 0, 0, time.UTC),
+		Summary: model.TradeModePeriodSummary{
+			TradeMode: model.TradeModePaper, StartedAt: time.Date(2026, 7, 14, 9, 27, 56, 0, time.UTC), EndedAt: time.Date(2026, 7, 14, 11, 30, 0, 0, time.UTC),
+			BuyCount: 3, SellCount: 2, ClosedPositionCount: 2, WinCount: 1, LossCount: 1, RealizedPNL: 1.2345, OpenPositionCount: 1, FailedOrderCount: 4,
+		},
+		WalletBalance: &balance,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"交易模式已切换", "原模式：模拟盘", "新模式：实盘", "钱包：wallet-1", "时间：2026-07-14 19:30:00"} {
+	for _, expected := range []string{"交易模式已切换", "原模式：模拟盘", "新模式：实盘", "钱包：wallet-1", "时间：2026-07-14 19:30:00", "上一阶段汇总（模拟盘）", "持续时间：2小时2分4秒", "成交买入：3 笔", "成交卖出：2 笔", "盈利 1 / 亏损 1 / 持平 0", "实现盈亏：+1.2345u", "当前未平仓：1 笔", "失败订单：4 笔", "当前钱包余额：0.998000000 SOL"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message %q missing %q", message, expected)
 		}

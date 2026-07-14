@@ -18,6 +18,8 @@ import (
 type fakeRepo struct {
 	account           model.TradeAccount
 	tradeMode         model.TradeMode
+	modeStartedAt     time.Time
+	periodSummary     model.TradeModePeriodSummary
 	summaries         []model.TradeSummaryItem
 	signals           []model.TradeSignal
 	orders            []model.TradeOrder
@@ -50,13 +52,21 @@ func (r *fakeRepo) GetAccountByName(context.Context, string) (model.TradeAccount
 func (r *fakeRepo) ListAccounts(context.Context) ([]model.TradeAccount, error) {
 	return []model.TradeAccount{r.account}, nil
 }
-func (r *fakeRepo) GetTradeMode(context.Context) (model.TradeMode, error) {
-	return r.tradeMode, nil
+func (r *fakeRepo) GetTradeModeState(context.Context) (model.TradeMode, time.Time, error) {
+	return r.tradeMode, r.modeStartedAt, nil
 }
-func (r *fakeRepo) SetTradeMode(_ context.Context, mode model.TradeMode) error {
+func (r *fakeRepo) SetTradeModeState(_ context.Context, mode model.TradeMode, startedAt time.Time) error {
 	r.tradeMode = mode
+	r.modeStartedAt = startedAt
 	r.setTradeModeCalls++
 	return nil
+}
+func (r *fakeRepo) GetTradeModePeriodSummary(_ context.Context, _ string, mode model.TradeMode, startedAt time.Time, endedAt time.Time) (model.TradeModePeriodSummary, error) {
+	summary := r.periodSummary
+	summary.TradeMode = mode
+	summary.StartedAt = startedAt
+	summary.EndedAt = endedAt
+	return summary, nil
 }
 func (r *fakeRepo) InsertSignalIfAbsent(_ context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error) {
 	for _, item := range r.signals {
@@ -242,6 +252,15 @@ func (p fakeSupplyProvider) GetTokenSupply(context.Context, string) (float64, er
 	return p.supply, nil
 }
 
+type fakeWalletBalanceProvider struct {
+	balance float64
+	err     error
+}
+
+func (p fakeWalletBalanceProvider) GetSOLBalance(context.Context, string) (float64, error) {
+	return p.balance, p.err
+}
+
 func testTradeConfig(t *testing.T) config.TradeConfig {
 	t.Helper()
 	privateKey, err := solana.NewRandomPrivateKey()
@@ -286,9 +305,10 @@ func TestNewServiceDefaultsTradeModeToPaper(t *testing.T) {
 
 func TestUpdateTradeModePersistsState(t *testing.T) {
 	repo := newFakeRepo()
+	repo.periodSummary = model.TradeModePeriodSummary{BuyCount: 3, SellCount: 2, RealizedPNL: 1.25}
 	executor := &fakeExecutor{}
 	notifier := &fakeNotifier{}
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithNotifier(notifier))
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithNotifier(notifier), WithWalletBalanceProvider(fakeWalletBalanceProvider{balance: 0.998}))
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -309,11 +329,38 @@ func TestUpdateTradeModePersistsState(t *testing.T) {
 	if change.PreviousMode != model.TradeModePaper || change.CurrentMode != model.TradeModeLive || change.WalletAddress != repo.account.WalletAddress {
 		t.Fatalf("unexpected mode change notification: %+v", change)
 	}
+	if change.Summary.BuyCount != 3 || change.Summary.SellCount != 2 || change.Summary.RealizedPNL != 1.25 {
+		t.Fatalf("unexpected period summary: %+v", change.Summary)
+	}
+	if change.WalletBalance == nil || *change.WalletBalance != 0.998 {
+		t.Fatalf("unexpected wallet balance: %v", change.WalletBalance)
+	}
 	if _, err := svc.UpdateTradeMode(context.Background(), model.TradeModePaper); err != nil {
 		t.Fatalf("switch back to paper: %v", err)
 	}
 	if len(notifier.modeChanges) != 2 || notifier.modeChanges[1].PreviousMode != model.TradeModeLive || notifier.modeChanges[1].CurrentMode != model.TradeModePaper {
 		t.Fatalf("expected live-to-paper notification, got %+v", notifier.modeChanges)
+	}
+	if notifier.modeChanges[1].WalletBalance != nil {
+		t.Fatalf("paper switch must not include wallet balance: %v", notifier.modeChanges[1].WalletBalance)
+	}
+}
+
+func TestUpdateTradeModeDoesNotEnableLiveWhenBalanceLookupFails(t *testing.T) {
+	repo := newFakeRepo()
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil, WithWalletBalanceProvider(fakeWalletBalanceProvider{err: errors.New("rpc unavailable")}))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	setCallsBefore := repo.setTradeModeCalls
+	if _, err := svc.UpdateTradeMode(context.Background(), model.TradeModeLive); err == nil || !strings.Contains(err.Error(), "rpc unavailable") {
+		t.Fatalf("expected balance lookup error, got %v", err)
+	}
+	if svc.GetTradeMode() != model.TradeModePaper || repo.tradeMode != model.TradeModePaper {
+		t.Fatalf("live mode must not be enabled after balance lookup failure: service=%s repo=%s", svc.GetTradeMode(), repo.tradeMode)
+	}
+	if repo.setTradeModeCalls != setCallsBefore {
+		t.Fatalf("mode state must not be persisted after balance lookup failure")
 	}
 }
 

@@ -18,6 +18,10 @@ type TokenSupplyProvider interface {
 	GetTokenSupply(ctx context.Context, mint string) (float64, error)
 }
 
+type WalletBalanceProvider interface {
+	GetSOLBalance(ctx context.Context, walletAddress string) (float64, error)
+}
+
 type SolanaRPCSupplyProvider struct {
 	client *http.Client
 	url    string
@@ -39,6 +43,15 @@ type rpcSupplyResponse struct {
 			UIAmount       float64 `json:"uiAmount"`
 			UIAmountString string  `json:"uiAmountString"`
 		} `json:"value"`
+	} `json:"result"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+type rpcBalanceResponse struct {
+	Result struct {
+		Value uint64 `json:"value"`
 	} `json:"result"`
 	Error *struct {
 		Message string `json:"message"`
@@ -80,6 +93,44 @@ func (p *SolanaRPCSupplyProvider) GetTokenSupply(ctx context.Context, mint strin
 	p.cache[mint] = supplyCacheItem{value: supply, expiresAt: now.Add(p.ttl)}
 	p.mu.Unlock()
 	return supply, nil
+}
+
+func (p *SolanaRPCSupplyProvider) GetSOLBalance(ctx context.Context, walletAddress string) (float64, error) {
+	walletAddress = strings.TrimSpace(walletAddress)
+	if walletAddress == "" {
+		return 0, fmt.Errorf("Solana 钱包地址不能为空")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "getBalance",
+		"params":  []any{walletAddress, map[string]any{"commitment": "confirmed"}},
+	})
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("accept", "application/json")
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	var body rpcBalanceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("Solana RPC 返回状态码 %d", resp.StatusCode)
+	}
+	if body.Error != nil {
+		return 0, fmt.Errorf("Solana RPC 获取钱包余额失败: %s", body.Error.Message)
+	}
+	return float64(body.Result.Value) / 1_000_000_000, nil
 }
 
 func (p *SolanaRPCSupplyProvider) fetchSupply(ctx context.Context, mint string) (float64, error) {

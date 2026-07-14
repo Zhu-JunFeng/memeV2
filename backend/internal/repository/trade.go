@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,10 @@ import (
 var ErrTradeOrderNotFound = errors.New("交易订单不存在")
 var ErrTradePositionNotFound = errors.New("交易持仓不存在")
 
-const tradeModeSettingKey = "trade.mode"
+const (
+	tradeModeSettingKey          = "trade.mode"
+	tradeModeStartedAtSettingKey = "trade.mode.started_at"
+)
 
 type TradeRepository struct {
 	db *sql.DB
@@ -80,29 +84,84 @@ func (r *TradeRepository) ListAccounts(ctx context.Context) ([]model.TradeAccoun
 	return items, rows.Err()
 }
 
-func (r *TradeRepository) GetTradeMode(ctx context.Context) (model.TradeMode, error) {
-	var value string
-	err := r.db.QueryRowContext(ctx, `SELECT setting_value FROM system_runtime_settings WHERE setting_key = $1`, tradeModeSettingKey).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
+func (r *TradeRepository) GetTradeModeState(ctx context.Context) (model.TradeMode, time.Time, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT setting_key, setting_value
+		FROM system_runtime_settings
+		WHERE setting_key IN ($1, $2)`, tradeModeSettingKey, tradeModeStartedAtSettingKey)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
-	return model.TradeMode(strings.TrimSpace(value)), nil
+	defer rows.Close()
+	var mode model.TradeMode
+	var startedAt time.Time
+	for rows.Next() {
+		var key string
+		var value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return "", time.Time{}, err
+		}
+		switch key {
+		case tradeModeSettingKey:
+			mode = model.TradeMode(strings.TrimSpace(value))
+		case tradeModeStartedAtSettingKey:
+			parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+			if err != nil {
+				return "", time.Time{}, fmt.Errorf("解析交易模式开始时间失败: %w", err)
+			}
+			startedAt = parsed.UTC()
+		}
+	}
+	return mode, startedAt, rows.Err()
 }
 
-func (r *TradeRepository) SetTradeMode(ctx context.Context, mode model.TradeMode) error {
+func (r *TradeRepository) SetTradeModeState(ctx context.Context, mode model.TradeMode, startedAt time.Time) error {
 	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO system_runtime_settings (setting_key, setting_value, created_at, updated_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (setting_key) DO UPDATE SET
-			setting_value = excluded.setting_value,
-			updated_at = excluded.updated_at`,
-		tradeModeSettingKey, string(mode), now, now,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for key, value := range map[string]string{
+		tradeModeSettingKey:          string(mode),
+		tradeModeStartedAtSettingKey: startedAt.UTC().Format(time.RFC3339Nano),
+	} {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO system_runtime_settings (setting_key, setting_value, created_at, updated_at)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (setting_key) DO UPDATE SET
+				setting_value = excluded.setting_value,
+				updated_at = excluded.updated_at`, key, value, now, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *TradeRepository) GetTradeModePeriodSummary(ctx context.Context, accountID string, mode model.TradeMode, startedAt time.Time, endedAt time.Time) (model.TradeModePeriodSummary, error) {
+	summary := model.TradeModePeriodSummary{TradeMode: mode, StartedAt: startedAt.UTC(), EndedAt: endedAt.UTC()}
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE((SELECT COUNT(*) FROM trade_fills f JOIN trade_orders o ON o.id = f.order_id WHERE o.account_id = $1 AND f.trade_mode = $2 AND f.side = 'buy' AND f.executed_at >= $3 AND f.executed_at < $4), 0),
+			COALESCE((SELECT COUNT(*) FROM trade_fills f JOIN trade_orders o ON o.id = f.order_id WHERE o.account_id = $1 AND f.trade_mode = $2 AND f.side = 'sell' AND f.executed_at >= $3 AND f.executed_at < $4), 0),
+			COALESCE((SELECT COUNT(*) FROM trade_orders WHERE account_id = $1 AND trade_mode = $2 AND status = 'failed' AND created_at >= $3 AND created_at < $4), 0),
+			COALESCE((SELECT COUNT(*) FROM trade_positions WHERE account_id = $1 AND trade_mode = $2 AND status = 'closed' AND closed_at >= $3 AND closed_at < $4), 0),
+			COALESCE((SELECT COUNT(*) FROM trade_positions WHERE account_id = $1 AND trade_mode = $2 AND status = 'closed' AND realized_pnl > 0 AND closed_at >= $3 AND closed_at < $4), 0),
+			COALESCE((SELECT COUNT(*) FROM trade_positions WHERE account_id = $1 AND trade_mode = $2 AND status = 'closed' AND realized_pnl < 0 AND closed_at >= $3 AND closed_at < $4), 0),
+			COALESCE((SELECT SUM(realized_pnl) FROM trade_positions WHERE account_id = $1 AND trade_mode = $2 AND status = 'closed' AND closed_at >= $3 AND closed_at < $4), 0),
+			COALESCE((SELECT COUNT(*) FROM trade_positions WHERE account_id = $1 AND trade_mode = $2 AND status = 'open'), 0)`,
+		accountID, mode, startedAt.UTC(), endedAt.UTC(),
+	).Scan(
+		&summary.BuyCount,
+		&summary.SellCount,
+		&summary.FailedOrderCount,
+		&summary.ClosedPositionCount,
+		&summary.WinCount,
+		&summary.LossCount,
+		&summary.RealizedPNL,
+		&summary.OpenPositionCount,
 	)
-	return err
+	return summary, err
 }
 
 func (r *TradeRepository) InsertSignalIfAbsent(ctx context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error) {

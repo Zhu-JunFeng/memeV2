@@ -125,7 +125,7 @@ func main() {
 	if cfg.Telegram.Enabled {
 		tradeNotifier = telegram.NewClient(cfg.Telegram.BotToken, cfg.Telegram.ChatID, nil)
 	}
-	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource, trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider), trade.WithNotifier(tradeNotifier))
+	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource, trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider), trade.WithWalletBalanceProvider(supplyProvider), trade.WithNotifier(tradeNotifier))
 	if err != nil {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
 	}

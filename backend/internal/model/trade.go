@@ -20,6 +20,22 @@ type TradeModeChange struct {
 	CurrentMode   TradeMode
 	WalletAddress string
 	ChangedAt     time.Time
+	Summary       TradeModePeriodSummary
+	WalletBalance *float64
+}
+
+type TradeModePeriodSummary struct {
+	TradeMode           TradeMode
+	StartedAt           time.Time
+	EndedAt             time.Time
+	BuyCount            int
+	SellCount           int
+	FailedOrderCount    int
+	ClosedPositionCount int
+	WinCount            int
+	LossCount           int
+	RealizedPNL         float64
+	OpenPositionCount   int
 }
 
 const (

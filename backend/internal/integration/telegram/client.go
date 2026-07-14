@@ -64,12 +64,52 @@ func (c *Client) NotifyTrade(ctx context.Context, fill model.TradeFill) error {
 }
 
 func (c *Client) NotifyTradeModeChange(ctx context.Context, change model.TradeModeChange) error {
+	summary := change.Summary
+	neutralCount := summary.ClosedPositionCount - summary.WinCount - summary.LossCount
+	if neutralCount < 0 {
+		neutralCount = 0
+	}
 	text := fmt.Sprintf(
-		"🔄 交易模式已切换\n原模式：%s\n新模式：%s\n钱包：%s\n时间：%s",
+		"🔄 交易模式已切换\n原模式：%s\n新模式：%s\n钱包：%s\n时间：%s\n\n上一阶段汇总（%s）\n统计区间：%s - %s\n持续时间：%s\n成交买入：%d 笔\n成交卖出：%d 笔\n已平仓：%d 笔（盈利 %d / 亏损 %d / 持平 %d）\n实现盈亏：%+.4fu\n当前未平仓：%d 笔\n失败订单：%d 笔",
 		modeText(change.PreviousMode), modeText(change.CurrentMode), change.WalletAddress,
 		change.ChangedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
+		modeText(summary.TradeMode),
+		summary.StartedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
+		summary.EndedAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
+		formatDuration(summary.EndedAt.Sub(summary.StartedAt)),
+		summary.BuyCount, summary.SellCount, summary.ClosedPositionCount,
+		summary.WinCount, summary.LossCount, neutralCount, summary.RealizedPNL,
+		summary.OpenPositionCount, summary.FailedOrderCount,
 	)
+	if change.CurrentMode == model.TradeModeLive && change.WalletBalance != nil {
+		text += fmt.Sprintf("\n当前钱包余额：%.9f SOL", *change.WalletBalance)
+	}
 	return c.sendMessage(ctx, text)
+}
+
+func formatDuration(value time.Duration) string {
+	if value < 0 {
+		value = 0
+	}
+	seconds := int64(value / time.Second)
+	days := seconds / 86400
+	hours := seconds % 86400 / 3600
+	minutes := seconds % 3600 / 60
+	remainingSeconds := seconds % 60
+	parts := make([]string, 0, 4)
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%d天", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%d小时", hours))
+	}
+	if minutes > 0 {
+		parts = append(parts, fmt.Sprintf("%d分", minutes))
+	}
+	if remainingSeconds > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%d秒", remainingSeconds))
+	}
+	return strings.Join(parts, "")
 }
 
 func signalProfitRate(raw json.RawMessage) (float64, bool) {

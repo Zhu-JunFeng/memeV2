@@ -33,8 +33,9 @@ type Repository interface {
 	EnsureAccount(ctx context.Context, account model.TradeAccount) (model.TradeAccount, error)
 	GetAccountByName(ctx context.Context, name string) (model.TradeAccount, error)
 	ListAccounts(ctx context.Context) ([]model.TradeAccount, error)
-	GetTradeMode(ctx context.Context) (model.TradeMode, error)
-	SetTradeMode(ctx context.Context, mode model.TradeMode) error
+	GetTradeModeState(ctx context.Context) (model.TradeMode, time.Time, error)
+	SetTradeModeState(ctx context.Context, mode model.TradeMode, startedAt time.Time) error
+	GetTradeModePeriodSummary(ctx context.Context, accountID string, mode model.TradeMode, startedAt time.Time, endedAt time.Time) (model.TradeModePeriodSummary, error)
 	InsertSignalIfAbsent(ctx context.Context, signal model.TradeSignal) (model.TradeSignal, bool, error)
 	UpdateSignalStatus(ctx context.Context, signalID string, status string) error
 	UpdateSignalStatusAndReason(ctx context.Context, signalID string, status string, reason string) error
@@ -100,22 +101,24 @@ type signalProcessResult struct {
 }
 
 type Service struct {
-	cfg            config.TradeConfig
-	repo           Repository
-	executor       Executor
-	priceProvider  datasource.TokenPriceProvider
-	supplyProvider datasource.TokenSupplyProvider
-	account        model.TradeAccount
-	enabled        bool
-	modeMu         sync.RWMutex
-	tradeMode      model.TradeMode
-	eventBus       *eventbus.Broker
-	persister      *asyncPersister
-	runtimeMu      sync.Mutex
-	openPositions  map[string]model.TradePosition
-	inFlight       map[string]model.TradeSignalType
-	seenSignals    map[string]struct{}
-	notifier       Notifier
+	cfg             config.TradeConfig
+	repo            Repository
+	executor        Executor
+	priceProvider   datasource.TokenPriceProvider
+	supplyProvider  datasource.TokenSupplyProvider
+	balanceProvider datasource.WalletBalanceProvider
+	account         model.TradeAccount
+	enabled         bool
+	modeMu          sync.RWMutex
+	tradeMode       model.TradeMode
+	modeStartedAt   time.Time
+	eventBus        *eventbus.Broker
+	persister       *asyncPersister
+	runtimeMu       sync.Mutex
+	openPositions   map[string]model.TradePosition
+	inFlight        map[string]model.TradeSignalType
+	seenSignals     map[string]struct{}
+	notifier        Notifier
 }
 
 type ServiceOption func(*Service)
@@ -129,6 +132,12 @@ func WithEventBus(bus *eventbus.Broker) ServiceOption {
 func WithSupplyProvider(provider datasource.TokenSupplyProvider) ServiceOption {
 	return func(s *Service) {
 		s.supplyProvider = provider
+	}
+}
+
+func WithWalletBalanceProvider(provider datasource.WalletBalanceProvider) ServiceOption {
+	return func(s *Service) {
+		s.balanceProvider = provider
 	}
 }
 
@@ -174,13 +183,17 @@ func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, ex
 		return nil, err
 	}
 	svc.account = account
-	mode, err := repo.GetTradeMode(ctx)
+	mode, modeStartedAt, err := repo.GetTradeModeState(ctx)
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().UTC()
 	if mode == "" {
 		mode = model.TradeModePaper
-		if err := repo.SetTradeMode(ctx, mode); err != nil {
+	}
+	if modeStartedAt.IsZero() {
+		modeStartedAt = now
+		if err := repo.SetTradeModeState(ctx, mode, modeStartedAt); err != nil {
 			return nil, err
 		}
 	}
@@ -188,6 +201,7 @@ func NewService(ctx context.Context, cfg config.TradeConfig, repo Repository, ex
 		return nil, fmt.Errorf("%w: %s", ErrInvalidTradeMode, mode)
 	}
 	svc.tradeMode = mode
+	svc.modeStartedAt = modeStartedAt
 	if err := svc.loadRuntimePositions(ctx); err != nil {
 		return nil, err
 	}
@@ -215,21 +229,44 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 	if !isValidTradeMode(mode) {
 		return "", fmt.Errorf("%w: %s", ErrInvalidTradeMode, mode)
 	}
-	previousMode := s.GetTradeMode()
-	if err := s.repo.SetTradeMode(ctx, mode); err != nil {
+	s.modeMu.RLock()
+	previousMode := s.tradeMode
+	startedAt := s.modeStartedAt
+	s.modeMu.RUnlock()
+	if previousMode == mode {
+		return mode, nil
+	}
+	changedAt := time.Now().UTC()
+	summary, err := s.repo.GetTradeModePeriodSummary(ctx, s.account.ID, previousMode, startedAt, changedAt)
+	if err != nil {
+		return "", err
+	}
+	var walletBalance *float64
+	if mode == model.TradeModeLive {
+		if s.balanceProvider == nil {
+			return "", errors.New("Solana 钱包余额查询尚未配置")
+		}
+		balance, err := s.balanceProvider.GetSOLBalance(ctx, s.account.WalletAddress)
+		if err != nil {
+			return "", err
+		}
+		walletBalance = &balance
+	}
+	if err := s.repo.SetTradeModeState(ctx, mode, changedAt); err != nil {
 		return "", err
 	}
 	s.modeMu.Lock()
 	s.tradeMode = mode
+	s.modeStartedAt = changedAt
 	s.modeMu.Unlock()
-	if previousMode != mode {
-		s.notifyTradeModeChange(ctx, model.TradeModeChange{
-			PreviousMode:  previousMode,
-			CurrentMode:   mode,
-			WalletAddress: s.account.WalletAddress,
-			ChangedAt:     time.Now().UTC(),
-		})
-	}
+	s.notifyTradeModeChange(ctx, model.TradeModeChange{
+		PreviousMode:  previousMode,
+		CurrentMode:   mode,
+		WalletAddress: s.account.WalletAddress,
+		ChangedAt:     changedAt,
+		Summary:       summary,
+		WalletBalance: walletBalance,
+	})
 	return mode, nil
 }
 
