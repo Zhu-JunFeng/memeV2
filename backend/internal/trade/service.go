@@ -118,6 +118,7 @@ type Service struct {
 	openPositions   map[string]model.TradePosition
 	inFlight        map[string]model.TradeSignalType
 	seenSignals     map[string]struct{}
+	positionStore   PositionStore
 	notifier        Notifier
 }
 
@@ -144,6 +145,12 @@ func WithWalletBalanceProvider(provider datasource.WalletBalanceProvider) Servic
 func WithNotifier(notifier Notifier) ServiceOption {
 	return func(s *Service) {
 		s.notifier = notifier
+	}
+}
+
+func WithPositionStore(store PositionStore) ServiceOption {
+	return func(s *Service) {
+		s.positionStore = store
 	}
 }
 
@@ -364,7 +371,10 @@ func (s *Service) handleSignal(ctx context.Context, signal model.TradeSignal) (s
 		}
 		return s.executeBuy(ctx, signal)
 	case model.TradeSignalTypeSell:
-		position, ok := s.tryBeginSell(signal.TokenAddress)
+		position, ok, err := s.tryBeginSell(ctx, signal.TokenAddress)
+		if err != nil {
+			return signalProcessResult{}, err
+		}
 		if !ok {
 			return signalProcessResult{status: "skipped", reason: "未找到可卖持仓或卖出正在处理中"}, nil
 		}
@@ -395,7 +405,7 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	if position.Status != model.TradePositionStatusOpen {
 		return model.TradePosition{}, ErrPositionNotOpen
 	}
-	position, err = s.beginManualSell(position)
+	position, err = s.beginManualSell(ctx, position)
 	if err != nil {
 		return model.TradePosition{}, err
 	}
@@ -406,7 +416,7 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 		"tradeMode":  position.TradeMode,
 	})
 	if err != nil {
-		s.restoreOpenPosition(position)
+		s.restoreOpenPosition(ctx, position)
 		return model.TradePosition{}, err
 	}
 	signal := model.TradeSignal{
@@ -426,7 +436,7 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	}
 	storedSignal, created, err := s.repo.InsertSignalIfAbsent(ctx, signal)
 	if err != nil {
-		s.restoreOpenPosition(position)
+		s.restoreOpenPosition(ctx, position)
 		return model.TradePosition{}, err
 	}
 	signal = storedSignal
@@ -437,18 +447,30 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	return position, s.executeSell(ctx, signal, position)
 }
 
-func (s *Service) beginManualSell(position model.TradePosition) (model.TradePosition, error) {
+func (s *Service) beginManualSell(ctx context.Context, position model.TradePosition) (model.TradePosition, error) {
 	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
 	if _, busy := s.inFlight[position.TokenAddress]; busy {
+		s.runtimeMu.Unlock()
 		return model.TradePosition{}, ErrPositionSellInFlight
 	}
 	current, exists := s.openPositions[position.TokenAddress]
 	if !exists || current.ID != position.ID {
+		s.runtimeMu.Unlock()
 		return model.TradePosition{}, ErrPositionNotOpen
 	}
-	delete(s.openPositions, position.TokenAddress)
 	s.inFlight[position.TokenAddress] = model.TradeSignalTypeSell
+	s.runtimeMu.Unlock()
+	if s.positionStore != nil {
+		stored, err := s.positionStore.Get(ctx, position.AccountID, position.TokenAddress)
+		if err != nil {
+			s.finishInFlight(position.TokenAddress)
+			return model.TradePosition{}, err
+		}
+		current = stored
+	}
+	s.runtimeMu.Lock()
+	delete(s.openPositions, position.TokenAddress)
+	s.runtimeMu.Unlock()
 	return current, nil
 }
 
@@ -477,6 +499,20 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 		if err := s.repo.UpdatePositionMark(ctx, position.ID, price, marketValue, unrealized, profitRate, drawdown); err != nil {
 			continue
 		}
+		position.LastPrice = price
+		position.MarketValue = marketValue
+		position.UnrealizedPNL = unrealized
+		position.MaxProfitRate = math.Max(position.MaxProfitRate, profitRate)
+		position.MaxDrawdownAmount = math.Min(position.MaxDrawdownAmount, drawdown)
+		position.UpdatedAt = time.Now().UTC()
+		if s.positionStore != nil {
+			if err := s.positionStore.Save(ctx, position); err != nil {
+				return err
+			}
+		}
+		s.runtimeMu.Lock()
+		s.openPositions[position.TokenAddress] = position
+		s.runtimeMu.Unlock()
 		s.publishPosition(ctx, position.ID)
 	}
 	return nil
@@ -544,7 +580,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 		ExecutedAt:        result.ExecutedAt,
 		ExecutedMarketCap: s.executedMarketCap(ctx, signal.TokenAddress, result.AvgPrice),
 	}
-	s.markOpenPosition(position)
+	s.markOpenPosition(ctx, position)
 	s.enqueueFilledBuy(order, position, fill, result)
 	return signalProcessResult{}, nil
 }
@@ -567,7 +603,7 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	s.enqueueCreateOrder(order, map[string]any{"positionId": position.ID})
 	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Position: &position, Config: s.cfg, Mode: mode})
 	if err != nil {
-		s.restoreOpenPosition(position)
+		s.restoreOpenPosition(ctx, position)
 		s.enqueueOrderFailure(order.ID, err.Error())
 		return err
 	}
@@ -589,6 +625,11 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	}
 	if position.CostAmount > 0 {
 		fill.ProfitRate = (result.FilledQuote - result.FeeAmount - position.CostAmount) / position.CostAmount
+	}
+	if s.positionStore != nil {
+		if err := s.positionStore.Delete(ctx, position.AccountID, position.TokenAddress); err != nil {
+			log.Printf("delete filled Redis position failed: ca=%s err=%v", position.TokenAddress, err)
+		}
 	}
 	s.finishInFlight(signal.TokenAddress)
 	s.enqueueFilledSell(position, order, fill, result)
@@ -633,6 +674,11 @@ func (s *Service) loadRuntimePositions(ctx context.Context) error {
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 	for _, item := range items {
+		if s.positionStore != nil {
+			if err := s.positionStore.Save(ctx, item); err != nil {
+				return err
+			}
+		}
 		s.openPositions[item.TokenAddress] = item
 	}
 	return nil
@@ -661,29 +707,51 @@ func (s *Service) tryBeginBuy(tokenAddress string) bool {
 	return true
 }
 
-func (s *Service) tryBeginSell(tokenAddress string) (model.TradePosition, bool) {
+func (s *Service) tryBeginSell(ctx context.Context, tokenAddress string) (model.TradePosition, bool, error) {
 	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
 	if _, busy := s.inFlight[tokenAddress]; busy {
-		return model.TradePosition{}, false
+		s.runtimeMu.Unlock()
+		return model.TradePosition{}, false, nil
 	}
 	position, exists := s.openPositions[tokenAddress]
 	if !exists {
-		return model.TradePosition{}, false
+		s.runtimeMu.Unlock()
+		return model.TradePosition{}, false, nil
 	}
-	delete(s.openPositions, tokenAddress)
 	s.inFlight[tokenAddress] = model.TradeSignalTypeSell
-	return position, true
+	s.runtimeMu.Unlock()
+	if s.positionStore != nil {
+		stored, err := s.positionStore.Get(ctx, s.account.ID, tokenAddress)
+		if err != nil {
+			s.finishInFlight(tokenAddress)
+			return model.TradePosition{}, false, err
+		}
+		position = stored
+	}
+	s.runtimeMu.Lock()
+	delete(s.openPositions, tokenAddress)
+	s.runtimeMu.Unlock()
+	return position, true, nil
 }
 
-func (s *Service) markOpenPosition(position model.TradePosition) {
+func (s *Service) markOpenPosition(ctx context.Context, position model.TradePosition) {
+	if s.positionStore != nil {
+		if err := s.positionStore.Save(ctx, position); err != nil {
+			log.Printf("save filled Redis position failed: ca=%s err=%v", position.TokenAddress, err)
+		}
+	}
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 	s.openPositions[position.TokenAddress] = position
 	delete(s.inFlight, position.TokenAddress)
 }
 
-func (s *Service) restoreOpenPosition(position model.TradePosition) {
+func (s *Service) restoreOpenPosition(ctx context.Context, position model.TradePosition) {
+	if s.positionStore != nil {
+		if err := s.positionStore.Save(ctx, position); err != nil {
+			log.Printf("restore Redis position failed: ca=%s err=%v", position.TokenAddress, err)
+		}
+	}
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 	s.openPositions[position.TokenAddress] = position

@@ -352,7 +352,7 @@ func (r *TradeRepository) GetOpenPosition(ctx context.Context, accountID string,
 		FROM trade_positions
 		WHERE account_id = $1 AND token_address = $2 AND status = 'open'
 		LIMIT 1`, accountID, tokenAddress)
-	return scanTradePosition(row)
+	return scanBasicTradePosition(row)
 }
 
 func (r *TradeRepository) GetOpenPositionBySignalID(ctx context.Context, signalID string) (model.TradePosition, error) {
@@ -364,7 +364,7 @@ func (r *TradeRepository) GetOpenPositionBySignalID(ctx context.Context, signalI
 		WHERE s.signal_id = $1 AND p.status = 'open'
 		ORDER BY p.opened_at DESC
 		LIMIT 1`, signalID)
-	return scanTradePosition(row)
+	return scanBasicTradePosition(row)
 }
 
 func (r *TradeRepository) CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error) {
@@ -619,6 +619,24 @@ func nullableJSON(raw json.RawMessage) any {
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+func scanBasicTradePosition(scanner rowScanner) (model.TradePosition, error) {
+	var item model.TradePosition
+	var closedAt sql.NullTime
+	if err := scanner.Scan(
+		&item.ID, &item.AccountID, &item.TradeMode, &item.TokenAddress, &item.Status,
+		&item.OpenOrderID, &item.CloseOrderID, &item.Quantity, &item.CostAmount,
+		&item.AvgCostPrice, &item.LastPrice, &item.MarketValue, &item.RealizedPNL,
+		&item.UnrealizedPNL, &item.MaxProfitRate, &item.MaxDrawdownAmount,
+		&item.OpenedAt, &closedAt, &item.UpdatedAt,
+	); err != nil {
+		return model.TradePosition{}, err
+	}
+	if closedAt.Valid {
+		item.ClosedAt = &closedAt.Time
+	}
+	return item, nil
 }
 
 func scanTradeOrder(scanner rowScanner) (model.TradeOrder, error) {

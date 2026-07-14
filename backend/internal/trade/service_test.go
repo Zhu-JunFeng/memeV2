@@ -257,6 +257,32 @@ type fakeWalletBalanceProvider struct {
 	err     error
 }
 
+type fakePositionStore struct {
+	positions map[string]model.TradePosition
+}
+
+func newFakePositionStore() *fakePositionStore {
+	return &fakePositionStore{positions: map[string]model.TradePosition{}}
+}
+
+func (s *fakePositionStore) Save(_ context.Context, position model.TradePosition) error {
+	s.positions[position.AccountID+":"+position.TokenAddress] = position
+	return nil
+}
+
+func (s *fakePositionStore) Get(_ context.Context, accountID string, tokenAddress string) (model.TradePosition, error) {
+	position, ok := s.positions[accountID+":"+tokenAddress]
+	if !ok {
+		return model.TradePosition{}, ErrRuntimePositionNotFound
+	}
+	return position, nil
+}
+
+func (s *fakePositionStore) Delete(_ context.Context, accountID string, tokenAddress string) error {
+	delete(s.positions, accountID+":"+tokenAddress)
+	return nil
+}
+
 func (p fakeWalletBalanceProvider) GetSOLBalance(context.Context, string) (float64, error) {
 	return p.balance, p.err
 }
@@ -497,6 +523,37 @@ func TestRetryBuyOrderRespectsExistingPosition(t *testing.T) {
 	}
 	if len(repo.orders) != 1 {
 		t.Fatalf("expected retry to skip creating a second buy order when position exists, got %d", len(repo.orders))
+	}
+}
+
+func TestProcessSellSignalUsesLatestRedisPositionQuantity(t *testing.T) {
+	repo := newFakeRepo()
+	databasePosition := model.TradePosition{ID: "pos-1", AccountID: repo.account.ID, TradeMode: model.TradeModePaper, TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10.15}
+	repo.positions[repo.account.ID+":"+databasePosition.TokenAddress] = databasePosition
+	store := newFakePositionStore()
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithPositionStore(store))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	redisPosition := databasePosition
+	redisPosition.Quantity = 321.5
+	if err := store.Save(context.Background(), redisPosition); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sell-1", SignalType: model.TradeSignalTypeSell, StrategyCode: "breakout_band_follow",
+		TokenAddress: "token-a", Interval: "1m", SignalTime: time.Now().UTC(), Reason: "take profit",
+	})
+	if err != nil {
+		t.Fatalf("process sell signal: %v", err)
+	}
+	if executor.lastRequest.Position == nil || executor.lastRequest.Position.Quantity != 321.5 {
+		t.Fatalf("expected Redis quantity 321.5, got request=%#v", executor.lastRequest)
+	}
+	if _, ok := store.positions[repo.account.ID+":"+databasePosition.TokenAddress]; ok {
+		t.Fatal("expected successful sell to delete Redis position")
 	}
 }
 
