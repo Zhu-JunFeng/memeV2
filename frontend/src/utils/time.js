@@ -30,6 +30,25 @@ export function formatBeijingRFC3339(value) {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}+08:00`
 }
 
+export function formatHoldingDuration(openedAt, closedAt, now = Date.now()) {
+  const start = new Date(openedAt).getTime()
+  const end = closedAt ? new Date(closedAt).getTime() : Number(now)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '-'
+
+  let seconds = Math.max(0, Math.floor((end - start) / 1000))
+  const days = Math.floor(seconds / 86400)
+  seconds %= 86400
+  const hours = Math.floor(seconds / 3600)
+  seconds %= 3600
+  const minutes = Math.floor(seconds / 60)
+  seconds %= 60
+
+  if (days > 0) return `${days}d${hours}h${minutes}m`
+  if (hours > 0) return `${hours}h${minutes}m${seconds}s`
+  if (minutes > 0) return `${minutes}m${seconds}s`
+  return `${seconds}s`
+}
+
 export function toUnixTimestamp(value) {
   const timestamp = Math.floor(new Date(value).getTime() / 1000)
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null

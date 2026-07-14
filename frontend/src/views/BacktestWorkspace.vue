@@ -780,10 +780,10 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="时间" width="136">
+              <el-table-column label="持仓时间" width="136">
                 <template #default="{ row }">
                   <div class="position-time-cell">
-                    <strong>{{ formatCompactRelativeTime(row.openedAt) }}</strong>
+                    <strong>{{ formatPositionHoldingDuration(row) }}</strong>
                     <span :title="formatBeijingDateTime(row.openedAt)">
                       开 {{ formatShortTime(row.openedAt) }}
                     </span>
@@ -1230,7 +1230,11 @@ import { useBacktestStore } from "../stores/backtest.js";
 import KlineTradeChart from "../components/KlineTradeChart.vue";
 import TokenAddressLink from "../components/TokenAddressLink.vue";
 import { copyText } from "../utils/clipboard.js";
-import { formatBeijingDateTime, formatBeijingRFC3339 } from "../utils/time.js";
+import {
+  formatBeijingDateTime,
+  formatBeijingRFC3339,
+  formatHoldingDuration,
+} from "../utils/time.js";
 
 const store = useBacktestStore();
 const TRADE_LIST_LIMIT = 20;
@@ -2235,6 +2239,10 @@ function formatCompactRelativeTime(value) {
   if (remainingHours > 0) parts.push(`${remainingHours}h`);
   if (remainingMinutes > 0) parts.push(`${remainingMinutes}m`);
   return `${parts.join("")}之前`;
+}
+
+function formatPositionHoldingDuration(row) {
+  return formatHoldingDuration(row?.openedAt, row?.closedAt, relativeNow.value);
 }
 
 function formatFixed(value) {
