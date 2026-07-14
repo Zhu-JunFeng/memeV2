@@ -91,7 +91,7 @@ func findBreakoutAfterTouches(window []model.Kline, future []model.Kline, level 
 	}
 	for _, touchGroup := range buildQualifiedTouchGroups(window, level, touches, options) {
 		breakoutIndex := findBreakoutIndexInRange(series, level, touchGroup.lastTouchIndex+1, touchGroup.lastTouchIndex+1+options.MinTouches, options)
-		if breakoutIndex >= 0 && pressureBandInvalidatedByBullishCloses(series, level, touchGroup, breakoutIndex) {
+		if breakoutIndex >= 0 && pressureBandInvalidatedByBullishCloses(series, level, touchGroup, breakoutIndex-1) {
 			continue
 		}
 		if breakoutIndex >= 0 && !hasLimitedUpperBandPierces(series, level, touchGroup.lastTouchIndex+1, breakoutIndex) {
@@ -268,7 +268,7 @@ func findRealtimeBreakoutTouchGroup(series []model.Kline, level model.PriceLevel
 	}
 	for i := range groups {
 		group := groups[i]
-		if pressureBandInvalidatedByBullishCloses(series, level, group, currentIndex) {
+		if pressureBandInvalidatedByBullishCloses(series, level, group, currentIndex-1) {
 			continue
 		}
 		start := group.lastTouchIndex + 1

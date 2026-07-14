@@ -7,6 +7,31 @@ import (
 	"solana-meme-backtest/backend/internal/model"
 )
 
+func TestPressureBandInvalidationUsesAllRawKlinesBeforeDecisionBar(t *testing.T) {
+	base := time.Date(2026, 7, 14, 1, 8, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	signal := RealtimeScenarioSignal{
+		LevelUpperMarketCap: 55326.45,
+		Breakout: &model.BreakoutSetup{FailedTouches: []model.LevelAnchorPoint{
+			{Time: base.Add(-5 * time.Minute)},
+			{Time: base},
+		}},
+	}
+	klines := []model.Kline{
+		{OpenTime: base, MarketCapOpen: 53000, MarketCapClose: 53380, Volume: 100},
+		{OpenTime: base.Add(time.Minute), MarketCapOpen: 54000, MarketCapClose: 56000, Volume: 0.01},
+		{OpenTime: base.Add(2 * time.Minute), MarketCapOpen: 57000, MarketCapClose: 56000, Volume: 100},
+		{OpenTime: base.Add(3 * time.Minute), MarketCapOpen: 56000, MarketCapClose: 58000, Volume: 0.01},
+		{OpenTime: base.Add(4 * time.Minute), MarketCapOpen: 58000, MarketCapClose: 59000, Volume: 0.01},
+		{OpenTime: base.Add(5 * time.Minute), MarketCapOpen: 59000, MarketCapClose: 60000, Volume: 100},
+	}
+	if pressureBandInvalidatedBeforeSignal(klines, signal, base.Add(4*time.Minute)) {
+		t.Fatal("expected only two completed bullish closes before the decision bar")
+	}
+	if !pressureBandInvalidatedBeforeSignal(klines, signal, base.Add(5*time.Minute)) {
+		t.Fatal("expected the third raw bullish close to invalidate the pressure band")
+	}
+}
+
 func TestDetectBandFollowReplayEntryAtCurrentBarAllowsOlderSlidingWindow(t *testing.T) {
 	base := time.Date(2026, 6, 29, 9, 0, 0, 0, time.UTC)
 	klines := make([]model.Kline, 0, 15)

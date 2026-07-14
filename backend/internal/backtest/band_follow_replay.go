@@ -30,6 +30,9 @@ func detectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOption
 	if !signal.SignalTime.Equal(decisionBar.OpenTime) {
 		return BandFollowReplayEntry{}, false
 	}
+	if pressureBandInvalidatedBeforeSignal(klines, signal, decisionBar.OpenTime) {
+		return BandFollowReplayEntry{}, false
+	}
 	windowIndex := signal.WindowIndex - 1
 	if windowIndex < 0 || windowIndex >= len(result.Windows) {
 		return BandFollowReplayEntry{}, false
@@ -43,6 +46,31 @@ func detectBandFollowEntryAtCurrentBar(klines []model.Kline, options LevelOption
 		Signal:     signal,
 		Level:      level,
 	}, true
+}
+
+func pressureBandInvalidatedBeforeSignal(klines []model.Kline, signal RealtimeScenarioSignal, decisionTime time.Time) bool {
+	if signal.Breakout == nil || signal.LevelUpperMarketCap <= 0 || decisionTime.IsZero() || len(signal.Breakout.FailedTouches) == 0 {
+		return false
+	}
+	formedAt := signal.Breakout.FailedTouches[0].Time
+	for _, touch := range signal.Breakout.FailedTouches[1:] {
+		if touch.Time.After(formedAt) {
+			formedAt = touch.Time
+		}
+	}
+	count := 0
+	for _, item := range klines {
+		if !item.OpenTime.After(formedAt) || !item.OpenTime.Before(decisionTime) {
+			continue
+		}
+		if isBullish(item) && marketClose(item) > signal.LevelUpperMarketCap {
+			count++
+			if count >= 3 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DetectBandFollowEntryAtCurrentBar 给 latest-only 场景使用，只允许最新窗口触发买点。
