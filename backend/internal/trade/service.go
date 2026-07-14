@@ -351,6 +351,16 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 	if err != nil {
 		return model.TradePosition{}, err
 	}
+	triggerMarketCap := s.executedMarketCap(ctx, position.TokenAddress, position.LastPrice)
+	rawPayload, err := json.Marshal(map[string]any{
+		"source":     "manual_close",
+		"positionId": position.ID,
+		"tradeMode":  position.TradeMode,
+	})
+	if err != nil {
+		s.restoreOpenPosition(position)
+		return model.TradePosition{}, err
+	}
 	signal := model.TradeSignal{
 		ID:               uuid.NewString(),
 		SignalID:         uuid.NewString(),
@@ -361,8 +371,9 @@ func (s *Service) ClosePosition(ctx context.Context, positionID string) (model.T
 		Interval:         "manual",
 		SignalTime:       time.Now().UTC(),
 		TriggerPrice:     position.LastPrice,
-		TriggerMarketCap: position.LastPrice,
+		TriggerMarketCap: triggerMarketCap,
 		Reason:           "手动平仓",
+		RawPayloadJSON:   rawPayload,
 		ConsumeStatus:    "manual",
 	}
 	storedSignal, created, err := s.repo.InsertSignalIfAbsent(ctx, signal)

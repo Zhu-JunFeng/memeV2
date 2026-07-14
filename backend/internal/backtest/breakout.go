@@ -91,6 +91,9 @@ func findBreakoutAfterTouches(window []model.Kline, future []model.Kline, level 
 	}
 	for _, touchGroup := range buildQualifiedTouchGroups(window, level, touches, options) {
 		breakoutIndex := findBreakoutIndexInRange(series, level, touchGroup.lastTouchIndex+1, touchGroup.lastTouchIndex+1+options.MinTouches, options)
+		if breakoutIndex >= 0 && pressureBandInvalidatedByBullishCloses(series, level, touchGroup, breakoutIndex) {
+			continue
+		}
 		if breakoutIndex >= 0 && !hasLimitedUpperBandPierces(series, level, touchGroup.lastTouchIndex+1, breakoutIndex) {
 			continue
 		}
@@ -265,6 +268,9 @@ func findRealtimeBreakoutTouchGroup(series []model.Kline, level model.PriceLevel
 	}
 	for i := range groups {
 		group := groups[i]
+		if pressureBandInvalidatedByBullishCloses(series, level, group, currentIndex) {
+			continue
+		}
 		start := group.lastTouchIndex + 1
 		end := minInt(len(series), group.lastTouchIndex+1+minTouches)
 		if currentIndex < start || currentIndex >= end {
@@ -284,6 +290,25 @@ func findRealtimeBreakoutTouchGroup(series []model.Kline, level model.PriceLevel
 		}
 	}
 	return nil
+}
+
+func pressureBandInvalidatedByBullishCloses(series []model.Kline, level model.PriceLevel, group breakoutTouchGroup, endIndex int) bool {
+	if group.lastTouchIndex < 0 || level.Upper <= 0 {
+		return false
+	}
+	if endIndex >= len(series) {
+		endIndex = len(series) - 1
+	}
+	count := 0
+	for index := group.lastTouchIndex + 1; index <= endIndex; index++ {
+		if isBullish(series[index]) && marketClose(series[index]) > level.Upper {
+			count++
+			if count >= 3 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func rollingAverageVolumeBefore(klines []model.Kline, index int, window int) float64 {

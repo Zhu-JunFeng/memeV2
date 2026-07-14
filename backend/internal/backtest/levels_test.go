@@ -316,6 +316,26 @@ func TestHasTooManyClosesAboveUpperUntilBreakout(t *testing.T) {
 	}
 }
 
+func TestPressureBandInvalidatesAfterThreeBullishClosesAboveUpper(t *testing.T) {
+	series := []model.Kline{
+		{MarketCapOpen: 9.8, MarketCapClose: 10.0},
+		{MarketCapOpen: 9.9, MarketCapClose: 10.0},
+		{MarketCapOpen: 9.9, MarketCapClose: 10.0},
+		{MarketCapOpen: 10.0, MarketCapClose: 10.2},
+		{MarketCapOpen: 10.3, MarketCapClose: 10.1},
+		{MarketCapOpen: 10.1, MarketCapClose: 10.3},
+		{MarketCapOpen: 10.2, MarketCapClose: 10.4},
+	}
+	group := breakoutTouchGroup{lastTouchIndex: 2}
+	level := model.PriceLevel{Upper: 10.0}
+	if pressureBandInvalidatedByBullishCloses(series, level, group, 5) {
+		t.Fatal("expected only two bullish closes above upper to keep pressure band valid")
+	}
+	if !pressureBandInvalidatedByBullishCloses(series, level, group, 6) {
+		t.Fatal("expected third bullish close above upper to invalidate pressure band")
+	}
+}
+
 func TestCalculateSupportResistanceByWindowsFindsBreakoutInsideWindow(t *testing.T) {
 	base := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
 	klines := []model.Kline{

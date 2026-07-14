@@ -440,7 +440,14 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	repo.positions[repo.account.ID+":token-a"] = position
 	repo.positionByID[position.ID] = position
 	executor := &fakeExecutor{}
-	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	svc, err := NewService(
+		context.Background(),
+		testTradeConfig(t),
+		repo,
+		executor,
+		nil,
+		WithSupplyProvider(fakeSupplyProvider{supply: 1000}),
+	)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -459,6 +466,9 @@ func TestClosePositionPersistsManualSignal(t *testing.T) {
 	}
 	if repo.signals[0].TradeMode != model.TradeModeLive {
 		t.Fatalf("expected manual close signal to use position mode live, got %s", repo.signals[0].TradeMode)
+	}
+	if len(repo.signals[0].RawPayloadJSON) == 0 || repo.signals[0].TriggerMarketCap != 110 {
+		t.Fatalf("expected manual close payload and market cap, got payload=%s marketCap=%f", repo.signals[0].RawPayloadJSON, repo.signals[0].TriggerMarketCap)
 	}
 }
 
