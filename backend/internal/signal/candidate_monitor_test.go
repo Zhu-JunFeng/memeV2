@@ -79,13 +79,22 @@ type fakeCandidateStore struct {
 }
 
 type fakeTradeSignalStatusProvider struct {
-	signals map[string]model.TradeSignal
+	signals   map[string]model.TradeSignal
+	positions map[string]model.TradePosition
 }
 
 func (p fakeTradeSignalStatusProvider) GetSignalBySignalID(_ context.Context, signalID string) (model.TradeSignal, error) {
 	item, ok := p.signals[signalID]
 	if !ok {
 		return model.TradeSignal{}, errors.New("signal not found")
+	}
+	return item, nil
+}
+
+func (p fakeTradeSignalStatusProvider) GetOpenPositionBySignalID(_ context.Context, signalID string) (model.TradePosition, error) {
+	item, ok := p.positions[signalID]
+	if !ok {
+		return model.TradePosition{}, errors.New("position not found")
 	}
 	return item, nil
 }
@@ -501,7 +510,7 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		t.Fatalf("expected realtime exit point, got %#v", exitPoint)
 	}
 	strategyExitPoint := payload["strategyExitPoint"].(map[string]any)
-	if strategyExitPoint["marketCap"].(float64) != 10800 {
+	if strategyExitPoint["marketCap"].(float64) != 11000 {
 		t.Fatalf("expected strategy exit point to remain available, got %#v", strategyExitPoint)
 	}
 	stored := store.states["token-a"]
@@ -510,6 +519,66 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 	}
 	if stored.BuySignalID != "" || !stored.EntryTime.IsZero() || stored.EntryPrice != 0 {
 		t.Fatalf("expected cleared entry fields after rearm, got %#v", stored)
+	}
+}
+
+func TestCandidateMonitorRechecksSellWithinSameMinuteBar(t *testing.T) {
+	base := time.Date(2026, 7, 14, 14, 0, 0, 0, time.UTC)
+	entry := model.LevelAnchorPoint{Time: base.Add(-time.Minute), Price: 10000}
+	state := candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
+		CandidateAt: base.Add(-2 * time.Minute), EntryTime: base.Add(-time.Minute), EntryPrice: 10000,
+		LastDecisionBarTime: base,
+		Level:               model.PriceLevel{Lower: 9000, Breakout: &model.BreakoutSetup{BuyPoint: &entry}},
+	}
+	klines := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(-time.Minute), CloseTime: base, MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 11100, MarketCapLow: 9950, MarketCapClose: 11000},
+	}
+	store := newFakeCandidateStore()
+	store.states[state.TokenAddress] = state
+	pub := &capturePublisher{}
+	monitor := testCandidateMonitor(store, nil, nil, base.Add(30*time.Second), pub)
+
+	if err := monitor.processBoughtCandidate(context.Background(), state, klines); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.tradeSignals) != 1 || pub.tradeSignals[0].SignalType != model.TradeSignalTypeSell {
+		t.Fatalf("expected same-minute recheck to publish sell, got %#v", pub.tradeSignals)
+	}
+}
+
+func TestCandidateMonitorSyncsExecutedEntryMarketCapBeforeSellEvaluation(t *testing.T) {
+	base := time.Date(2026, 7, 14, 15, 0, 0, 0, time.UTC)
+	entry := model.LevelAnchorPoint{Time: base, Price: 100}
+	state := candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-executed",
+		CandidateAt: base.Add(-time.Minute), EntryTime: base, EntryPrice: 100,
+		Level: model.PriceLevel{Lower: 90, Breakout: &model.BreakoutSetup{BuyPoint: &entry}},
+	}
+	store := newFakeCandidateStore()
+	store.states[state.TokenAddress] = state
+	monitor := testCandidateMonitor(store, nil, nil, base.Add(30*time.Second), &capturePublisher{})
+	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
+	monitor.signalStatus = fakeTradeSignalStatusProvider{
+		signals: map[string]model.TradeSignal{
+			state.BuySignalID: {SignalID: state.BuySignalID, ConsumeStatus: "executed"},
+		},
+		positions: map[string]model.TradePosition{
+			state.BuySignalID: {TokenAddress: state.TokenAddress, Status: model.TradePositionStatusOpen, AvgCostPrice: 0.105},
+		},
+	}
+	klines := []model.Kline{{TokenAddress: state.TokenAddress, Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 100, MarketCapHigh: 106, MarketCapLow: 99, MarketCapClose: 105}}
+
+	if err := monitor.processBoughtCandidate(context.Background(), state, klines); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.states[state.TokenAddress]
+	if !stored.EntryPriceSynced || stored.EntryPrice != 105 {
+		t.Fatalf("expected actual executed market cap 105, got %#v", stored)
+	}
+	if stored.Level.Breakout == nil || stored.Level.Breakout.BuyPoint == nil || stored.Level.Breakout.BuyPoint.Price != 105 {
+		t.Fatalf("expected exit strategy entry point to use executed market cap, got %#v", stored.Level)
 	}
 }
 

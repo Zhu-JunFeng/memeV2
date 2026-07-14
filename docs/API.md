@@ -158,12 +158,12 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
   "dataSource": "gmgn",
   "methodCode": "breakout_band_follow",
   "methodConfig": {
-    "takeProfitRateStart": 0.08,
+    "takeProfitRateStart": 0.10,
     "takeProfitRateEnd": 0.15,
     "takeProfitRateStep": 0.01,
     "positionSizeUsd": 10,
-    "activationProfitRate": 0.05,
-    "lockedProfitRate": 0.03,
+    "activationProfitRate": 0.07,
+    "lockedProfitRate": 0.04,
     "feeRate": 0.015
   },
   "tokenAddress": "token address",
@@ -210,8 +210,8 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
 - 单个 token 同一时刻最多只保留 `1` 笔持仓；若前一笔尚未卖出，则后续买点信号全部跳过。
 - 如果买入后下一根 K 线正式收盘且收盘市值低于压力带下沿，则按该根实际收盘市值止损卖出。
 - 不再使用固定百分比硬止损，也不因任意后续 K 线盘中最低点下跌而止损。
-- 如果后续最高点先达到 `activationProfitRate`，则从下一根 K 线开始启用动态止损；默认达到 `5%` 后回撤到 `3%` 卖出。之后每多盈利 `1%`，锁定收益率同步上移 `1%`，例如达到 `6%` 后回撤到 `4%` 卖出，直到达到配置的止盈比例。
-- 如果最高点达到 `takeProfitRate`，则按止盈价卖出。
+- 如果后续最高点先达到 `activationProfitRate`，则启用动态止损；默认达到 `7%` 后回撤到 `4%` 卖出。之后每多盈利 `1%`，锁定收益率同步上移 `1%`，例如达到 `8%` 后回撤到 `5%` 卖出，直到达到配置的止盈比例。
+- 如果最高点达到 `takeProfitRate`，则按止盈价卖出；默认止盈比例为 `10%`。
 - 如果同时传 `takeProfitRateStart`、`takeProfitRateEnd`、`takeProfitRateStep`，则会在该范围内按步长逐个止盈比例执行回测，并按止盈比例分组返回盈亏情况。
 - `feeRate` 表示单笔买入加卖出的总手续费比例，默认 `0.015`，统计时会从每笔收益里直接扣减。
 - 如果样本结束前未触发止盈或止损，则按最后一根 K 线收盘价卖出。
@@ -405,7 +405,8 @@ Birdeye K 线专用实时突破信号入口。
 - `trade` 负责消费信号、记录订单/成交/持仓，并通过 `trade.price_source` 刷新持仓估值；当前默认 GMGN，可切回 DexScreener
 - 如配置 `redis.consumer_channel`，交易消费订阅该通道；未配置时沿用 `redis.channel`
 - 交易消费只处理标准 `TradeSignalMessage`；老版候选池 `candidate_score_passed` 由信号模块订阅后进入二次监控，不再直接买入
-- 候选池二次监控每 2 秒调用 GMGN 最近 1m K 线，保留上游真实 `volume`，并按价格乘 Solana RPC `getTokenSupply` 换算出本地 1m 市值 K 线；重启时会先从 `system_kline_cache` 预加载近 200 根，再继续增量维护，出现 `breakout_band_follow` 买点/卖点后发布标准交易信号
+- 候选池未持仓项目按配置周期调用 GMGN 最近 1m K 线；已买入项目使用独立的 `0.5s` 轮询持续检查盘中止盈和动态止损，同时在每根 1m K 线收盘后检查下一根收盘跌破压力带下沿规则。系统保留上游真实 `volume`，并按价格乘 Solana RPC `getTokenSupply` 换算本地 1m 市值 K 线；重启时从 `system_kline_cache` 预加载后继续增量维护。
+- 买入信号成交后，候选持仓会从交易持仓表读取 Jupiter 实际成交均价，并乘 token supply 得到实际买入市值；后续 `10%` 止盈、`7%/4%` 动态止损和通知盈亏均以实际成交市值为成本基准。
 - 未买入候选在最新市值低于阈值时从监控池移除；默认阈值为 `10_000`，配置了正数 `signal.min_market_cap` 时按配置值覆盖，已买入候选继续监控卖点
 - 候选池监控会把最新价格实时合并进当前 forming bar；买点判定只使用紧贴当前 bar 的最新实时窗口，满足压力突破规则就立即发出买入信号，止盈/止损满足条件则立即发出卖出信号。
 - 候选池买入/卖出信号的 `triggerMarketCap` / `triggerPrice` 使用触发当刻 CA 的实时真实市值；策略突破阈值、策略止盈/止损目标价分别保留在 metadata 的 `strategyMarketCap`、`breakoutThreshold`、`strategyExitPoint` 字段里，便于回看策略依据。

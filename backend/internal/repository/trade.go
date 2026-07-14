@@ -296,6 +296,18 @@ func (r *TradeRepository) GetOpenPosition(ctx context.Context, accountID string,
 	return scanTradePosition(row)
 }
 
+func (r *TradeRepository) GetOpenPositionBySignalID(ctx context.Context, signalID string) (model.TradePosition, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT p.id, p.account_id, p.trade_mode, p.token_address, p.status, p.open_order_id, p.close_order_id, p.quantity, p.cost_amount, p.avg_cost_price, p.last_price, p.market_value, p.realized_pnl, p.unrealized_pnl, p.max_profit_rate, p.max_drawdown_amount, p.opened_at, p.closed_at, p.updated_at
+		FROM trade_positions p
+		JOIN trade_orders o ON o.id = p.open_order_id
+		JOIN trade_signals s ON s.id = o.signal_id
+		WHERE s.signal_id = $1 AND p.status = 'open'
+		ORDER BY p.opened_at DESC
+		LIMIT 1`, signalID)
+	return scanTradePosition(row)
+}
+
 func (r *TradeRepository) CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error) {
 	now := time.Now().UTC()
 	if order.ID == "" {

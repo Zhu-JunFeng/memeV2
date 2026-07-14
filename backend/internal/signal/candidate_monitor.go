@@ -23,17 +23,18 @@ import (
 )
 
 const (
-	candidateStatusWatching = "watching"
-	candidateStatusBought   = "bought"
-	candidateStatusStopped  = "stopped"
-	candidateStatusSold     = "sold"
-	strategyBreakoutFollow  = "breakout_band_follow"
-	monitorIncrementalBars  = 5
-	candidatePollWorkers    = 6
-	monitorMinMarketCap     = 10000
-	candidatePoolLimit      = 50
-	preferredMarketCapMin   = 50000
-	preferredMarketCapMax   = 200000
+	candidateStatusWatching     = "watching"
+	candidateStatusBought       = "bought"
+	candidateStatusStopped      = "stopped"
+	candidateStatusSold         = "sold"
+	strategyBreakoutFollow      = "breakout_band_follow"
+	monitorIncrementalBars      = 5
+	candidatePollWorkers        = 6
+	monitorMinMarketCap         = 10000
+	candidatePoolLimit          = 50
+	preferredMarketCapMin       = 50000
+	preferredMarketCapMax       = 200000
+	boughtCandidatePollInterval = 500 * time.Millisecond
 )
 
 var ErrCandidatePoolFull = errors.New("候选池已满")
@@ -76,6 +77,7 @@ type CandidateMonitor struct {
 
 type tradeSignalStatusProvider interface {
 	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
+	GetOpenPositionBySignalID(ctx context.Context, signalID string) (model.TradePosition, error)
 }
 
 type CandidateMonitorItem struct {
@@ -134,6 +136,7 @@ type candidateMonitorState struct {
 	BuySignalID         string
 	EntryTime           time.Time
 	EntryPrice          float64
+	EntryPriceSynced    bool
 	CurrentPrice        float64
 	CurrentAt           time.Time
 	KlineFetchedAt      time.Time
@@ -222,6 +225,7 @@ func (m *CandidateMonitor) Start(ctx context.Context) {
 	m.preloadActiveKlines(ctx)
 	go m.subscribeCandidates(ctx)
 	go m.pollCandidates(ctx)
+	go m.pollBoughtCandidates(ctx)
 }
 
 func (m *CandidateMonitor) preloadActiveKlines(ctx context.Context) {
@@ -541,7 +545,7 @@ func (m *CandidateMonitor) subscribeCandidates(ctx context.Context) {
 }
 
 func (m *CandidateMonitor) pollCandidates(ctx context.Context) {
-	m.pollOnce(ctx)
+	m.pollOnce(ctx, candidateStatusWatching)
 	ticker := time.NewTicker(m.cfg.PollInterval)
 	defer ticker.Stop()
 	for {
@@ -549,22 +553,44 @@ func (m *CandidateMonitor) pollCandidates(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.pollOnce(ctx)
+			m.pollOnce(ctx, candidateStatusWatching)
 		}
 	}
 }
 
-func (m *CandidateMonitor) pollOnce(ctx context.Context) {
+func (m *CandidateMonitor) pollBoughtCandidates(ctx context.Context) {
+	ticker := time.NewTicker(boughtCandidatePollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.pollOnce(ctx, candidateStatusBought)
+		}
+	}
+}
+
+func (m *CandidateMonitor) pollOnce(ctx context.Context, status string) {
 	startedAt := time.Now()
 	items, err := m.store.ListActive(ctx)
 	if err != nil {
 		log.Printf("candidate monitor list active failed: %v", err)
 		return
 	}
+	filtered := make([]candidateMonitorState, 0, len(items))
+	for _, item := range items {
+		if item.Status == status {
+			filtered = append(filtered, item)
+		}
+	}
+	items = filtered
 	if len(items) == 0 {
 		return
 	}
-	log.Printf("candidate monitor polling active candidates: count=%d", len(items))
+	if status != candidateStatusBought {
+		log.Printf("candidate monitor polling candidates: status=%s count=%d", status, len(items))
+	}
 	workers := candidatePollWorkers
 	if len(items) < workers {
 		workers = len(items)
@@ -575,7 +601,9 @@ func (m *CandidateMonitor) pollOnce(ctx context.Context) {
 				log.Printf("candidate monitor process candidate failed: ca=%s err=%v", item.TokenAddress, err)
 			}
 		}
-		log.Printf("candidate monitor poll completed: count=%d duration=%s", len(items), time.Since(startedAt).Round(time.Millisecond))
+		if status != candidateStatusBought {
+			log.Printf("candidate monitor poll completed: status=%s count=%d duration=%s", status, len(items), time.Since(startedAt).Round(time.Millisecond))
+		}
 		return
 	}
 	sem := make(chan struct{}, workers)
@@ -602,7 +630,9 @@ func (m *CandidateMonitor) pollOnce(ctx context.Context) {
 	for err := range errCh {
 		log.Printf("candidate monitor process candidate failed: %v", err)
 	}
-	log.Printf("candidate monitor poll completed: count=%d duration=%s", len(items), time.Since(startedAt).Round(time.Millisecond))
+	if status != candidateStatusBought {
+		log.Printf("candidate monitor poll completed: status=%s count=%d duration=%s", status, len(items), time.Since(startedAt).Round(time.Millisecond))
+	}
 }
 
 func (m *CandidateMonitor) handleCandidatePayload(ctx context.Context, payload []byte) error {
@@ -823,6 +853,7 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	state.BuySignalID = message.SignalID
 	state.EntryTime = decisionBar.OpenTime
 	state.EntryPrice = message.TriggerMarketCap
+	state.EntryPriceSynced = false
 	state.LastDecisionBarTime = decisionBar.OpenTime
 	state.Level = level
 	if err := m.saveState(ctx, state); err != nil {
@@ -923,9 +954,18 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 			state.BuySignalID = ""
 			state.EntryTime = time.Time{}
 			state.EntryPrice = 0
+			state.EntryPriceSynced = false
 			state.Level = model.PriceLevel{}
 			return m.saveState(ctx, state)
 		case "executed":
+			if !state.EntryPriceSynced {
+				if err := m.syncExecutedEntryMarketCap(ctx, &state); err != nil {
+					return err
+				}
+				if err := m.saveState(ctx, state); err != nil {
+					return err
+				}
+			}
 		default:
 			return m.saveState(ctx, state)
 		}
@@ -934,13 +974,10 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	if !ok {
 		return m.saveState(ctx, state)
 	}
-	if !state.LastDecisionBarTime.IsZero() && !decisionBar.OpenTime.After(state.LastDecisionBarTime) {
-		return m.saveState(ctx, state)
-	}
-	state.LastDecisionBarTime = decisionBar.OpenTime
 	if !decision.Triggered || decision.ExitPoint == nil {
 		return m.saveState(ctx, state)
 	}
+	state.LastDecisionBarTime = decisionBar.OpenTime
 	message, err := m.buildSellSignal(state, decisionBar, decision)
 	if err != nil {
 		return err
@@ -960,6 +997,7 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 		state.BuySignalID = ""
 		state.EntryTime = time.Time{}
 		state.EntryPrice = 0
+		state.EntryPriceSynced = false
 		state.Level = model.PriceLevel{}
 		state.CurrentPrice = latest.MarketCapClose
 		state.CurrentAt = m.now()
@@ -975,6 +1013,27 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	}
 	m.publishCandidateDelete(state)
 	log.Printf("candidate monitor published sell signal: ca=%s signalId=%s reason=%s", state.TokenAddress, message.SignalID, decision.Reason)
+	return nil
+}
+
+func (m *CandidateMonitor) syncExecutedEntryMarketCap(ctx context.Context, state *candidateMonitorState) error {
+	position, err := m.signalStatus.GetOpenPositionBySignalID(ctx, state.BuySignalID)
+	if err != nil {
+		return fmt.Errorf("load executed position for signal %s: %w", state.BuySignalID, err)
+	}
+	supply, err := m.tokenSupply(ctx, state.TokenAddress)
+	if err != nil {
+		return err
+	}
+	entryMarketCap := position.AvgCostPrice * supply
+	if entryMarketCap <= 0 {
+		return fmt.Errorf("executed entry market cap invalid: signal=%s avgPrice=%.12f supply=%.4f", state.BuySignalID, position.AvgCostPrice, supply)
+	}
+	state.EntryPrice = entryMarketCap
+	state.EntryPriceSynced = true
+	if state.Level.Breakout != nil && state.Level.Breakout.BuyPoint != nil {
+		state.Level.Breakout.BuyPoint.Price = entryMarketCap
+	}
 	return nil
 }
 
@@ -1288,6 +1347,7 @@ func encodeCandidateState(state candidateMonitorState) (map[string]any, error) {
 		"buySignalId":         state.BuySignalID,
 		"entryTime":           strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
 		"entryPrice":          strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
+		"entryPriceSynced":    strconv.FormatBool(state.EntryPriceSynced),
 		"currentPrice":        strconv.FormatFloat(state.CurrentPrice, 'f', -1, 64),
 		"currentAt":           strconv.FormatInt(state.CurrentAt.UnixMilli(), 10),
 		"klineFetchedAt":      strconv.FormatInt(state.KlineFetchedAt.UnixMilli(), 10),
@@ -1342,6 +1402,13 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 			return candidateMonitorState{}, err
 		}
 		state.EntryPrice = value
+	}
+	if fields["entryPriceSynced"] != "" {
+		value, err := strconv.ParseBool(fields["entryPriceSynced"])
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		state.EntryPriceSynced = value
 	}
 	if fields["currentPrice"] != "" {
 		value, err := strconv.ParseFloat(fields["currentPrice"], 64)

@@ -1313,13 +1313,13 @@ const form = reactive({
 });
 const strategyForm = reactive({
   methodCode: "breakout_band_follow",
-  takeProfitRateStartPercent: 8,
+  takeProfitRateStartPercent: 10,
   takeProfitRateEndPercent: 15,
   takeProfitRateStepPercent: 1,
   feeRatePercent: 1.5,
   positionSizeUsd: 10,
-  activationProfitRatePercent: 5,
-  lockedProfitRatePercent: 3,
+  activationProfitRatePercent: 7,
+  lockedProfitRatePercent: 4,
 });
 const tradeTab = ref("candidates");
 const tradeRuntimeMode = ref("paper");
