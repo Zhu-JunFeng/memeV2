@@ -15,6 +15,7 @@ type Config struct {
 	Bitquery   BitqueryConfig
 	XXYY       XXYYConfig
 	Telegram   TelegramConfig
+	Alert      AlertConfig
 	Redis      RedisConfig
 	Signal     SignalConfig
 	Trade      TradeConfig
@@ -68,6 +69,20 @@ type TelegramConfig struct {
 	Enabled  bool
 	BotToken string
 	ChatID   string
+}
+
+type AlertConfig struct {
+	Enabled                    bool
+	LatencyThresholdMS         int
+	ConsecutiveFailures        int
+	ConsecutiveRateLimits      int
+	ConsecutiveHighLatency     int
+	RecoverySuccesses          int
+	CooldownSeconds            int
+	ResourceCheckInterval      int
+	ResourceConsecutiveSamples int
+	CPUThresholdPercent        float64
+	MemoryThresholdPercent     float64
 }
 
 type RedisConfig struct {
@@ -140,6 +155,17 @@ func Load() (Config, error) {
 	v.SetDefault("xxyy.base_url", "https://www.xxyy.io")
 	v.SetDefault("xxyy.poll_interval_seconds", 30)
 	v.SetDefault("telegram.enabled", false)
+	v.SetDefault("alert.enabled", true)
+	v.SetDefault("alert.latency_threshold_ms", 3000)
+	v.SetDefault("alert.consecutive_failures", 3)
+	v.SetDefault("alert.consecutive_rate_limits", 3)
+	v.SetDefault("alert.consecutive_high_latency", 3)
+	v.SetDefault("alert.recovery_successes", 2)
+	v.SetDefault("alert.cooldown_seconds", 600)
+	v.SetDefault("alert.resource_check_interval_seconds", 30)
+	v.SetDefault("alert.resource_consecutive_samples", 3)
+	v.SetDefault("alert.cpu_threshold_percent", 85.0)
+	v.SetDefault("alert.memory_threshold_percent", 85.0)
 	v.SetDefault("redis.channel", "solana:meme:signals:pressure_breakout")
 	v.SetDefault("redis.consumer_channel", "")
 	v.SetDefault("redis.db", 0)
@@ -212,6 +238,19 @@ func Load() (Config, error) {
 			Enabled:  v.GetBool("telegram.enabled"),
 			BotToken: v.GetString("telegram.bot_token"),
 			ChatID:   v.GetString("telegram.chat_id"),
+		},
+		Alert: AlertConfig{
+			Enabled:                    v.GetBool("alert.enabled"),
+			LatencyThresholdMS:         v.GetInt("alert.latency_threshold_ms"),
+			ConsecutiveFailures:        v.GetInt("alert.consecutive_failures"),
+			ConsecutiveRateLimits:      v.GetInt("alert.consecutive_rate_limits"),
+			ConsecutiveHighLatency:     v.GetInt("alert.consecutive_high_latency"),
+			RecoverySuccesses:          v.GetInt("alert.recovery_successes"),
+			CooldownSeconds:            v.GetInt("alert.cooldown_seconds"),
+			ResourceCheckInterval:      v.GetInt("alert.resource_check_interval_seconds"),
+			ResourceConsecutiveSamples: v.GetInt("alert.resource_consecutive_samples"),
+			CPUThresholdPercent:        v.GetFloat64("alert.cpu_threshold_percent"),
+			MemoryThresholdPercent:     v.GetFloat64("alert.memory_threshold_percent"),
 		},
 		Redis: RedisConfig{
 			Addr:            v.GetString("redis.addr"),

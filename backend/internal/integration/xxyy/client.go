@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"solana-meme-backtest/backend/internal/httpclient"
 	"solana-meme-backtest/backend/internal/integration/project"
 )
 
@@ -36,6 +37,11 @@ func NewClient(baseURL, apiKey string, httpClient *http.Client) *Client {
 		apiKey = "Bearer " + apiKey
 	}
 	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey}
+}
+
+func (c *Client) WithHTTPObserver(observer httpclient.HTTPObserver) *Client {
+	c.httpClient = httpclient.WithObserver(c.httpClient, "XXYY 项目源", observer)
+	return c
 }
 
 func (c *Client) FetchCompletedProjects(ctx context.Context) ([]project.Item, error) {

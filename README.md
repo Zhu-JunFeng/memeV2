@@ -202,6 +202,8 @@ npm run build
 - `trade.jupiter.base_url`：Jupiter Ultra API 入口
 - `trade.jupiter.api_key`：Jupiter API Key
 - GMGN、DexScreener、Solana RPC 与 Jupiter HTTP 客户端均直接出网，不经过代理
+- 独立运行告警默认启用：外部服务鉴权失败立即告警；连续 `3` 次限流、请求失败或超过 `3s` 时告警；服务器 CPU/内存连续 `3` 次超过 `85%` 时告警。告警异步发送，不阻断行情、信号或交易流程
+- 运行告警同类异常默认 `10` 分钟内不重复刷屏，连续 `2` 次恢复正常后发送恢复通知；阈值可通过 `BACKTEST_ALERT_*` 环境变量覆盖
 - 交易模式不通过配置文件固定，而是通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
 - 买入信号进入交易模块后，会用 Jupiter 报价按当前 token supply 折算报价市值；首次相对 `triggerMarketCap` 的绝对滑点大于 `3%` 时连续重试 3 次，任意一次回落到 `<=3%` 即继续买入，四次均超限才拒绝
 

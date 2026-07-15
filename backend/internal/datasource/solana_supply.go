@@ -71,6 +71,11 @@ func NewSolanaRPCSupplyProvider(rpcURL string) *SolanaRPCSupplyProvider {
 	}
 }
 
+func (p *SolanaRPCSupplyProvider) WithHTTPObserver(observer httpclient.HTTPObserver) *SolanaRPCSupplyProvider {
+	p.client = httpclient.WithObserver(p.client, "Solana RPC", observer)
+	return p
+}
+
 func (p *SolanaRPCSupplyProvider) GetTokenSupply(ctx context.Context, mint string) (float64, error) {
 	mint = strings.TrimSpace(mint)
 	if mint == "" {

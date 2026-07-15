@@ -93,6 +93,11 @@ func (s *GMGNDataSource) WithKeyPool(keyPool GMGNKeyPool) *GMGNDataSource {
 	return s
 }
 
+func (s *GMGNDataSource) WithHTTPObserver(observer httpclient.HTTPObserver) *GMGNDataSource {
+	s.client = httpclient.WithObserver(s.client, "GMGN K线/报价", observer)
+	return s
+}
+
 func newRequestLimiter(maxQPS float64) *requestLimiter {
 	if maxQPS <= 0 {
 		return nil

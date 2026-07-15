@@ -412,6 +412,16 @@ Birdeye K 线专用实时突破信号入口。
 - 候选池买入/卖出信号的 `triggerMarketCap` / `triggerPrice` 使用触发当刻 CA 的实时真实市值；策略突破阈值、策略止盈/止损目标价分别保留在 metadata 的 `strategyMarketCap`、`breakoutThreshold`、`strategyExitPoint` 字段里，便于回看策略依据。
 - 候选池自维护 K 线的 `volume` 直接使用 GMGN 返回的真实成交额，用这组量能执行试压/突破量能过滤
 - 候选池卖出后如果市值仍高于阈值会重新进入 `watching`，但同一根已卖出的 bar 不允许再次买入，实时语义与回测的单持仓约束保持一致
+
+### 独立运行告警
+
+- 运行告警只观察系统状态，不参与买卖判断；告警检测或 Telegram 发送失败不会阻断行情、候选池、信号或交易流程。
+- 监控外部服务包括 GMGN K 线/报价、GMGN 项目源、XXYY 项目源、Birdeye、Bitquery、DexScreener、Solana RPC 与 Jupiter。
+- HTTP `401/403` 或响应 JSON 顶层 `code=401/403` 视为 API Key 失效或权限异常，立即发送 Telegram 告警。
+- 连续 `3` 次 HTTP `429`、响应 JSON 顶层 `code=429`、网络/HTTP 失败或完整响应耗时达到 `3s` 时发送告警。
+- 生产服务器每 `30s` 读取一次 Linux `/proc/stat` 与 `/proc/meminfo`；CPU 或内存连续 `3` 次达到 `85%` 时发送告警。
+- 同一服务同一类型异常默认冷却 `600s`；冷却期内不重复发送。异常后连续 `2` 次正常会发送恢复通知。
+- 配置项统一使用 `alert.*`，对应环境变量前缀为 `BACKTEST_ALERT_`；Telegram 未启用时告警模块不启动。
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入使用 SOL 作为输入资产，按固定 `trade.buy_amount_usd` 美元金额和下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"solana-meme-backtest/backend/internal/apptime"
+	"solana-meme-backtest/backend/internal/httpclient"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -69,6 +70,11 @@ func NewBitqueryTradePointDataSource(baseURL, apiKey string) *BitqueryTradePoint
 		baseURL: strings.TrimSpace(baseURL),
 		apiKey:  strings.TrimSpace(apiKey),
 	}
+}
+
+func (s *BitqueryTradePointDataSource) WithHTTPObserver(observer httpclient.HTTPObserver) *BitqueryTradePointDataSource {
+	s.client = httpclient.WithObserver(s.client, "Bitquery 交易明细", observer)
+	return s
 }
 
 func (s *BitqueryTradePointDataSource) GetTradePoints(ctx context.Context, req TradePointQuery) ([]model.TradePoint, error) {

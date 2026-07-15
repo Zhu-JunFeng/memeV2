@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"solana-meme-backtest/backend/internal/apptime"
+	"solana-meme-backtest/backend/internal/httpclient"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -61,6 +62,11 @@ func NewBirdeyeTradePointDataSource(baseURL string, apiKeys []string, chain stri
 
 func (s *BirdeyeTradePointDataSource) WithKeyPool(keyPool BirdeyeKeyPool) *BirdeyeTradePointDataSource {
 	s.keyPool = keyPool
+	return s
+}
+
+func (s *BirdeyeTradePointDataSource) WithHTTPObserver(observer httpclient.HTTPObserver) *BirdeyeTradePointDataSource {
+	s.client = httpclient.WithObserver(s.client, "Birdeye 交易明细", observer)
 	return s
 }
 

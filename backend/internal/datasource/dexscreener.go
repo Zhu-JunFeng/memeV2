@@ -45,6 +45,11 @@ func NewDexScreenerPriceSource(baseURL string) *DexScreenerPriceSource {
 	}
 }
 
+func (s *DexScreenerPriceSource) WithHTTPObserver(observer httpclient.HTTPObserver) *DexScreenerPriceSource {
+	s.client = httpclient.WithObserver(s.client, "DexScreener 报价", observer)
+	return s
+}
+
 func (s *DexScreenerPriceSource) GetTokenPrice(ctx context.Context, tokenAddress string) (float64, error) {
 	endpoint := fmt.Sprintf("%s/latest/dex/tokens/%s", s.baseURL, tokenAddress)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

@@ -21,6 +21,7 @@ import (
 	"solana-meme-backtest/backend/internal/integration/xxyy"
 	"solana-meme-backtest/backend/internal/logger"
 	"solana-meme-backtest/backend/internal/repository"
+	"solana-meme-backtest/backend/internal/runtimealert"
 	"solana-meme-backtest/backend/internal/signal"
 	"solana-meme-backtest/backend/internal/trade"
 )
@@ -31,6 +32,27 @@ func main() {
 		log.Fatalf("读取配置失败: %v", err)
 	}
 	logg := logger.New()
+	appCtx := context.Background()
+	var telegramClient *telegram.Client
+	var alertNotifier runtimealert.Notifier
+	if cfg.Telegram.Enabled {
+		telegramClient = telegram.NewClient(cfg.Telegram.BotToken, cfg.Telegram.ChatID, nil)
+		alertNotifier = telegramClient
+	}
+	alertMonitor := runtimealert.New(runtimealert.Config{
+		Enabled:                    cfg.Alert.Enabled,
+		LatencyThreshold:           time.Duration(cfg.Alert.LatencyThresholdMS) * time.Millisecond,
+		ConsecutiveFailures:        cfg.Alert.ConsecutiveFailures,
+		ConsecutiveRateLimits:      cfg.Alert.ConsecutiveRateLimits,
+		ConsecutiveHighLatency:     cfg.Alert.ConsecutiveHighLatency,
+		RecoverySuccesses:          cfg.Alert.RecoverySuccesses,
+		Cooldown:                   time.Duration(cfg.Alert.CooldownSeconds) * time.Second,
+		ResourceCheckInterval:      time.Duration(cfg.Alert.ResourceCheckInterval) * time.Second,
+		ResourceConsecutiveSamples: cfg.Alert.ResourceConsecutiveSamples,
+		CPUThresholdPercent:        cfg.Alert.CPUThresholdPercent,
+		MemoryThresholdPercent:     cfg.Alert.MemoryThresholdPercent,
+	}, alertNotifier, nil)
+	alertMonitor.Start(appCtx)
 	gin.SetMode(cfg.Server.Mode)
 	database, err := db.Open(cfg.Database.DSN, cfg.Database.AutoMigrate)
 	if err != nil {
@@ -40,7 +62,7 @@ func main() {
 	dbBarSource := datasource.NewDBBarDataSource(database)
 	dbTradePointSource := datasource.NewDBTradePointDataSource(database)
 	systemKlineStore := datasource.NewSystemKlineStore(database)
-	systemKlineStore.Start(context.Background())
+	systemKlineStore.Start(appCtx)
 	birdeyeKeyRepo := repository.NewBirdeyeAPIKeyRepository(database)
 	if err := birdeyeKeyRepo.EnsureConfigKeys(context.Background(), cfg.Birdeye.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 Birdeye API Key 池失败")
@@ -49,17 +71,17 @@ func main() {
 	if err := gmgnKeyRepo.EnsureConfigKeys(context.Background(), cfg.GMGN.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 GMGN API Key 池失败")
 	}
-	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo)
+	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo).WithHTTPObserver(alertMonitor)
 	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)
-	gmgnSource := datasource.NewGMGNDataSourceWithKeys(cfg.GMGN.BaseURL, cfg.GMGN.APIKeys, cfg.GMGN.Chain, cfg.GMGN.MaxQPS).WithKeyPool(gmgnKeyRepo)
-	supplyProvider := datasource.NewSolanaRPCSupplyProvider(cfg.Trade.SolanaRPCURL)
+	gmgnSource := datasource.NewGMGNDataSourceWithKeys(cfg.GMGN.BaseURL, cfg.GMGN.APIKeys, cfg.GMGN.Chain, cfg.GMGN.MaxQPS).WithKeyPool(gmgnKeyRepo).WithHTTPObserver(alertMonitor)
+	supplyProvider := datasource.NewSolanaRPCSupplyProvider(cfg.Trade.SolanaRPCURL).WithHTTPObserver(alertMonitor)
 	events := eventbus.NewBroker()
 	primaryKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeSource, gmgnSource, systemKlineStore)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("K 线数据源配置错误")
 	}
-	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages).WithKeyPool(birdeyeKeyRepo)
-	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey)
+	tradePointSource := datasource.NewBirdeyeTradePointDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain, cfg.Birdeye.TradeMaxPages).WithKeyPool(birdeyeKeyRepo).WithHTTPObserver(alertMonitor)
+	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey).WithHTTPObserver(alertMonitor)
 	backtestRepo := repository.NewBacktestRepository(database)
 	tradeRepo := repository.NewTradeRepository(database)
 	backtestService := backtest.NewService(primaryKlineSource, dbBarSource, birdeyeSource, tradePointSource, bitqueryTradePointSource, dbTradePointSource, source, backtestRepo,
@@ -102,18 +124,18 @@ func main() {
 			EventBus:         events,
 			SignalStatus:     tradeRepo,
 		})
-		candidateMonitor.Start(context.Background())
+		candidateMonitor.Start(appCtx)
 		if cfg.XXYY.Enabled {
-			xxyyClient := xxyy.NewClient(cfg.XXYY.BaseURL, cfg.XXYY.APIKey, nil)
+			xxyyClient := xxyy.NewClient(cfg.XXYY.BaseURL, cfg.XXYY.APIKey, nil).WithHTTPObserver(alertMonitor)
 			gmgnProjectKey := cfg.GMGN.APIKey
 			if strings.TrimSpace(gmgnProjectKey) == "" && len(cfg.GMGN.APIKeys) > 0 {
 				gmgnProjectKey = cfg.GMGN.APIKeys[0]
 			}
-			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, gmgnProjectKey, nil)
-			signal.NewProjectCandidatePoller(xxyyClient, gmgnProjectClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(context.Background())
+			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, gmgnProjectKey, nil).WithHTTPObserver(alertMonitor)
+			signal.NewProjectCandidatePoller(xxyyClient, gmgnProjectClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(appCtx)
 		}
 	}
-	priceSource, err := selectPriceSource(cfg.Trade.PriceSource, datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL), gmgnSource)
+	priceSource, err := selectPriceSource(cfg.Trade.PriceSource, datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL).WithHTTPObserver(alertMonitor), gmgnSource)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("价格数据源配置错误")
 	}
@@ -121,15 +143,18 @@ func main() {
 	if err != nil && cfg.Trade.Enabled {
 		logg.Fatal().Err(err).Msg("初始化 Jupiter 执行器失败")
 	}
+	if jupiterExecutor != nil {
+		jupiterExecutor.WithHTTPObserver(alertMonitor)
+	}
 	var tradeNotifier trade.Notifier
-	if cfg.Telegram.Enabled {
-		tradeNotifier = telegram.NewClient(cfg.Telegram.BotToken, cfg.Telegram.ChatID, nil)
+	if telegramClient != nil {
+		tradeNotifier = telegramClient
 	}
 	tradeOptions := []trade.ServiceOption{trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider), trade.WithWalletBalanceProvider(supplyProvider), trade.WithNotifier(tradeNotifier)}
 	if redisClient != nil {
 		tradeOptions = append(tradeOptions, trade.WithPositionStore(trade.NewRedisPositionStore(redisClient, "")))
 	}
-	tradeService, err := trade.NewService(context.Background(), cfg.Trade, tradeRepo, jupiterExecutor, priceSource, tradeOptions...)
+	tradeService, err := trade.NewService(appCtx, cfg.Trade, tradeRepo, jupiterExecutor, priceSource, tradeOptions...)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
 	}
@@ -140,11 +165,11 @@ func main() {
 		}
 		worker := trade.NewWorker(tradeService, redisClient, consumerChannel)
 		if cfg.Trade.SignalConsumer {
-			worker.StartSignalConsumer(context.Background())
+			worker.StartSignalConsumer(appCtx)
 		}
 		if cfg.Trade.PriceSyncEnabled {
 			interval := time.Duration(cfg.Trade.PriceSyncInterval) * time.Second
-			worker.StartPriceSync(context.Background(), interval)
+			worker.StartPriceSync(appCtx, interval)
 		}
 	}
 	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo, gmgnKeyRepo, events)

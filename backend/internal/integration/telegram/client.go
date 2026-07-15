@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"solana-meme-backtest/backend/internal/model"
+	"solana-meme-backtest/backend/internal/runtimealert"
 )
 
 const apiBaseURL = "https://api.telegram.org"
@@ -84,6 +85,21 @@ func (c *Client) NotifyTradeModeChange(ctx context.Context, change model.TradeMo
 	if change.CurrentMode == model.TradeModeLive && change.WalletBalance != nil {
 		text += fmt.Sprintf("\n当前钱包余额：%.9f SOL", *change.WalletBalance)
 	}
+	return c.sendMessage(ctx, text)
+}
+
+func (c *Client) NotifyRuntimeAlert(ctx context.Context, notification runtimealert.Notification) error {
+	title := "🚨 系统运行告警"
+	status := "异常"
+	if notification.Recovery {
+		title = "✅ 系统运行恢复"
+		status = "已恢复"
+	}
+	text := fmt.Sprintf(
+		"%s\n类型：%s\n服务：%s\n状态：%s\n详情：%s\n连续次数：%d\n时间：%s",
+		title, notification.Category, notification.Service, status, notification.Detail, notification.Consecutive,
+		notification.OccurredAt.In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02 15:04:05"),
+	)
 	return c.sendMessage(ctx, text)
 }
 

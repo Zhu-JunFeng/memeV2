@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"solana-meme-backtest/backend/internal/apptime"
+	"solana-meme-backtest/backend/internal/httpclient"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -71,6 +72,11 @@ func NewBirdeyeDataSource(baseURL string, apiKeys []string, chain string) *Birde
 
 func (s *BirdeyeDataSource) WithKeyPool(keyPool BirdeyeKeyPool) *BirdeyeDataSource {
 	s.keyPool = keyPool
+	return s
+}
+
+func (s *BirdeyeDataSource) WithHTTPObserver(observer httpclient.HTTPObserver) *BirdeyeDataSource {
+	s.client = httpclient.WithObserver(s.client, "Birdeye K线", observer)
 	return s
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"solana-meme-backtest/backend/internal/model"
+	"solana-meme-backtest/backend/internal/runtimealert"
 )
 
 func TestNotifyTradeModeChangeIncludesModesWalletAndTime(t *testing.T) {
@@ -123,6 +124,32 @@ func TestNotifySellTradeIncludesProfitRateBasedOnQuoteValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{"卖出交易成功", "成交市值：98.77k", "盈亏（U）：+5.26%"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("message %q missing %q", message, expected)
+		}
+	}
+}
+
+func TestNotifyRuntimeAlertIncludesFailureDetails(t *testing.T) {
+	var message string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		message = payload["text"]
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token", "chat-1", server.Client())
+	client.baseURL = server.URL
+	err := client.NotifyRuntimeAlert(context.Background(), runtimealert.Notification{
+		Category: "外部接口频繁限流", Service: "GMGN K线/报价", Detail: "连续收到 HTTP 429", Consecutive: 3,
+		OccurredAt: time.Date(2026, 7, 15, 6, 30, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"系统运行告警", "类型：外部接口频繁限流", "服务：GMGN K线/报价", "状态：异常", "连续次数：3", "时间：2026-07-15 14:30:00"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message %q missing %q", message, expected)
 		}

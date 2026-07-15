@@ -29,6 +29,7 @@ const lamportsPerSOL = 1_000_000_000
 type JupiterExecutor struct {
 	cfg           config.TradeConfig
 	client        *http.Client
+	rpcClient     *http.Client
 	priceProvider datasource.TokenPriceProvider
 	privateKey    solana.PrivateKey
 	walletAddress string
@@ -110,7 +111,16 @@ func NewJupiterExecutor(cfg config.TradeConfig, priceProvider datasource.TokenPr
 		privateKey:    privateKey,
 		walletAddress: walletAddress,
 		client:        httpclient.NewDirectClient(30*time.Second, 15*time.Second),
+		rpcClient:     httpclient.NewDirectClient(15*time.Second, 15*time.Second),
 	}, nil
+}
+
+func (e *JupiterExecutor) WithHTTPObserver(observer httpclient.HTTPObserver) *JupiterExecutor {
+	if e != nil {
+		e.client = httpclient.WithObserver(e.client, "Jupiter 交易", observer)
+		e.rpcClient = httpclient.WithObserver(e.rpcClient, "Solana RPC", observer)
+	}
+	return e
 }
 
 // Execute 按“下订单 -> 本地签名 -> 提交执行”三步走，
@@ -367,7 +377,11 @@ func (e *JupiterExecutor) executeOrder(ctx context.Context, signedTransaction st
 	httpReq.Header.Set("x-api-key", e.cfg.Jupiter.APIKey)
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("accept", "application/json")
-	resp, err := e.client.Do(httpReq)
+	rpcClient := e.rpcClient
+	if rpcClient == nil {
+		rpcClient = e.client
+	}
+	resp, err := rpcClient.Do(httpReq)
 	if err != nil {
 		return jupiterExecuteResponse{}, err
 	}

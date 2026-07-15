@@ -40,6 +40,19 @@ telegram:
   bot_token: "" # 对应环境变量 BACKTEST_TELEGRAM_BOT_TOKEN；不要提交真实 Token
   chat_id: "" # 对应环境变量 BACKTEST_TELEGRAM_CHAT_ID
 
+alert:
+  enabled: true # 依赖 Telegram 已启用；告警模块不参与也不阻断交易逻辑
+  latency_threshold_ms: 3000
+  consecutive_failures: 3
+  consecutive_rate_limits: 3
+  consecutive_high_latency: 3
+  recovery_successes: 2
+  cooldown_seconds: 600
+  resource_check_interval_seconds: 30
+  resource_consecutive_samples: 3
+  cpu_threshold_percent: 85
+  memory_threshold_percent: 85
+
 redis:
   enabled: false
   addr: "127.0.0.1:6379"
