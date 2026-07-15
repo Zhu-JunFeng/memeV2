@@ -149,7 +149,7 @@ func Load() (Config, error) {
 	v.SetDefault("birdeye.trade_max_pages", 1)
 	v.SetDefault("gmgn.base_url", "https://openapi.gmgn.ai")
 	v.SetDefault("gmgn.chain", "sol")
-	v.SetDefault("gmgn.max_qps", 8.0)
+	v.SetDefault("gmgn.max_qps", 10.0)
 	v.SetDefault("bitquery.base_url", "https://streaming.bitquery.io/graphql")
 	v.SetDefault("xxyy.enabled", false)
 	v.SetDefault("xxyy.base_url", "https://www.xxyy.io")

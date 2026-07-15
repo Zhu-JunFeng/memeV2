@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func TestSchedulerLimitsEachKeyIndependently(t *testing.T) {
-	scheduler := NewScheduler(nil, []string{"key-a", "key-b"}, 1)
+func TestSchedulerLimitsAllKeysGlobally(t *testing.T) {
+	scheduler := NewScheduler(nil, []string{"key-a", "key-b"}, 5)
 	ctx := context.Background()
 	keys, err := scheduler.AvailableKeys(ctx)
 	if err != nil {
@@ -20,8 +20,8 @@ func TestSchedulerLimitsEachKeyIndependently(t *testing.T) {
 	if err := scheduler.Wait(ctx, scheduler.NextKey(keys)); err != nil {
 		t.Fatal(err)
 	}
-	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
-		t.Fatalf("different keys should have independent QPS, elapsed=%s", elapsed)
+	if elapsed := time.Since(startedAt); elapsed < 150*time.Millisecond {
+		t.Fatalf("different keys must share the global QPS limit, elapsed=%s", elapsed)
 	}
 }
 

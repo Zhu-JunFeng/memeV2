@@ -21,15 +21,14 @@ type Store interface {
 type Scheduler struct {
 	store    Store
 	fallback []string
-	maxQPS   float64
 	cursor   uint32
 
 	mu       sync.Mutex
-	limiters map[string]*keyLimiter
+	limiter  *requestLimiter
 	cooldown map[string]time.Time
 }
 
-type keyLimiter struct {
+type requestLimiter struct {
 	mu       sync.Mutex
 	interval time.Duration
 	next     time.Time
@@ -39,10 +38,16 @@ func NewScheduler(store Store, fallback []string, maxQPS float64) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		fallback: normalizeKeys(fallback),
-		maxQPS:   maxQPS,
-		limiters: make(map[string]*keyLimiter),
+		limiter:  newRequestLimiter(maxQPS),
 		cooldown: make(map[string]time.Time),
 	}
+}
+
+func newRequestLimiter(maxQPS float64) *requestLimiter {
+	if maxQPS <= 0 {
+		return nil
+	}
+	return &requestLimiter{interval: time.Duration(float64(time.Second) / maxQPS)}
 }
 
 func (s *Scheduler) AvailableKeys(ctx context.Context) ([]string, error) {
@@ -85,10 +90,10 @@ func (s *Scheduler) Wait(ctx context.Context, apiKey string) error {
 	if s.isCoolingDown(apiKey, time.Now()) {
 		return ErrKeyCoolingDown
 	}
-	if s == nil || s.maxQPS <= 0 || strings.TrimSpace(apiKey) == "" {
+	if s == nil || s.limiter == nil || strings.TrimSpace(apiKey) == "" {
 		return nil
 	}
-	limiter := s.limiter(apiKey)
+	limiter := s.limiter
 	limiter.mu.Lock()
 	now := time.Now()
 	wait := time.Duration(0)
@@ -156,17 +161,6 @@ func (s *Scheduler) withoutCoolingDown(keys []string, now time.Time) []string {
 		}
 	}
 	return result
-}
-
-func (s *Scheduler) limiter(apiKey string) *keyLimiter {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	limiter := s.limiters[apiKey]
-	if limiter == nil {
-		limiter = &keyLimiter{interval: time.Duration(float64(time.Second) / s.maxQPS)}
-		s.limiters[apiKey] = limiter
-	}
-	return limiter
 }
 
 func normalizeKeys(keys []string) []string {

@@ -63,9 +63,9 @@
 - `BACKTEST_GMGN_API_KEY` / `gmgn.api_key`、`BACKTEST_GMGN_API_KEYS` / `gmgn.api_keys`：GMGN API Key；启动时写入 PostgreSQL `gmgn_api_keys`，所有 GMGN 请求统一轮询其中状态为 `available` 的 Key。
 - `BACKTEST_GMGN_BASE_URL` / `gmgn.base_url`：默认 `https://openapi.gmgn.ai`。
 - `BACKTEST_GMGN_CHAIN` / `gmgn.chain`：默认 `sol`。
-- `BACKTEST_GMGN_MAX_QPS` / `gmgn.max_qps`：单个 GMGN Key 的进程内请求限速，默认每 Key `8 QPS`，低于实测约 `10 QPS` 的单 Key 上限；多个可用 Key 各自独立限速。
+- `BACKTEST_GMGN_MAX_QPS` / `gmgn.max_qps`：所有 GMGN 请求共享的进程内全局限速，默认整体 `10 QPS`，不会随可用 Key 数量叠加。
 
-GMGN K 线、报价、项目发现和 token symbol 查询共享同一个数据库 Key 池调度器与轮询游标。若有 2 个可用 Key，默认理论总吞吐约为 `16 QPS`；单个 Key 收到 HTTP 或业务码 `429` 后冷却 `60s`，其他可用 Key 继续轮询；系统不因 Key 池异常改用其他数据源。
+GMGN K 线、报价、项目发现和 token symbol 查询共享同一个数据库 Key 池调度器、轮询游标和全局 `10 QPS` 限速器。单个 Key 收到 HTTP 或业务码 `429` 后冷却 `60s`，其他可用 Key 继续轮询；系统不因 Key 池异常改用其他数据源。
 
 说明：SQL 数据源依赖 `BACKTEST_DATASOURCE_KLINE_QUERY` 或配置文件 `datasource.kline_query`。SQL 参数顺序固定为 `tokenAddress`、`interval`、`startTime`、`endTime`。
 

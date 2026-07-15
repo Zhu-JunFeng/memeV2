@@ -25,7 +25,7 @@ gmgn:
     - "gmgn_084c4c4f375a015021611267c5d0848c"
   api_key: ""
   chain: "sol"
-  max_qps: 8
+  max_qps: 10
 
 bitquery:
   base_url: "https://streaming.bitquery.io/graphql"
