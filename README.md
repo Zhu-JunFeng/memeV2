@@ -192,7 +192,7 @@ npm run build
 - 候选池实时补价只会刷新当前 forming bar 的 OHLC；`volume` 始终沿用 GMGN 返回值，若当前分钟尚无 GMGN bar，则临时补价 bar 的 `volume=0`
 - 候选池卖出后若市值仍高于阈值会 rearm，但同一根已卖出的 bar 不允许立刻重新买入
 - `trade.enabled`：是否启用交易模块
-- `trade.signal_consumer`：是否订阅 Redis 信号并自动执行
+- `trade.signal_consumer`：数据库尚无运行时配置时，“接收信号并执行交易”开关的首次默认值
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
 - `trade.buy_amount_sol`：固定买入数量，默认 `0.1 SOL`
 - `trade.slippage_bps`：实盘 `/order` 固定滑点保护，默认 `200`（2%）；模拟盘直接采用 Jupiter 即时报价，不额外扣减滑点
@@ -205,7 +205,8 @@ npm run build
 - GMGN、DexScreener、Solana RPC 与 Jupiter HTTP 客户端均直接出网，不经过代理
 - 独立运行告警默认启用：外部服务鉴权失败立即告警；连续 `3` 次限流、请求失败或超过 `3s` 时告警；服务器 CPU/内存连续 `3` 次超过 `85%` 时告警。告警异步发送，不阻断行情、信号或交易流程
 - 运行告警同类异常默认 `10` 分钟内不重复刷屏，连续 `2` 次恢复正常后发送恢复通知；阈值可通过 `BACKTEST_ALERT_*` 环境变量覆盖
-- 交易模式不通过配置文件固定，而是通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
+- 交易模式、“CA 获取与监控”、“接收信号并执行交易”均可通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
+- 关闭 CA 获取与监控后，停止项目发现、Redis CA 接收、候选扫描和策略卖出检查，不清空候选池；关闭交易执行后，信号仍产生，但模拟盘和实盘都不再自动执行买卖
 - 买入信号进入交易模块后，会用 Jupiter 报价按当前 token supply 折算报价市值；首次相对 `triggerMarketCap` 的绝对滑点大于 `3%` 时连续重试 3 次，任意一次回落到 `<=3%` 即继续买入，四次均超限才拒绝
 
 ## 部署

@@ -23,6 +23,7 @@ import (
 	"solana-meme-backtest/backend/internal/logger"
 	"solana-meme-backtest/backend/internal/repository"
 	"solana-meme-backtest/backend/internal/runtimealert"
+	"solana-meme-backtest/backend/internal/runtimeconfig"
 	"solana-meme-backtest/backend/internal/signal"
 	"solana-meme-backtest/backend/internal/trade"
 )
@@ -86,6 +87,14 @@ func main() {
 	bitqueryTradePointSource := datasource.NewBitqueryTradePointDataSource(cfg.Bitquery.BaseURL, cfg.Bitquery.APIKey).WithHTTPObserver(alertMonitor)
 	backtestRepo := repository.NewBacktestRepository(database)
 	tradeRepo := repository.NewTradeRepository(database)
+	runtimeSettingsRepo := repository.NewRuntimeSettingsRepository(database)
+	runtimeControl, err := runtimeconfig.New(appCtx, runtimeSettingsRepo, runtimeconfig.State{
+		CAMonitoringEnabled:   cfg.Signal.CandidateMonitorEnabled,
+		TradeExecutionEnabled: cfg.Trade.SignalConsumer,
+	})
+	if err != nil {
+		logg.Fatal().Err(err).Msg("初始化运行时开关失败")
+	}
 	backtestService := backtest.NewService(primaryKlineSource, dbBarSource, birdeyeSource, tradePointSource, bitqueryTradePointSource, dbTradePointSource, source, backtestRepo,
 		backtest.WithDefaultKlineSource(cfg.Datasource.KlineSource),
 		backtest.WithKlineSource("sql", source),
@@ -109,9 +118,9 @@ func main() {
 		signal.WithKlineSource("system", systemKlineStore),
 	)
 	var candidateMonitor *signal.CandidateMonitor
-	if cfg.Signal.CandidateMonitorEnabled && redisClient != nil {
+	if redisClient != nil {
 		candidateMonitor = signal.NewCandidateMonitor(redisClient, gmgnSource, publisher, signal.CandidateMonitorConfig{
-			Enabled:          cfg.Signal.CandidateMonitorEnabled,
+			Enabled:          true,
 			CandidateChannel: cfg.Signal.CandidateChannel,
 			PollInterval:     time.Duration(cfg.Signal.PollIntervalSeconds) * time.Second,
 			Interval:         cfg.Signal.Interval,
@@ -125,6 +134,7 @@ func main() {
 			SystemKlines:     systemKlineStore,
 			EventBus:         events,
 			SignalStatus:     tradeRepo,
+			RuntimeEnabled:   runtimeControl.CAMonitoringEnabled,
 		})
 		candidateMonitor.Start(appCtx)
 		if cfg.XXYY.Enabled {
@@ -161,16 +171,14 @@ func main() {
 		if consumerChannel == "" {
 			consumerChannel = cfg.Redis.Channel
 		}
-		worker := trade.NewWorker(tradeService, redisClient, consumerChannel)
-		if cfg.Trade.SignalConsumer {
-			worker.StartSignalConsumer(appCtx)
-		}
+		worker := trade.NewWorker(tradeService, redisClient, consumerChannel, runtimeControl.TradeExecutionEnabled)
+		worker.StartSignalConsumer(appCtx)
 		if cfg.Trade.PriceSyncEnabled {
 			interval := time.Duration(cfg.Trade.PriceSyncInterval) * time.Second
 			worker.StartPriceSync(appCtx, interval)
 		}
 	}
-	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo, gmgnKeyRepo, events)
+	router := api.NewRouter(backtestService, signalService, tradeService, candidateMonitor, birdeyeKeyRepo, gmgnKeyRepo, events, runtimeControl)
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	logg.Info().Str("addr", addr).Msg("回测服务启动")
 	if err := router.Run(addr); err != nil {

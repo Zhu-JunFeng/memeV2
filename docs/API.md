@@ -490,22 +490,26 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 
 ### GET /api/trade/runtime
 
-返回当前全局交易模式。
+返回当前全局交易模式及运行时开关。
 
 返回：
 
 - `tradeMode`：当前模式，`paper` 或 `live`
+- `caMonitoringEnabled`：是否开启 CA 获取和监控
+- `tradeExecutionEnabled`：是否接收信号并执行交易；同时作用于模拟盘和实盘
 - `options[]`：前端可直接渲染的模式选项
 
 ### PUT /api/trade/runtime
 
-切换并持久化全局交易模式。
+部分更新并持久化全局交易模式或运行时开关。请求至少提供一个字段，未提供的字段保持不变。
 
 请求体：
 
 ```json
 {
-  "tradeMode": "paper"
+  "tradeMode": "paper",
+  "caMonitoringEnabled": true,
+  "tradeExecutionEnabled": true
 }
 ```
 
@@ -513,6 +517,9 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 
 - `paper`：只请求 Jupiter `quote`，不依赖真实钱包余额，也不会执行签名和链上提交
 - `live`：恢复真实下单执行
+- `caMonitoringEnabled=false`：停止 XXYY/GMGN 项目发现、Redis CA 接收、候选池扫描及已买入候选的策略卖出检查；不删除候选池现有数据
+- `tradeExecutionEnabled=false`：信号仍会生成和发布，但 Redis 自动交易消费者不再执行信号；模拟盘和实盘都停止自动买卖，手动平仓等直接操作不受影响
+- 两个开关写入 `system_runtime_settings` 并即时生效，服务重启后保持；配置文件 `signal.candidate_monitor_enabled`、`trade.signal_consumer` 只在数据库中尚无对应配置时提供首次默认值
 - 切换后新的买入信号、订单、成交和持仓使用新的 `tradeMode`；已有持仓的自动卖出始终使用该持仓自身的 `tradeMode`。
 - 模式持久化成功后向 Telegram 发送切换通知；通知汇总从上一次模式切换到本次切换之间的成交买入、成交卖出、失败订单、已平仓胜负、实现盈亏和当前未平仓数量
 - 切换到 `live` 前通过生产 Solana RPC 查询当前交易钱包余额，查询失败则不切换；实盘切换通知额外显示实时 SOL 余额

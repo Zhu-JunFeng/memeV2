@@ -62,3 +62,15 @@ func TestDecodeTradeSignalPayloadRejectsCandidateWithoutPublishedAt(t *testing.T
 		t.Fatalf("expected candidate event error")
 	}
 }
+
+func TestWorkerExecutionGate(t *testing.T) {
+	if !NewWorker(nil, nil, "", nil).executionAllowed() {
+		t.Fatal("missing runtime gate should keep the existing enabled behavior")
+	}
+	if NewWorker(nil, nil, "", func() bool { return false }).executionAllowed() {
+		t.Fatal("disabled runtime gate should block signal execution")
+	}
+	if !NewWorker(nil, nil, "", func() bool { return true }).executionAllowed() {
+		t.Fatal("enabled runtime gate should allow signal execution")
+	}
+}

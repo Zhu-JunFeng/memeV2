@@ -367,3 +367,12 @@ ALTER TABLE trade_accounts
 - `trade_accounts.buy_amount_usd` 恢复为当前单次买入金额，生产配置为 `10u`
 - 下单时直接使用当前 SOL/USD 价格把美元金额换算为 lamports，不读取备用价格源
 - `buy_amount_sol`、`intent_amount_sol` 仅保留历史兼容，不再作为新买单主语义
+
+## 009-CA监控与交易执行运行时配置（PostgreSQL）
+
+本次不新增表和字段，复用 `system_runtime_settings`，新增以下配置键：
+
+- `signal.ca_monitoring_enabled`：是否开启 CA 获取和监控
+- `trade.signal_execution_enabled`：是否接收信号并执行交易，同时作用于模拟盘和实盘
+
+服务首次启动且表中缺少配置键时，分别使用配置文件 `signal.candidate_monitor_enabled` 和 `trade.signal_consumer` 作为默认值并写入数据库；后续以数据库值为准。

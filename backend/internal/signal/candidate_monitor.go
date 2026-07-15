@@ -41,6 +41,7 @@ const (
 )
 
 var ErrCandidatePoolFull = errors.New("候选池已满")
+var ErrCandidateMonitoringDisabled = errors.New("CA 获取和监控已关闭")
 
 type CandidateMonitorConfig struct {
 	Enabled          bool
@@ -58,6 +59,7 @@ type CandidateMonitorConfig struct {
 	SystemKlines     monitorKlineStore
 	EventBus         *eventbus.Broker
 	SignalStatus     tradeSignalStatusProvider
+	RuntimeEnabled   func() bool
 	Now              func() time.Time
 }
 
@@ -235,6 +237,13 @@ func (m *CandidateMonitor) Start(ctx context.Context) {
 	go m.pollBoughtCandidates(ctx)
 }
 
+func (m *CandidateMonitor) RuntimeEnabled() bool {
+	if m == nil || !m.cfg.Enabled {
+		return false
+	}
+	return m.cfg.RuntimeEnabled == nil || m.cfg.RuntimeEnabled()
+}
+
 func (m *CandidateMonitor) preloadActiveKlines(ctx context.Context) {
 	if m == nil || m.systemKlines == nil || m.klineCache == nil {
 		return
@@ -326,11 +335,17 @@ func (m *CandidateMonitor) DeleteCandidate(ctx context.Context, tokenAddress str
 }
 
 func (m *CandidateMonitor) AddManualCandidate(ctx context.Context, tokenAddress string) (CandidateMonitorItem, error) {
+	if !m.RuntimeEnabled() {
+		return CandidateMonitorItem{}, ErrCandidateMonitoringDisabled
+	}
 	item, _, err := m.AddProjectCandidate(ctx, tokenAddress, "", 0)
 	return item, err
 }
 
 func (m *CandidateMonitor) AddProjectCandidate(ctx context.Context, tokenAddress string, symbol string, marketCap float64) (CandidateMonitorItem, bool, error) {
+	if !m.RuntimeEnabled() {
+		return CandidateMonitorItem{}, false, ErrCandidateMonitoringDisabled
+	}
 	tokenAddress = strings.TrimSpace(tokenAddress)
 	symbol = strings.TrimSpace(symbol)
 	if tokenAddress == "" {
@@ -600,6 +615,9 @@ func (m *CandidateMonitor) subscribeCandidates(ctx context.Context) {
 			if !ok {
 				return
 			}
+			if !m.RuntimeEnabled() {
+				continue
+			}
 			if err := m.handleCandidatePayload(ctx, []byte(msg.Payload)); err != nil {
 				log.Printf("candidate monitor handle payload failed: %v", err)
 			}
@@ -635,6 +653,9 @@ func (m *CandidateMonitor) pollBoughtCandidates(ctx context.Context) {
 }
 
 func (m *CandidateMonitor) pollOnce(ctx context.Context, status string) {
+	if !m.RuntimeEnabled() {
+		return
+	}
 	startedAt := time.Now()
 	items, err := m.store.ListActive(ctx)
 	if err != nil {

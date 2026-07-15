@@ -13,17 +13,22 @@ import (
 )
 
 type Worker struct {
-	service *Service
-	redis   *redis.Client
-	channel string
+	service          *Service
+	redis            *redis.Client
+	channel          string
+	executionEnabled func() bool
 }
 
 type redisSignalEnvelope struct {
 	Event string `json:"event"`
 }
 
-func NewWorker(service *Service, redisClient *redis.Client, channel string) *Worker {
-	return &Worker{service: service, redis: redisClient, channel: channel}
+func NewWorker(service *Service, redisClient *redis.Client, channel string, executionEnabled func() bool) *Worker {
+	return &Worker{service: service, redis: redisClient, channel: channel, executionEnabled: executionEnabled}
+}
+
+func (w *Worker) executionAllowed() bool {
+	return w != nil && (w.executionEnabled == nil || w.executionEnabled())
 }
 
 func (w *Worker) StartSignalConsumer(ctx context.Context) {
@@ -46,6 +51,9 @@ func (w *Worker) StartSignalConsumer(ctx context.Context) {
 			case msg, ok := <-ch:
 				if !ok {
 					return
+				}
+				if !w.executionAllowed() {
+					continue
 				}
 				signal, err := decodeTradeSignalPayload([]byte(msg.Payload))
 				if err != nil {

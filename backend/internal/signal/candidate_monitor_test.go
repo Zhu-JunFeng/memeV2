@@ -960,6 +960,19 @@ func TestCandidateMonitorAddManualCandidate(t *testing.T) {
 	}
 }
 
+func TestCandidateMonitorRejectsNewCandidateWhenRuntimeDisabled(t *testing.T) {
+	store := newFakeCandidateStore()
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	monitor.cfg.RuntimeEnabled = func() bool { return false }
+
+	if _, err := monitor.AddManualCandidate(context.Background(), "manual-token"); !errors.Is(err, ErrCandidateMonitoringDisabled) {
+		t.Fatalf("expected disabled error, got %v", err)
+	}
+	if len(store.states) != 0 {
+		t.Fatalf("disabled monitor should not persist candidates: %#v", store.states)
+	}
+}
+
 func TestCandidateMonitorProjectCandidateStoresSymbolAndMarketCap(t *testing.T) {
 	base := time.Date(2026, 6, 29, 14, 0, 0, 0, time.UTC)
 	store := newFakeCandidateStore()

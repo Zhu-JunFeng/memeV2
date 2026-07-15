@@ -18,6 +18,7 @@ import (
 	"solana-meme-backtest/backend/internal/eventbus"
 	"solana-meme-backtest/backend/internal/model"
 	"solana-meme-backtest/backend/internal/response"
+	"solana-meme-backtest/backend/internal/runtimeconfig"
 	"solana-meme-backtest/backend/internal/signal"
 	"solana-meme-backtest/backend/internal/trade"
 )
@@ -30,6 +31,7 @@ type Handler struct {
 	birdeyeKeyStore  birdeyeAPIKeyStore
 	gmgnKeyStore     gmgnAPIKeyStore
 	eventBus         *eventbus.Broker
+	runtimeControl   *runtimeconfig.Control
 }
 
 type birdeyeAPIKeyStore interface {
@@ -40,10 +42,10 @@ type gmgnAPIKeyStore interface {
 	AddKey(ctx context.Context, apiKey string) (model.GMGNAPIKey, error)
 }
 
-func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore, gmgnKeyStore gmgnAPIKeyStore, bus *eventbus.Broker) *gin.Engine {
+func NewRouter(backtestService *backtest.Service, signalService *signal.Service, tradeService *trade.Service, candidateMonitor *signal.CandidateMonitor, birdeyeKeyStore birdeyeAPIKeyStore, gmgnKeyStore gmgnAPIKeyStore, bus *eventbus.Broker, runtimeControl *runtimeconfig.Control) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
-	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore, gmgnKeyStore: gmgnKeyStore, eventBus: bus}
+	h := &Handler{backtestService: backtestService, signalService: signalService, tradeService: tradeService, candidateMonitor: candidateMonitor, birdeyeKeyStore: birdeyeKeyStore, gmgnKeyStore: gmgnKeyStore, eventBus: bus, runtimeControl: runtimeControl}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
 	api.GET("/tokens/search", h.searchTokens)
@@ -603,8 +605,11 @@ func (h *Handler) listTradeAccounts(c *gin.Context) {
 }
 
 func (h *Handler) getTradeRuntime(c *gin.Context) {
+	runtimeState := h.runtimeControl.State()
 	response.OK(c, gin.H{
-		"tradeMode": h.tradeService.GetTradeMode(),
+		"tradeMode":             h.tradeService.GetTradeMode(),
+		"caMonitoringEnabled":   runtimeState.CAMonitoringEnabled,
+		"tradeExecutionEnabled": runtimeState.TradeExecutionEnabled,
 		"options": []gin.H{
 			{"label": "模拟盘", "value": model.TradeModePaper},
 			{"label": "实盘", "value": model.TradeModeLive},
@@ -613,7 +618,9 @@ func (h *Handler) getTradeRuntime(c *gin.Context) {
 }
 
 type updateTradeRuntimeRequest struct {
-	TradeMode model.TradeMode `json:"tradeMode" binding:"required"`
+	TradeMode             *model.TradeMode `json:"tradeMode"`
+	CAMonitoringEnabled   *bool            `json:"caMonitoringEnabled"`
+	TradeExecutionEnabled *bool            `json:"tradeExecutionEnabled"`
 }
 
 func (h *Handler) updateTradeRuntime(c *gin.Context) {
@@ -622,12 +629,29 @@ func (h *Handler) updateTradeRuntime(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
 		return
 	}
-	mode, err := h.tradeService.UpdateTradeMode(c.Request.Context(), req.TradeMode)
+	if req.TradeMode == nil && req.CAMonitoringEnabled == nil && req.TradeExecutionEnabled == nil {
+		response.Fail(c, http.StatusBadRequest, "至少提供一个运行配置")
+		return
+	}
+	mode := h.tradeService.GetTradeMode()
+	if req.TradeMode != nil {
+		updatedMode, err := h.tradeService.UpdateTradeMode(c.Request.Context(), *req.TradeMode)
+		if err != nil {
+			h.handleError(c, err)
+			return
+		}
+		mode = updatedMode
+	}
+	state, err := h.runtimeControl.Update(c.Request.Context(), req.CAMonitoringEnabled, req.TradeExecutionEnabled)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
-	response.OK(c, gin.H{"tradeMode": mode})
+	response.OK(c, gin.H{
+		"tradeMode":             mode,
+		"caMonitoringEnabled":   state.CAMonitoringEnabled,
+		"tradeExecutionEnabled": state.TradeExecutionEnabled,
+	})
 }
 
 func (h *Handler) listTradeSignals(c *gin.Context) {

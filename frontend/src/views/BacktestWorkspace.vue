@@ -365,6 +365,42 @@
             >
           </div>
         </div>
+        <div class="trade-runtime-card runtime-switch-card">
+          <div class="runtime-switch-head">
+            <div>
+              <span class="trade-runtime-label">CA 获取与监控</span>
+              <div class="trade-runtime-hint">
+                控制项目发现、候选池扫描及持仓卖出策略检查。
+              </div>
+            </div>
+            <el-switch
+              :model-value="caMonitoringEnabled"
+              :disabled="store.runtimeUpdating"
+              inline-prompt
+              active-text="开启"
+              inactive-text="关闭"
+              @change="handleCAMonitoringChange"
+            />
+          </div>
+        </div>
+        <div class="trade-runtime-card runtime-switch-card">
+          <div class="runtime-switch-head">
+            <div>
+              <span class="trade-runtime-label">接收信号并执行交易</span>
+              <div class="trade-runtime-hint">
+                同时控制模拟盘和实盘的自动买入、卖出执行。
+              </div>
+            </div>
+            <el-switch
+              :model-value="tradeExecutionEnabled"
+              :disabled="store.runtimeUpdating"
+              inline-prompt
+              active-text="开启"
+              inactive-text="关闭"
+              @change="handleTradeExecutionChange"
+            />
+          </div>
+        </div>
         <div class="trade-runtime-card">
           <span class="trade-runtime-label">列表筛选</span>
           <el-segmented
@@ -1327,6 +1363,8 @@ const strategyForm = reactive({
 });
 const tradeTab = ref("candidates");
 const tradeRuntimeMode = ref("paper");
+const caMonitoringEnabled = ref(false);
+const tradeExecutionEnabled = ref(false);
 const tradeFilterMode = ref("all");
 const relativeNow = ref(Date.now());
 const selectedWindowKey = ref("");
@@ -1883,6 +1921,54 @@ async function handleTradeModeChange(value) {
     tradeRuntimeMode.value = store.tradeRuntime.tradeMode;
     if (error !== "cancel" && error !== "close") {
       ElMessage.error(error.message || "切换交易模式失败");
+    }
+  }
+}
+
+async function handleCAMonitoringChange(value) {
+  try {
+    if (!value) {
+      await ElMessageBox.confirm(
+        "关闭后将停止 CA 获取、候选扫描和持仓卖出策略检查。确认关闭？",
+        "关闭 CA 获取与监控",
+        {
+          type: "warning",
+          confirmButtonText: "确认关闭",
+          cancelButtonText: "取消",
+        },
+      );
+    }
+    await store.updateRuntimeConfig({ caMonitoringEnabled: value });
+    caMonitoringEnabled.value = store.tradeRuntime.caMonitoringEnabled;
+    ElMessage.success(value ? "CA 获取与监控已开启" : "CA 获取与监控已关闭");
+  } catch (error) {
+    caMonitoringEnabled.value = store.tradeRuntime.caMonitoringEnabled;
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(error.message || "更新 CA 监控配置失败");
+    }
+  }
+}
+
+async function handleTradeExecutionChange(value) {
+  try {
+    if (!value) {
+      await ElMessageBox.confirm(
+        "关闭后，模拟盘和实盘都不会自动接收并执行买卖信号。确认关闭？",
+        "关闭自动交易执行",
+        {
+          type: "warning",
+          confirmButtonText: "确认关闭",
+          cancelButtonText: "取消",
+        },
+      );
+    }
+    await store.updateRuntimeConfig({ tradeExecutionEnabled: value });
+    tradeExecutionEnabled.value = store.tradeRuntime.tradeExecutionEnabled;
+    ElMessage.success(value ? "自动交易执行已开启" : "自动交易执行已关闭");
+  } catch (error) {
+    tradeExecutionEnabled.value = store.tradeRuntime.tradeExecutionEnabled;
+    if (error !== "cancel" && error !== "close") {
+      ElMessage.error(error.message || "更新交易执行配置失败");
     }
   }
 }
@@ -2595,6 +2681,8 @@ onMounted(async () => {
   }, 1000);
   await Promise.all([store.loadStrategyMethods(), store.loadTradeRuntime()]);
   tradeRuntimeMode.value = store.tradeRuntime.tradeMode || "paper";
+  caMonitoringEnabled.value = store.tradeRuntime.caMonitoringEnabled;
+  tradeExecutionEnabled.value = store.tradeRuntime.tradeExecutionEnabled;
   await refreshTradeDashboard();
 });
 
@@ -2666,6 +2754,22 @@ onUnmounted(() => {
   color: rgba(216, 233, 226, 0.72);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.runtime-switch-card {
+  align-content: center;
+}
+
+.runtime-switch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.runtime-switch-head > div {
+  display: grid;
+  gap: 6px;
 }
 
 .trade-summary-grid {

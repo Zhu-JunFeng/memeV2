@@ -62,7 +62,7 @@ redis:
   consumer_channel: "" # 为空时交易消费沿用 channel
 
 signal:
-  candidate_monitor_enabled: false
+  candidate_monitor_enabled: false # 数据库尚无运行时配置时，作为“CA 获取与监控”的首次默认值
   candidate_channel: "solana_scalper:candidate_pool"
   poll_interval_seconds: 2
   interval: "1m"
@@ -72,7 +72,7 @@ signal:
 
 trade:
   enabled: false
-  signal_consumer: false
+  signal_consumer: false # 数据库尚无运行时配置时，作为“接收信号并执行交易”的首次默认值
   price_sync_enabled: false
   price_sync_interval: 15
   account_name: "default"

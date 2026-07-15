@@ -42,6 +42,8 @@ export const useBacktestStore = defineStore("backtest", {
     strategyBacktestResult: null,
     tradeRuntime: {
       tradeMode: "paper",
+      caMonitoringEnabled: false,
+      tradeExecutionEnabled: false,
       options: [],
     },
     tradeSummaryItems: [],
@@ -137,17 +139,27 @@ export const useBacktestStore = defineStore("backtest", {
       const data = await fetchTradeRuntime();
       this.tradeRuntime = {
         tradeMode: data.tradeMode || "paper",
+        caMonitoringEnabled: Boolean(data.caMonitoringEnabled),
+        tradeExecutionEnabled: Boolean(data.tradeExecutionEnabled),
         options: data.options || [],
       };
       return this.tradeRuntime;
     },
     async setTradeMode(tradeMode) {
+      return this.updateRuntimeConfig({ tradeMode });
+    },
+    async updateRuntimeConfig(payload) {
       this.runtimeUpdating = true;
       this.error = "";
       try {
-        const data = await updateTradeRuntime({ tradeMode });
-        this.tradeRuntime.tradeMode = data.tradeMode || tradeMode;
-        return this.tradeRuntime.tradeMode;
+        const data = await updateTradeRuntime(payload);
+        this.tradeRuntime = {
+          ...this.tradeRuntime,
+          tradeMode: data.tradeMode || this.tradeRuntime.tradeMode,
+          caMonitoringEnabled: Boolean(data.caMonitoringEnabled),
+          tradeExecutionEnabled: Boolean(data.tradeExecutionEnabled),
+        };
+        return this.tradeRuntime;
       } catch (error) {
         this.error = error.message;
         throw error;

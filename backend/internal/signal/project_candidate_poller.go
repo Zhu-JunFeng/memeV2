@@ -68,6 +68,9 @@ func (p *ProjectCandidatePoller) Start(ctx context.Context) {
 }
 
 func (p *ProjectCandidatePoller) pollOnce(ctx context.Context, source alternatingFeed) {
+	if p == nil || p.monitor == nil || !p.monitor.RuntimeEnabled() {
+		return
+	}
 	items, err := source.feed.FetchCompletedProjects(ctx)
 	if err != nil {
 		log.Printf("%s completed candidate poll failed: %v", source.name, err)

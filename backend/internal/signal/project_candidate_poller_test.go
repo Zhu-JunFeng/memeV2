@@ -15,6 +15,15 @@ func (f fakeCompletedProjectFeed) FetchCompletedProjects(context.Context) ([]pro
 	return f.items, nil
 }
 
+type countingCompletedProjectFeed struct {
+	calls int
+}
+
+func (f *countingCompletedProjectFeed) FetchCompletedProjects(context.Context) ([]project.Item, error) {
+	f.calls++
+	return nil, nil
+}
+
 func TestProjectCandidatePollerRequiresKOLAtLeastThreeAndMarketCapAbove15K(t *testing.T) {
 	store := &fakeCandidateStore{states: map[string]candidateMonitorState{}}
 	monitor := &CandidateMonitor{cfg: CandidateMonitorConfig{Enabled: true}, store: store}
@@ -47,5 +56,20 @@ func TestProjectCandidatePollerKeepsSourceOrder(t *testing.T) {
 	poller := NewProjectCandidatePoller(fakeCompletedProjectFeed{}, fakeCompletedProjectFeed{}, &CandidateMonitor{}, 0)
 	if len(poller.feeds) != 2 || poller.feeds[0].name != "XXYY" || poller.feeds[1].name != "GMGN" {
 		t.Fatalf("unexpected source order: %#v", poller.feeds)
+	}
+}
+
+func TestProjectCandidatePollerDoesNotCallSourceWhenRuntimeDisabled(t *testing.T) {
+	feed := &countingCompletedProjectFeed{}
+	monitor := &CandidateMonitor{cfg: CandidateMonitorConfig{
+		Enabled:        true,
+		RuntimeEnabled: func() bool { return false },
+	}}
+	poller := NewProjectCandidatePoller(feed, feed, monitor, 0)
+
+	poller.pollOnce(context.Background(), poller.feeds[0])
+
+	if feed.calls != 0 {
+		t.Fatalf("disabled monitor should not call project source, got %d calls", feed.calls)
 	}
 }
