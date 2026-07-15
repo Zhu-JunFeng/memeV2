@@ -9,11 +9,12 @@ import (
 	"time"
 )
 
+const apiKeyAvailabilityAlertThreshold = 50.0
+
 type Config struct {
 	Enabled                    bool
 	LatencyThreshold           time.Duration
 	ConsecutiveFailures        int
-	ConsecutiveRateLimits      int
 	ConsecutiveHighLatency     int
 	RecoverySuccesses          int
 	Cooldown                   time.Duration
@@ -45,6 +46,15 @@ type ResourceSampler interface {
 	Sample() (ResourceSample, error)
 }
 
+type APIKeyPool interface {
+	APIKeyAvailability(ctx context.Context) (available int, total int, err error)
+}
+
+type namedAPIKeyPool struct {
+	service string
+	pool    APIKeyPool
+}
+
 type issueState struct {
 	consecutive int
 	healthy     int
@@ -57,6 +67,7 @@ type Monitor struct {
 	notifier Notifier
 	sampler  ResourceSampler
 	now      func() time.Time
+	keyPools []namedAPIKeyPool
 
 	mu     sync.Mutex
 	issues map[string]*issueState
@@ -85,9 +96,6 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.ConsecutiveFailures <= 0 {
 		cfg.ConsecutiveFailures = 3
 	}
-	if cfg.ConsecutiveRateLimits <= 0 {
-		cfg.ConsecutiveRateLimits = 3
-	}
 	if cfg.ConsecutiveHighLatency <= 0 {
 		cfg.ConsecutiveHighLatency = 3
 	}
@@ -112,6 +120,13 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
+func (m *Monitor) WithAPIKeyPool(service string, pool APIKeyPool) *Monitor {
+	if m != nil && pool != nil {
+		m.keyPools = append(m.keyPools, namedAPIKeyPool{service: service, pool: pool})
+	}
+	return m
+}
+
 func (m *Monitor) Start(ctx context.Context) {
 	if m == nil || !m.cfg.Enabled || m.notifier == nil {
 		return
@@ -119,6 +134,7 @@ func (m *Monitor) Start(ctx context.Context) {
 	log.Printf("runtime alert monitor started: latency=%s cpu=%.1f%% memory=%.1f%%", m.cfg.LatencyThreshold, m.cfg.CPUThresholdPercent, m.cfg.MemoryThresholdPercent)
 	go m.runNotifier(ctx)
 	go m.runResourceChecks(ctx)
+	go m.runAPIKeyChecks(ctx)
 }
 
 func (m *Monitor) ObserveHTTP(service string, statusCode int, duration time.Duration, requestErr error) {
@@ -128,17 +144,8 @@ func (m *Monitor) ObserveHTTP(service string, statusCode int, duration time.Dura
 	now := m.now()
 	authFailed := statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden
 	rateLimited := statusCode == http.StatusTooManyRequests
-	requestFailed := requestErr != nil || (statusCode >= 400 && !authFailed && !rateLimited)
-	highLatency := duration >= m.cfg.LatencyThreshold
-
-	m.observe(service+":auth", authFailed, 1, Notification{
-		Category: "外部接口鉴权失败", Service: service,
-		Detail: fmt.Sprintf("HTTP %d，API Key 可能失效或权限不足", statusCode), OccurredAt: now,
-	})
-	m.observe(service+":rate_limit", rateLimited, m.cfg.ConsecutiveRateLimits, Notification{
-		Category: "外部接口频繁限流", Service: service,
-		Detail: fmt.Sprintf("连续收到 HTTP %d", statusCode), OccurredAt: now,
-	})
+	requestFailed := !authFailed && !rateLimited && (requestErr != nil || statusCode >= 400)
+	highLatency := duration >= m.cfg.LatencyThreshold && !authFailed && !rateLimited
 	failureDetail := fmt.Sprintf("HTTP %d", statusCode)
 	if requestErr != nil {
 		failureDetail = requestErr.Error()
@@ -150,6 +157,42 @@ func (m *Monitor) ObserveHTTP(service string, statusCode int, duration time.Dura
 		Category: "外部接口延迟过高", Service: service,
 		Detail: fmt.Sprintf("本次耗时 %s，阈值 %s", duration.Round(time.Millisecond), m.cfg.LatencyThreshold), OccurredAt: now,
 	})
+}
+
+func (m *Monitor) runAPIKeyChecks(ctx context.Context) {
+	ticker := time.NewTicker(m.cfg.ResourceCheckInterval)
+	defer ticker.Stop()
+	m.checkAPIKeyPools(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.checkAPIKeyPools(ctx)
+		}
+	}
+}
+
+func (m *Monitor) checkAPIKeyPools(ctx context.Context) {
+	for _, item := range m.keyPools {
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		available, total, err := item.pool.APIKeyAvailability(checkCtx)
+		cancel()
+		if err != nil {
+			log.Printf("check api key availability failed: service=%s err=%v", item.service, err)
+			continue
+		}
+		if total <= 0 {
+			continue
+		}
+		rate := float64(available) / float64(total) * 100
+		m.observe("api_key_pool:"+item.service, rate < apiKeyAvailabilityAlertThreshold, 1, Notification{
+			Category:   "API Key 可用率过低",
+			Service:    item.service,
+			Detail:     fmt.Sprintf("可用 %d/%d（%.1f%%），告警阈值 %.0f%%", available, total, rate, apiKeyAvailabilityAlertThreshold),
+			OccurredAt: m.now(),
+		})
+	}
 }
 
 func (m *Monitor) observe(key string, unhealthy bool, threshold int, notification Notification) {

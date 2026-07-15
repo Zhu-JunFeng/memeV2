@@ -420,11 +420,12 @@ Birdeye K 线专用实时突破信号入口。
 
 - 运行告警只观察系统状态，不参与买卖判断；告警检测或 Telegram 发送失败不会阻断行情、候选池、信号或交易流程。
 - 监控外部服务包括 GMGN K 线/报价、GMGN 项目源、XXYY 项目源、Birdeye、Bitquery、DexScreener、Solana RPC 与 Jupiter。
-- HTTP `401/403` 或响应 JSON 顶层 `code=401/403` 视为 API Key 失效或权限异常，立即发送 Telegram 告警。
-- 连续 `3` 次 HTTP `429`、响应 JSON 顶层 `code=429`、网络/HTTP 失败或完整响应耗时达到 `3s` 时发送告警。
+- 每 `30s` 分别统计 `gmgn_api_keys`、`birdeye_api_keys` 的 `available / total`；任一 Key 池可用率严格低于 `50%` 时发送 Telegram 告警，等于 `50%` 不告警。
+- 普通 HTTP/业务码 `429` 只执行既有冷却和轮换，不发送限流告警；单次 `401/403` 也不直接发送 API Key 告警，以 Key 池数据库状态的整体可用率为准。
+- 网络/HTTP 请求连续失败或完整响应耗时连续达到 `3s` 时仍发送告警；`401/403/429` 不计入高延迟告警，避免同一次限流产生其他类别误报。
 - 生产服务器每 `30s` 读取一次 Linux `/proc/stat` 与 `/proc/meminfo`；CPU 或内存连续 `3` 次达到 `85%` 时发送告警。
 - 同一服务同一类型异常默认冷却 `600s`；冷却期内不重复发送。异常后连续 `2` 次正常会发送恢复通知。
-- 配置项统一使用 `alert.*`，对应环境变量前缀为 `BACKTEST_ALERT_`；Telegram 未启用时告警模块不启动。
+- 配置项统一使用 `alert.*`，对应环境变量前缀为 `BACKTEST_ALERT_`；旧配置 `alert.consecutive_rate_limits` 已移除。Telegram 未启用时告警模块不启动。
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
 - `live` 模式保持真实 Jupiter 执行；买入使用 SOL 作为输入资产，按固定 `trade.buy_amount_usd` 美元金额和下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单

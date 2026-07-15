@@ -90,6 +90,15 @@ func (r *BirdeyeAPIKeyRepository) ListAvailableBirdeyeKeys(ctx context.Context) 
 	return keys, rows.Err()
 }
 
+func (r *BirdeyeAPIKeyRepository) APIKeyAvailability(ctx context.Context) (int, int, error) {
+	var available int
+	var total int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FILTER (WHERE status = $1), COUNT(*)
+		FROM birdeye_api_keys`, model.BirdeyeAPIKeyStatusAvailable).Scan(&available, &total)
+	return available, total, err
+}
+
 func (r *BirdeyeAPIKeyRepository) MarkBirdeyeKeyUnavailable(ctx context.Context, apiKey string, reason string) error {
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `

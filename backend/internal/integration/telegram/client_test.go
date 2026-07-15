@@ -143,13 +143,13 @@ func TestNotifyRuntimeAlertIncludesFailureDetails(t *testing.T) {
 	client := NewClient("test-token", "chat-1", server.Client())
 	client.baseURL = server.URL
 	err := client.NotifyRuntimeAlert(context.Background(), runtimealert.Notification{
-		Category: "外部接口频繁限流", Service: "GMGN K线/报价", Detail: "连续收到 HTTP 429", Consecutive: 3,
+		Category: "API Key 可用率过低", Service: "GMGN API Key 池", Detail: "可用 2/5（40.0%），告警阈值 50%", Consecutive: 1,
 		OccurredAt: time.Date(2026, 7, 15, 6, 30, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"系统运行告警", "类型：外部接口频繁限流", "服务：GMGN K线/报价", "状态：异常", "连续次数：3", "时间：2026-07-15 14:30:00"} {
+	for _, expected := range []string{"系统运行告警", "类型：API Key 可用率过低", "服务：GMGN API Key 池", "状态：异常", "可用 2/5（40.0%）", "连续次数：1", "时间：2026-07-15 14:30:00"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("message %q missing %q", message, expected)
 		}

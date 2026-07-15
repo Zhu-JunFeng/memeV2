@@ -45,7 +45,6 @@ func main() {
 		Enabled:                    cfg.Alert.Enabled,
 		LatencyThreshold:           time.Duration(cfg.Alert.LatencyThresholdMS) * time.Millisecond,
 		ConsecutiveFailures:        cfg.Alert.ConsecutiveFailures,
-		ConsecutiveRateLimits:      cfg.Alert.ConsecutiveRateLimits,
 		ConsecutiveHighLatency:     cfg.Alert.ConsecutiveHighLatency,
 		RecoverySuccesses:          cfg.Alert.RecoverySuccesses,
 		Cooldown:                   time.Duration(cfg.Alert.CooldownSeconds) * time.Second,
@@ -54,7 +53,6 @@ func main() {
 		CPUThresholdPercent:        cfg.Alert.CPUThresholdPercent,
 		MemoryThresholdPercent:     cfg.Alert.MemoryThresholdPercent,
 	}, alertNotifier, nil)
-	alertMonitor.Start(appCtx)
 	gin.SetMode(cfg.Server.Mode)
 	database, err := db.Open(cfg.Database.DSN, cfg.Database.AutoMigrate)
 	if err != nil {
@@ -73,6 +71,9 @@ func main() {
 	if err := gmgnKeyRepo.EnsureConfigKeys(context.Background(), cfg.GMGN.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 GMGN API Key 池失败")
 	}
+	alertMonitor.WithAPIKeyPool("GMGN API Key 池", gmgnKeyRepo).
+		WithAPIKeyPool("Birdeye API Key 池", birdeyeKeyRepo)
+	alertMonitor.Start(appCtx)
 	gmgnKeyScheduler := gmgnkeys.NewScheduler(gmgnKeyRepo, nil, cfg.GMGN.MaxQPS)
 	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo).WithHTTPObserver(alertMonitor)
 	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)

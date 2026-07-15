@@ -90,6 +90,15 @@ func (r *GMGNAPIKeyRepository) ListAvailableGMGNKeys(ctx context.Context) ([]str
 	return keys, rows.Err()
 }
 
+func (r *GMGNAPIKeyRepository) APIKeyAvailability(ctx context.Context) (int, int, error) {
+	var available int
+	var total int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FILTER (WHERE status = $1), COUNT(*)
+		FROM gmgn_api_keys`, model.GMGNAPIKeyStatusAvailable).Scan(&available, &total)
+	return available, total, err
+}
+
 func (r *GMGNAPIKeyRepository) MarkGMGNKeyUnavailable(ctx context.Context, apiKey string, reason string) error {
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `

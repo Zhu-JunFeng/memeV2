@@ -75,7 +75,6 @@ type AlertConfig struct {
 	Enabled                    bool
 	LatencyThresholdMS         int
 	ConsecutiveFailures        int
-	ConsecutiveRateLimits      int
 	ConsecutiveHighLatency     int
 	RecoverySuccesses          int
 	CooldownSeconds            int
@@ -158,7 +157,6 @@ func Load() (Config, error) {
 	v.SetDefault("alert.enabled", true)
 	v.SetDefault("alert.latency_threshold_ms", 3000)
 	v.SetDefault("alert.consecutive_failures", 3)
-	v.SetDefault("alert.consecutive_rate_limits", 3)
 	v.SetDefault("alert.consecutive_high_latency", 3)
 	v.SetDefault("alert.recovery_successes", 2)
 	v.SetDefault("alert.cooldown_seconds", 600)
@@ -243,7 +241,6 @@ func Load() (Config, error) {
 			Enabled:                    v.GetBool("alert.enabled"),
 			LatencyThresholdMS:         v.GetInt("alert.latency_threshold_ms"),
 			ConsecutiveFailures:        v.GetInt("alert.consecutive_failures"),
-			ConsecutiveRateLimits:      v.GetInt("alert.consecutive_rate_limits"),
 			ConsecutiveHighLatency:     v.GetInt("alert.consecutive_high_latency"),
 			RecoverySuccesses:          v.GetInt("alert.recovery_successes"),
 			CooldownSeconds:            v.GetInt("alert.cooldown_seconds"),

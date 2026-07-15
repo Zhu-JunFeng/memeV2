@@ -19,32 +19,57 @@ type fixedSampler struct {
 
 func (s fixedSampler) Sample() (ResourceSample, error) { return s.sample, s.err }
 
-func TestMonitorAlertsImmediatelyForAuthenticationFailure(t *testing.T) {
+type fixedAPIKeyPool struct {
+	available int
+	total     int
+	err       error
+}
+
+func (p *fixedAPIKeyPool) APIKeyAvailability(context.Context) (int, int, error) {
+	return p.available, p.total, p.err
+}
+
+func TestMonitorDoesNotAlertForAuthenticationFailure(t *testing.T) {
 	monitor := newTestMonitor()
 	monitor.ObserveHTTP("GMGN", http.StatusUnauthorized, 100*time.Millisecond, nil)
-	notification := receiveNotification(t, monitor)
-	if notification.Category != "外部接口鉴权失败" || notification.Consecutive != 1 {
-		t.Fatalf("unexpected notification: %#v", notification)
+	assertNoNotification(t, monitor)
+}
+
+func TestMonitorDoesNotAlertForNormalRateLimits(t *testing.T) {
+	monitor := newTestMonitor()
+	for range 5 {
+		monitor.ObserveHTTP("GMGN", http.StatusTooManyRequests, 4*time.Second, nil)
+	}
+	monitor.ObserveHTTP("GMGN", http.StatusTooManyRequests, 4*time.Second, errors.New("rate-limited response body interrupted"))
+	assertNoNotification(t, monitor)
+}
+
+func TestMonitorAlertsOnlyWhenAPIKeyAvailabilityIsBelowHalf(t *testing.T) {
+	monitor := newTestMonitor()
+	pool := &fixedAPIKeyPool{available: 1, total: 3}
+	monitor.WithAPIKeyPool("GMGN API Key 池", pool)
+
+	monitor.checkAPIKeyPools(context.Background())
+	alert := receiveNotification(t, monitor)
+	if alert.Category != "API Key 可用率过低" || alert.Service != "GMGN API Key 池" || alert.Consecutive != 1 || alert.Recovery {
+		t.Fatalf("unexpected alert: %#v", alert)
+	}
+
+	pool.available = 2
+	monitor.checkAPIKeyPools(context.Background())
+	assertNoNotification(t, monitor)
+	monitor.checkAPIKeyPools(context.Background())
+	recovery := receiveNotification(t, monitor)
+	if !recovery.Recovery || recovery.Category != "API Key 可用率过低" {
+		t.Fatalf("unexpected recovery: %#v", recovery)
 	}
 }
 
-func TestMonitorRateLimitRequiresConsecutiveFailuresAndRecovers(t *testing.T) {
+func TestMonitorDoesNotAlertAtExactlyHalfAvailability(t *testing.T) {
 	monitor := newTestMonitor()
-	monitor.ObserveHTTP("GMGN", http.StatusTooManyRequests, 100*time.Millisecond, nil)
-	monitor.ObserveHTTP("GMGN", http.StatusTooManyRequests, 100*time.Millisecond, nil)
+	monitor.WithAPIKeyPool("Birdeye API Key 池", &fixedAPIKeyPool{available: 1, total: 2})
+	monitor.checkAPIKeyPools(context.Background())
 	assertNoNotification(t, monitor)
-	monitor.ObserveHTTP("GMGN", http.StatusTooManyRequests, 100*time.Millisecond, nil)
-	alert := receiveNotification(t, monitor)
-	if alert.Category != "外部接口频繁限流" || alert.Consecutive != 3 || alert.Recovery {
-		t.Fatalf("unexpected alert: %#v", alert)
-	}
-	monitor.ObserveHTTP("GMGN", http.StatusOK, 100*time.Millisecond, nil)
-	assertNoNotification(t, monitor)
-	monitor.ObserveHTTP("GMGN", http.StatusOK, 100*time.Millisecond, nil)
-	recovery := receiveNotification(t, monitor)
-	if !recovery.Recovery || recovery.Category != "外部接口频繁限流" {
-		t.Fatalf("unexpected recovery: %#v", recovery)
-	}
 }
 
 func TestMonitorAlertsForNetworkFailureAndLatency(t *testing.T) {
@@ -86,7 +111,6 @@ func newTestMonitor() *Monitor {
 	return New(Config{
 		Enabled:                true,
 		ConsecutiveFailures:    3,
-		ConsecutiveRateLimits:  3,
 		ConsecutiveHighLatency: 3,
 		RecoverySuccesses:      2,
 		LatencyThreshold:       3 * time.Second,
