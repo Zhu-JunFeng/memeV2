@@ -565,8 +565,8 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		t.Fatalf("expected realtime exit point, got %#v", exitPoint)
 	}
 	strategyExitPoint := payload["strategyExitPoint"].(map[string]any)
-	if strategyExitPoint["marketCap"].(float64) != 11000 {
-		t.Fatalf("expected strategy exit point to remain available, got %#v", strategyExitPoint)
+	if strategyExitPoint["marketCap"].(float64) != 10800 {
+		t.Fatalf("expected strategy exit point to use the default 8%% take profit, got %#v", strategyExitPoint)
 	}
 	stored := store.states["token-a"]
 	if stored.Status != candidateStatusBought || stored.SellSignalID != signal.SignalID {

@@ -1317,7 +1317,7 @@ const form = reactive({
 });
 const strategyForm = reactive({
   methodCode: "breakout_band_follow",
-  takeProfitRateStartPercent: 10,
+  takeProfitRateStartPercent: 8,
   takeProfitRateEndPercent: 15,
   takeProfitRateStepPercent: 1,
   feeRatePercent: 1.5,

@@ -9,6 +9,26 @@ import (
 	"solana-meme-backtest/backend/internal/model"
 )
 
+func TestBreakoutBandFollowDefaultsToEightPercentTakeProfit(t *testing.T) {
+	config := DefaultBreakoutBandFollowConfig()
+	if !almostEqual(config.TakeProfitRate, 0.08) {
+		t.Fatalf("expected default take profit 0.08, got %f", config.TakeProfitRate)
+	}
+	metadata := newBreakoutBandFollowMethod().Metadata()
+	found := false
+	for _, param := range metadata.Params {
+		if param.Key == "takeProfitRate" {
+			found = true
+			if !almostEqual(param.DefaultValue, 0.08) {
+				t.Fatalf("expected metadata take profit default 0.08, got %f", param.DefaultValue)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected takeProfitRate metadata parameter")
+	}
+}
+
 func TestBreakoutBandFollowMethodStopsOnNextBarCloseBelowLowerBand(t *testing.T) {
 	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	level := model.PriceLevel{
