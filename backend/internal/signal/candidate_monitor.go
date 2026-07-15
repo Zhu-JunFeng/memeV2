@@ -30,7 +30,7 @@ const (
 	candidateStatusSold         = "sold"
 	strategyBreakoutFollow      = "breakout_band_follow"
 	monitorIncrementalBars      = 5
-	candidatePollWorkers        = 6
+	candidatePollWorkers        = 16
 	monitorMinMarketCap         = 10000
 	candidatePoolLimit          = 50
 	preferredMarketCapMin       = 50000
