@@ -3,16 +3,17 @@
 ## 需求
 
 - 普通 API 限流属于可恢复的正常情况，不再发送 Telegram 告警。
-- 只有 API Key 池整体可用率严格低于 `50%` 时，才发送 API Key 告警。
+- 只有 GMGN API Key 池整体可用率严格低于 `50%` 时，才发送 API Key 告警；Birdeye Key 池不参与告警。
 
 ## 规则
 
-- 每 `30s` 分别查询 `gmgn_api_keys` 和 `birdeye_api_keys`。
+- 每 `30s` 只查询 `gmgn_api_keys`。
 - 可用率按 `status = available` 的数量除以 Key 总数计算。
 - 可用率 `< 50%` 时发送“API Key 可用率过低”告警；可用率 `= 50%` 时不告警。
 - Key 池没有记录时不计算可用率，也不发送告警。
 - 告警内容包含 Key 池名称、可用数量、总数量和可用率，不包含 API Key 原文。
-- 同一个 Key 池告警后沿用 `alert.cooldown_seconds` 冷却时间；恢复到 `>= 50%` 并连续两次检查正常后发送恢复通知。
+- GMGN Key 池告警后沿用 `alert.cooldown_seconds` 冷却时间；恢复到 `>= 50%` 并连续两次检查正常后发送恢复通知。
+- `birdeye_api_keys` 不读取、不计算可用率，也不发送 TG 可用率告警。
 
 ## 不再告警的情况
 

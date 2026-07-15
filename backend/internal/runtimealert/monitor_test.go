@@ -67,7 +67,7 @@ func TestMonitorAlertsOnlyWhenAPIKeyAvailabilityIsBelowHalf(t *testing.T) {
 
 func TestMonitorDoesNotAlertAtExactlyHalfAvailability(t *testing.T) {
 	monitor := newTestMonitor()
-	monitor.WithAPIKeyPool("Birdeye API Key 池", &fixedAPIKeyPool{available: 1, total: 2})
+	monitor.WithAPIKeyPool("GMGN API Key 池", &fixedAPIKeyPool{available: 1, total: 2})
 	monitor.checkAPIKeyPools(context.Background())
 	assertNoNotification(t, monitor)
 }

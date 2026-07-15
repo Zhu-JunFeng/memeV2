@@ -71,8 +71,7 @@ func main() {
 	if err := gmgnKeyRepo.EnsureConfigKeys(context.Background(), cfg.GMGN.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 GMGN API Key 池失败")
 	}
-	alertMonitor.WithAPIKeyPool("GMGN API Key 池", gmgnKeyRepo).
-		WithAPIKeyPool("Birdeye API Key 池", birdeyeKeyRepo)
+	alertMonitor.WithAPIKeyPool("GMGN API Key 池", gmgnKeyRepo)
 	alertMonitor.Start(appCtx)
 	gmgnKeyScheduler := gmgnkeys.NewScheduler(gmgnKeyRepo, nil, cfg.GMGN.MaxQPS)
 	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo).WithHTTPObserver(alertMonitor)

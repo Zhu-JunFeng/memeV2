@@ -203,7 +203,7 @@ npm run build
 - `trade.jupiter.base_url`：Jupiter Ultra API 入口
 - `trade.jupiter.api_key`：Jupiter API Key
 - GMGN、DexScreener、Solana RPC 与 Jupiter HTTP 客户端均直接出网，不经过代理
-- 独立运行告警默认启用：GMGN 或 Birdeye API Key 池可用率严格低于 `50%` 时告警，普通 `429` 限流和单个 Key 鉴权失败不直接发 TG；网络请求连续失败、连续超过 `3s` 及服务器 CPU/内存连续 `3` 次超过 `85%` 仍会告警。告警异步发送，不阻断行情、信号或交易流程
+- 独立运行告警默认启用：只统计 GMGN API Key 池，可用率严格低于 `50%` 时告警；Birdeye Key 池不参与告警。普通 `429` 限流和单个 Key 鉴权失败不直接发 TG；网络请求连续失败、连续超过 `3s` 及服务器 CPU/内存连续 `3` 次超过 `85%` 仍会告警。告警异步发送，不阻断行情、信号或交易流程
 - 运行告警同类异常默认 `10` 分钟内不重复刷屏，连续 `2` 次恢复正常后发送恢复通知；阈值可通过 `BACKTEST_ALERT_*` 环境变量覆盖
 - 交易模式、“CA 获取与监控”、“接收信号并执行交易”均可通过页面或 `/api/trade/runtime` 动态切换并持久化到数据库
 - 关闭 CA 获取与监控后，停止项目发现、Redis CA 接收、候选扫描和策略卖出检查，不清空候选池；关闭交易执行后，信号仍产生，但模拟盘和实盘都不再自动执行买卖

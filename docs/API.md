@@ -420,7 +420,7 @@ Birdeye K 线专用实时突破信号入口。
 
 - 运行告警只观察系统状态，不参与买卖判断；告警检测或 Telegram 发送失败不会阻断行情、候选池、信号或交易流程。
 - 监控外部服务包括 GMGN K 线/报价、GMGN 项目源、XXYY 项目源、Birdeye、Bitquery、DexScreener、Solana RPC 与 Jupiter。
-- 每 `30s` 分别统计 `gmgn_api_keys`、`birdeye_api_keys` 的 `available / total`；任一 Key 池可用率严格低于 `50%` 时发送 Telegram 告警，等于 `50%` 不告警。
+- 每 `30s` 只统计 `gmgn_api_keys` 的 `available / total`；GMGN Key 池可用率严格低于 `50%` 时发送 Telegram 告警，等于 `50%` 不告警。Birdeye Key 池不参与 TG 可用率告警。
 - 普通 HTTP/业务码 `429` 只执行既有冷却和轮换，不发送限流告警；单次 `401/403` 也不直接发送 API Key 告警，以 Key 池数据库状态的整体可用率为准。
 - 网络/HTTP 请求连续失败或完整响应耗时连续达到 `3s` 时仍发送告警；`401/403/429` 不计入高延迟告警，避免同一次限流产生其他类别误报。
 - 生产服务器每 `30s` 读取一次 Linux `/proc/stat` 与 `/proc/meminfo`；CPU 或内存连续 `3` 次达到 `85%` 时发送告警。
