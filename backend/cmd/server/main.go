@@ -16,6 +16,7 @@ import (
 	"solana-meme-backtest/backend/internal/datasource"
 	"solana-meme-backtest/backend/internal/db"
 	"solana-meme-backtest/backend/internal/eventbus"
+	"solana-meme-backtest/backend/internal/integration/gmgnkeys"
 	"solana-meme-backtest/backend/internal/integration/gmgnprojects"
 	"solana-meme-backtest/backend/internal/integration/telegram"
 	"solana-meme-backtest/backend/internal/integration/xxyy"
@@ -71,9 +72,10 @@ func main() {
 	if err := gmgnKeyRepo.EnsureConfigKeys(context.Background(), cfg.GMGN.APIKeys); err != nil {
 		logg.Fatal().Err(err).Msg("初始化 GMGN API Key 池失败")
 	}
+	gmgnKeyScheduler := gmgnkeys.NewScheduler(gmgnKeyRepo, nil, cfg.GMGN.MaxQPS)
 	birdeyeUpstream := datasource.NewBirdeyeDataSource(cfg.Birdeye.BaseURL, cfg.Birdeye.APIKeys, cfg.Birdeye.Chain).WithKeyPool(birdeyeKeyRepo).WithHTTPObserver(alertMonitor)
 	birdeyeSource := datasource.NewBirdeyeCachedDataSource(database, birdeyeUpstream)
-	gmgnSource := datasource.NewGMGNDataSourceWithKeys(cfg.GMGN.BaseURL, cfg.GMGN.APIKeys, cfg.GMGN.Chain, cfg.GMGN.MaxQPS).WithKeyPool(gmgnKeyRepo).WithHTTPObserver(alertMonitor)
+	gmgnSource := datasource.NewGMGNDataSourceWithKeys(cfg.GMGN.BaseURL, nil, cfg.GMGN.Chain, cfg.GMGN.MaxQPS).WithKeyScheduler(gmgnKeyScheduler).WithHTTPObserver(alertMonitor)
 	supplyProvider := datasource.NewSolanaRPCSupplyProvider(cfg.Trade.SolanaRPCURL).WithHTTPObserver(alertMonitor)
 	events := eventbus.NewBroker()
 	primaryKlineSource, err := selectKlineSource(cfg.Datasource.KlineSource, source, dbBarSource, birdeyeSource, gmgnSource, systemKlineStore)
@@ -127,11 +129,7 @@ func main() {
 		candidateMonitor.Start(appCtx)
 		if cfg.XXYY.Enabled {
 			xxyyClient := xxyy.NewClient(cfg.XXYY.BaseURL, cfg.XXYY.APIKey, nil).WithHTTPObserver(alertMonitor)
-			gmgnProjectKey := cfg.GMGN.APIKey
-			if strings.TrimSpace(gmgnProjectKey) == "" && len(cfg.GMGN.APIKeys) > 0 {
-				gmgnProjectKey = cfg.GMGN.APIKeys[0]
-			}
-			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, gmgnProjectKey, nil).WithHTTPObserver(alertMonitor)
+			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, "", nil).WithKeyScheduler(gmgnKeyScheduler).WithHTTPObserver(alertMonitor)
 			signal.NewProjectCandidatePoller(xxyyClient, gmgnProjectClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(appCtx)
 		}
 	}

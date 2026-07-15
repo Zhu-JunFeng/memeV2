@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
+
+	"solana-meme-backtest/backend/internal/integration/gmgnkeys"
 )
 
 func TestFetchCompletedProjects(t *testing.T) {
@@ -55,5 +58,57 @@ func TestFetchTokenSymbol(t *testing.T) {
 	}
 	if symbol != "TOKEN" {
 		t.Fatalf("unexpected symbol: %s", symbol)
+	}
+}
+
+func TestClientUsesSharedKeySchedulerForAllRequests(t *testing.T) {
+	var gotKeys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKeys = append(gotKeys, r.Header.Get("X-APIKEY"))
+		switch r.URL.Path {
+		case "/v1/trenches":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"completed":[]}}`))
+		case "/v1/token/info":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"symbol":"TOKEN"}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	scheduler := gmgnkeys.NewScheduler(nil, []string{"key-a", "key-b"}, 0)
+	client := NewClient(server.URL, "ignored-key", server.Client()).WithKeyScheduler(scheduler)
+	if _, err := client.FetchCompletedProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.FetchTokenSymbol(context.Background(), "ca-1"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"key-a", "key-b"}; !reflect.DeepEqual(gotKeys, want) {
+		t.Fatalf("expected shared key rotation %#v, got %#v", want, gotKeys)
+	}
+}
+
+func TestClientRetriesNextKeyOnRateLimit(t *testing.T) {
+	var gotKeys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-APIKEY")
+		gotKeys = append(gotKeys, key)
+		if key == "limited-key" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":429,"message":"rate limit"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"completed":[]}}`))
+	}))
+	defer server.Close()
+
+	scheduler := gmgnkeys.NewScheduler(nil, []string{"limited-key", "good-key"}, 0)
+	client := NewClient(server.URL, "", server.Client()).WithKeyScheduler(scheduler)
+	if _, err := client.FetchCompletedProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"limited-key", "good-key"}; !reflect.DeepEqual(gotKeys, want) {
+		t.Fatalf("expected rate-limit retry %#v, got %#v", want, gotKeys)
 	}
 }

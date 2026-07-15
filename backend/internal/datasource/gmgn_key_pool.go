@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync/atomic"
+
+	"solana-meme-backtest/backend/internal/integration/gmgnkeys"
 )
 
-var ErrGMGNNoAvailableKey = errors.New("GMGN 可用 API Key 不存在")
+var ErrGMGNNoAvailableKey = gmgnkeys.ErrNoAvailableKey
 
 type GMGNKeyPool interface {
 	ListAvailableGMGNKeys(ctx context.Context) ([]string, error)
@@ -48,14 +49,6 @@ func (e *gmgnAPIError) Retryable() bool {
 		strings.Contains(message, "too many requests") ||
 		strings.Contains(message, "quota") ||
 		strings.Contains(message, "限流")
-}
-
-func nextGMGNKey(keys []string, cursor *uint32) string {
-	if len(keys) == 0 {
-		return ""
-	}
-	index := int(atomic.AddUint32(cursor, 1)-1) % len(keys)
-	return keys[index]
 }
 
 func shouldRetryGMGN(err error) bool {

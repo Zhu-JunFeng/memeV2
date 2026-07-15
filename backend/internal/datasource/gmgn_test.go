@@ -112,6 +112,33 @@ func TestGMGNDataSourceRetriesNextKeyOnRateLimit(t *testing.T) {
 	}
 }
 
+func TestGMGNDataSourceRetriesNextKeyOnHTMLRateLimit(t *testing.T) {
+	t.Parallel()
+	var gotKeys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-APIKEY")
+		gotKeys = append(gotKeys, key)
+		if key == "limited-key" {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`<html>rate limited</html>`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"list":[]}}`))
+	}))
+	defer server.Close()
+
+	pool := &fakeGMGNKeyPool{keys: []string{"limited-key", "good-key"}}
+	source := NewGMGNDataSourceWithKeys(server.URL, nil, "sol", 0).WithKeyPool(pool)
+	if _, err := source.GetKlines(context.Background(), KlineQuery{TokenAddress: "token-a", Interval: "1m"}); err != nil {
+		t.Fatalf("GetKlines: %v", err)
+	}
+	if want := []string{"limited-key", "good-key"}; !reflect.DeepEqual(gotKeys, want) {
+		t.Fatalf("expected HTML rate-limit retry %#v, got %#v", want, gotKeys)
+	}
+}
+
 type fakeGMGNKeyPool struct {
 	keys       []string
 	successful []string

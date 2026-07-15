@@ -127,7 +127,7 @@ go run ./cmd/server
 至少配置这些项：
 
 - `database.dsn`
-- `gmgn.api_key`（默认 GMGN K 线源必填）
+- `gmgn.api_key` 或 `gmgn.api_keys`（启动时写入数据库 GMGN Key 池）
 - `birdeye.api_key` 或 `birdeye.api_keys`（切换到 Birdeye 或拉交易点时使用）
 - 若启用实时交易：`redis.*`、`trade.*`
 
@@ -180,7 +180,7 @@ npm run build
 - `database.dsn`：PostgreSQL 连接串
 - `database.auto_migrate`：启动时自动建表
 - `datasource.kline_source`：默认 K 线源，支持 `gmgn` / `birdeye` / `sql` / `db`，当前默认 `gmgn`
-- `gmgn.api_key` / `gmgn.max_qps`：GMGN key 与进程内限速；候选池监控当前按轮询 GMGN 最近 1m K 线增量维护本地市值 K 线，默认按 8 QPS 留余量
+- `gmgn.api_key` / `gmgn.api_keys` / `gmgn.max_qps`：配置中的 Key 启动时写入 PostgreSQL `gmgn_api_keys`；所有 GMGN K 线、报价、项目发现和 symbol 查询统一轮询数据库中的 `available` Key，每个 Key 独立按默认 `8 QPS` 限速，收到 `429` 的 Key 冷却 `60s`
 - GMGN 的 `volume` 直接按上游成交额使用；Birdeye 的原始 `volume` 为 token 成交数量，系统会按 `token volume * close price` 统一折算成成交额后再参与量能判定
 - `birdeye.api_key` / `birdeye.api_keys`：Birdeye key 与 key 池
 - `redis.enabled` / `redis.addr` / `redis.channel`：实时信号发布通道，未配置消费通道时也作为交易消费通道

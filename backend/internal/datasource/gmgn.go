@@ -5,35 +5,35 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"solana-meme-backtest/backend/internal/apptime"
 	"solana-meme-backtest/backend/internal/httpclient"
+	"solana-meme-backtest/backend/internal/integration/gmgnkeys"
 	"solana-meme-backtest/backend/internal/model"
 )
 
 var ErrGMGNNotConfigured = errors.New("GMGN API Key 未配置")
 
 const defaultGMGNUserAgent = "solana-meme-backtest-v2/1.0"
+const gmgnRateLimitCooldown = time.Minute
 
 type GMGNDataSource struct {
-	client     *http.Client
-	baseURL    string
-	apiKeys    []string
-	keyPool    GMGNKeyPool
-	chain      string
-	userAgent  string
-	limiter    *requestLimiter
-	lastWindow time.Duration
-	cursor     uint32
+	client       *http.Client
+	baseURL      string
+	keyScheduler *gmgnkeys.Scheduler
+	maxQPS       float64
+	chain        string
+	userAgent    string
+	lastWindow   time.Duration
 }
 
 type gmgnKlineResponse struct {
@@ -58,12 +58,6 @@ type gmgnKlineItem struct {
 	Source string `json:"source"`
 }
 
-type requestLimiter struct {
-	mu       sync.Mutex
-	interval time.Duration
-	next     time.Time
-}
-
 func NewGMGNDataSource(baseURL string, apiKey string, chain string, maxQPS float64) *GMGNDataSource {
 	return NewGMGNDataSourceWithKeys(baseURL, []string{apiKey}, chain, maxQPS)
 }
@@ -78,18 +72,23 @@ func NewGMGNDataSourceWithKeys(baseURL string, apiKeys []string, chain string, m
 		chain = "sol"
 	}
 	return &GMGNDataSource{
-		client:     httpclient.NewDirectClient(15*time.Second, 15*time.Second),
-		baseURL:    strings.TrimRight(trimmed, "/"),
-		apiKeys:    normalizeGMGNDataSourceKeys(apiKeys),
-		chain:      chain,
-		userAgent:  defaultGMGNUserAgent,
-		limiter:    newRequestLimiter(maxQPS),
-		lastWindow: 3 * time.Minute,
+		client:       httpclient.NewDirectClient(15*time.Second, 15*time.Second),
+		baseURL:      strings.TrimRight(trimmed, "/"),
+		keyScheduler: gmgnkeys.NewScheduler(nil, apiKeys, maxQPS),
+		maxQPS:       maxQPS,
+		chain:        chain,
+		userAgent:    defaultGMGNUserAgent,
+		lastWindow:   3 * time.Minute,
 	}
 }
 
 func (s *GMGNDataSource) WithKeyPool(keyPool GMGNKeyPool) *GMGNDataSource {
-	s.keyPool = keyPool
+	s.keyScheduler = gmgnkeys.NewScheduler(keyPool, nil, s.maxQPS)
+	return s
+}
+
+func (s *GMGNDataSource) WithKeyScheduler(scheduler *gmgnkeys.Scheduler) *GMGNDataSource {
+	s.keyScheduler = scheduler
 	return s
 }
 
@@ -98,46 +97,12 @@ func (s *GMGNDataSource) WithHTTPObserver(observer httpclient.HTTPObserver) *GMG
 	return s
 }
 
-func newRequestLimiter(maxQPS float64) *requestLimiter {
-	if maxQPS <= 0 {
-		return nil
-	}
-	return &requestLimiter{interval: time.Duration(float64(time.Second) / maxQPS)}
-}
-
-func (l *requestLimiter) Wait(ctx context.Context) error {
-	if l == nil || l.interval <= 0 {
-		return nil
-	}
-	l.mu.Lock()
-	now := time.Now()
-	wait := time.Duration(0)
-	if now.Before(l.next) {
-		wait = l.next.Sub(now)
-		l.next = l.next.Add(l.interval)
-	} else {
-		l.next = now.Add(l.interval)
-	}
-	l.mu.Unlock()
-	if wait <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 func (s *GMGNDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model.Kline, error) {
-	keys, err := s.availableKeys(ctx)
+	keys, err := s.keyScheduler.AvailableKeys(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.limiter.Wait(ctx); err != nil {
+		if errors.Is(err, gmgnkeys.ErrNoAvailableKey) {
+			return nil, ErrGMGNNotConfigured
+		}
 		return nil, err
 	}
 	endpoint, err := url.Parse(s.baseURL + "/v1/market/token_kline")
@@ -157,35 +122,26 @@ func (s *GMGNDataSource) GetKlines(ctx context.Context, req KlineQuery) ([]model
 
 	var lastErr error
 	for attempt := 0; attempt < len(keys); attempt++ {
-		key := nextGMGNKey(keys, &s.cursor)
+		key := s.keyScheduler.NextKey(keys)
+		if err := s.keyScheduler.Wait(ctx, key); err != nil {
+			if errors.Is(err, gmgnkeys.ErrKeyCoolingDown) {
+				lastErr = err
+				continue
+			}
+			return nil, err
+		}
 		items, err := s.fetchKlinesWithKey(ctx, endpoint.String(), req, key)
 		if err == nil {
-			s.markSuccessful(ctx, key)
+			s.keyScheduler.MarkSuccessful(ctx, key)
 			return items, nil
 		}
 		lastErr = err
 		if !shouldRetryGMGN(err) {
 			return nil, err
 		}
+		s.keyScheduler.MarkRateLimited(key, gmgnRateLimitCooldown)
 	}
 	return nil, lastErr
-}
-
-func (s *GMGNDataSource) availableKeys(ctx context.Context) ([]string, error) {
-	if s.keyPool == nil {
-		if len(s.apiKeys) == 0 {
-			return nil, ErrGMGNNotConfigured
-		}
-		return s.apiKeys, nil
-	}
-	keys, err := s.keyPool.ListAvailableGMGNKeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) == 0 {
-		return nil, ErrGMGNNoAvailableKey
-	}
-	return keys, nil
 }
 
 func (s *GMGNDataSource) fetchKlinesWithKey(ctx context.Context, endpoint string, req KlineQuery, apiKey string) ([]model.Kline, error) {
@@ -201,11 +157,21 @@ func (s *GMGNDataSource) fetchKlinesWithKey(ctx context.Context, endpoint string
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var body gmgnKlineResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == http.StatusTooManyRequests || body.Code == http.StatusTooManyRequests {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, &gmgnAPIError{statusCode: resp.StatusCode, message: fmt.Sprintf("GMGN K线接口触发限流: %s", truncateGMGNBody(raw, 200))}
+	}
+	var body gmgnKlineResponse
+	if err := json.Unmarshal(raw, &body); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("GMGN K线接口返回状态码 %d: %s", resp.StatusCode, truncateGMGNBody(raw, 200))
+		}
+		return nil, fmt.Errorf("解析 GMGN K线响应失败: %w", err)
+	}
+	if body.Code == http.StatusTooManyRequests {
 		return nil, &gmgnAPIError{statusCode: resp.StatusCode, code: body.Code, message: fmt.Sprintf("GMGN K线接口触发限流: %s", gmgnErrorMessage(body))}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -226,28 +192,12 @@ func (s *GMGNDataSource) fetchKlinesWithKey(ctx context.Context, endpoint string
 	return items, nil
 }
 
-func normalizeGMGNDataSourceKeys(keys []string) []string {
-	normalized := make([]string, 0, len(keys))
-	seen := make(map[string]struct{}, len(keys))
-	for _, item := range keys {
-		key := strings.TrimSpace(item)
-		if key == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		normalized = append(normalized, key)
+func truncateGMGNBody(raw []byte, limit int) string {
+	value := strings.TrimSpace(string(raw))
+	if len(value) <= limit {
+		return value
 	}
-	return normalized
-}
-
-func (s *GMGNDataSource) markSuccessful(ctx context.Context, apiKey string) {
-	if s.keyPool == nil {
-		return
-	}
-	_ = s.keyPool.MarkGMGNKeySuccessful(ctx, apiKey)
+	return value[:limit]
 }
 
 func (s *GMGNDataSource) GetTokenPrice(ctx context.Context, tokenAddress string) (float64, error) {
