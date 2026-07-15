@@ -329,10 +329,18 @@ func (s *Service) ProcessSignal(ctx context.Context, message model.TradeSignalMe
 	if err != nil {
 		return model.TradeSignal{}, err
 	}
+	tradeMode := s.GetTradeMode()
+	if message.SignalType == model.TradeSignalTypeSell {
+		s.runtimeMu.Lock()
+		if position, ok := s.openPositions[message.TokenAddress]; ok && isValidTradeMode(position.TradeMode) {
+			tradeMode = position.TradeMode
+		}
+		s.runtimeMu.Unlock()
+	}
 	signal := model.TradeSignal{
 		ID:               uuid.NewString(),
 		SignalID:         message.SignalID,
-		TradeMode:        s.GetTradeMode(),
+		TradeMode:        tradeMode,
 		SignalType:       message.SignalType,
 		StrategyCode:     message.StrategyCode,
 		TokenAddress:     message.TokenAddress,
@@ -378,6 +386,7 @@ func (s *Service) handleSignal(ctx context.Context, signal model.TradeSignal) (s
 		if !ok {
 			return signalProcessResult{status: "skipped", reason: "未找到可卖持仓或卖出正在处理中"}, nil
 		}
+		signal.TradeMode = position.TradeMode
 		return signalProcessResult{}, s.executeSell(ctx, signal, position)
 	default:
 		return signalProcessResult{}, fmt.Errorf("不支持的信号类型: %s", signal.SignalType)

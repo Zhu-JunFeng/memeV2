@@ -91,11 +91,15 @@ type fakeCandidateStore struct {
 
 type fakeTradeSignalStatusProvider struct {
 	signals        map[string]model.TradeSignal
+	signalErrors   map[string]error
 	positions      map[string]model.TradePosition
 	positionErrors map[string]error
 }
 
 func (p fakeTradeSignalStatusProvider) GetSignalBySignalID(_ context.Context, signalID string) (model.TradeSignal, error) {
+	if err := p.signalErrors[signalID]; err != nil {
+		return model.TradeSignal{}, err
+	}
 	item, ok := p.signals[signalID]
 	if !ok {
 		return model.TradeSignal{}, errors.New("signal not found")
@@ -565,11 +569,22 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		t.Fatalf("expected strategy exit point to remain available, got %#v", strategyExitPoint)
 	}
 	stored := store.states["token-a"]
-	if stored.Status != candidateStatusWatching {
-		t.Fatalf("expected rearmed watching state, got %#v", stored)
+	if stored.Status != candidateStatusBought || stored.SellSignalID != signal.SignalID {
+		t.Fatalf("expected bought state to wait for sell execution, got %#v", stored)
 	}
-	if stored.BuySignalID != "" || !stored.EntryTime.IsZero() || stored.EntryPrice != 0 {
-		t.Fatalf("expected cleared entry fields after rearm, got %#v", stored)
+	monitor.signalStatus = fakeTradeSignalStatusProvider{
+		signals: map[string]model.TradeSignal{
+			stored.BuySignalID:  {SignalID: stored.BuySignalID, ConsumeStatus: "executed"},
+			stored.SellSignalID: {SignalID: stored.SellSignalID, ConsumeStatus: "executed"},
+		},
+		positionErrors: map[string]error{stored.BuySignalID: sql.ErrNoRows},
+	}
+	if err := monitor.processBoughtCandidate(context.Background(), stored, preloaded); err != nil {
+		t.Fatal(err)
+	}
+	stored = store.states["token-a"]
+	if stored.Status != candidateStatusWatching || stored.BuySignalID != "" || stored.SellSignalID != "" || !stored.EntryTime.IsZero() || stored.EntryPrice != 0 {
+		t.Fatalf("expected confirmed sell to rearm watching state, got %#v", stored)
 	}
 }
 
@@ -699,8 +714,125 @@ func TestCandidateMonitorSellStopsWhenMarketCapNotAboveTenK(t *testing.T) {
 	if err := monitor.processCandidate(context.Background(), state); err != nil {
 		t.Fatalf("process candidate: %v", err)
 	}
+	pending := store.states["token-a"]
+	if pending.Status != candidateStatusBought || pending.SellSignalID == "" {
+		t.Fatalf("expected sell to remain pending before execution confirmation, got %#v", pending)
+	}
+	monitor.signalStatus = fakeTradeSignalStatusProvider{
+		signals: map[string]model.TradeSignal{
+			pending.BuySignalID:  {SignalID: pending.BuySignalID, ConsumeStatus: "executed"},
+			pending.SellSignalID: {SignalID: pending.SellSignalID, ConsumeStatus: "executed"},
+		},
+		positionErrors: map[string]error{pending.BuySignalID: sql.ErrNoRows},
+	}
+	confirmedKlines := append([]model.Kline(nil), preloaded...)
+	confirmedKlines = append(confirmedKlines, model.Kline{
+		TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute),
+		MarketCapOpen: 9000, MarketCapHigh: 9000, MarketCapLow: 9000, MarketCapClose: 9000,
+	})
+	if err := monitor.processBoughtCandidate(context.Background(), pending, confirmedKlines); err != nil {
+		t.Fatal(err)
+	}
 	if store.stopped["token-a"] != candidateStatusSold {
 		t.Fatalf("expected sold state, got %#v", store.stopped)
+	}
+}
+
+func TestCandidateMonitorRetriesFailedSellWithoutDroppingBoughtState(t *testing.T) {
+	base := time.Date(2026, 7, 15, 3, 0, 0, 0, time.UTC)
+	entry := model.LevelAnchorPoint{Time: base.Add(-time.Minute), Price: 10000}
+	state := candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
+		SellSignalID: "sell-1", SellSignalAt: base.Add(-time.Second),
+		CandidateAt: base.Add(-2 * time.Minute), EntryTime: base.Add(-time.Minute), EntryPrice: 10000, EntryPriceSynced: true,
+		Level: model.PriceLevel{Lower: 9000, Breakout: &model.BreakoutSetup{BuyPoint: &entry}},
+	}
+	klines := []model.Kline{
+		{
+			TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(-time.Minute), CloseTime: base,
+			MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000,
+		},
+		{
+			TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute),
+			MarketCapOpen: 10000, MarketCapHigh: 11100, MarketCapLow: 9950, MarketCapClose: 11000,
+		},
+	}
+	store := newFakeCandidateStore()
+	store.states[state.TokenAddress] = state
+	store.emitted[state.SellSignalID] = true
+	pub := &capturePublisher{}
+	monitor := testCandidateMonitor(store, nil, nil, base.Add(30*time.Second), pub)
+	monitor.signalStatus = fakeTradeSignalStatusProvider{signals: map[string]model.TradeSignal{
+		state.BuySignalID:  {SignalID: state.BuySignalID, ConsumeStatus: "executed"},
+		state.SellSignalID: {SignalID: state.SellSignalID, ConsumeStatus: "failed"},
+	}}
+	if err := monitor.processBoughtCandidate(context.Background(), state, klines); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.states[state.TokenAddress]
+	if stored.Status != candidateStatusBought || stored.BuySignalID != state.BuySignalID || stored.SellSignalID != "" {
+		t.Fatalf("expected failed sell to keep bought state and clear pending sell, got %#v", stored)
+	}
+	if store.emitted[state.SellSignalID] {
+		t.Fatal("expected failed sell emission lock to be released")
+	}
+	monitor.signalStatus = fakeTradeSignalStatusProvider{signals: map[string]model.TradeSignal{
+		state.BuySignalID: {SignalID: state.BuySignalID, ConsumeStatus: "executed"},
+	}}
+	if err := monitor.processBoughtCandidate(context.Background(), stored, klines); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.tradeSignals) != 1 || pub.tradeSignals[0].SignalID == state.SellSignalID {
+		t.Fatalf("expected retry to publish a new sell signal id, got %#v", pub.tradeSignals)
+	}
+}
+
+func TestCandidateMonitorRetriesSellWhenPublishedSignalWasNotConsumed(t *testing.T) {
+	base := time.Date(2026, 7, 15, 3, 30, 0, 0, time.UTC)
+	state := candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
+		SellSignalID: "sell-missing", SellSignalAt: base.Add(-sellSignalAckTimeout),
+		EntryTime: base.Add(-time.Minute), EntryPrice: 10000,
+	}
+	store := newFakeCandidateStore()
+	store.states[state.TokenAddress] = state
+	store.emitted[state.SellSignalID] = true
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	monitor.signalStatus = fakeTradeSignalStatusProvider{
+		signalErrors: map[string]error{state.SellSignalID: sql.ErrNoRows},
+	}
+	klines := []model.Kline{{TokenAddress: state.TokenAddress, OpenTime: base, MarketCapClose: 11000}}
+	if err := monitor.processBoughtCandidate(context.Background(), state, klines); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.states[state.TokenAddress]
+	if stored.Status != candidateStatusBought || stored.SellSignalID != "" || !stored.SellSignalAt.IsZero() {
+		t.Fatalf("expected missing sell signal to be cleared for retry, got %#v", stored)
+	}
+	if store.emitted[state.SellSignalID] {
+		t.Fatal("expected missing sell signal emission lock to be released")
+	}
+}
+
+func TestCandidateMonitorStateRoundTripsPendingSellFields(t *testing.T) {
+	base := time.Date(2026, 7, 15, 4, 0, 0, 0, time.UTC)
+	fields, err := encodeCandidateState(candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought,
+		BuySignalID: "buy-1", SellSignalID: "sell-1", SellSignalAt: base, SellAttempt: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := make(map[string]string, len(fields))
+	for key, value := range fields {
+		encoded[key] = fmt.Sprint(value)
+	}
+	state, err := decodeCandidateState(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SellSignalID != "sell-1" || !state.SellSignalAt.Equal(base) || state.SellAttempt != 2 {
+		t.Fatalf("pending sell fields did not round trip: %#v", state)
 	}
 }
 
@@ -880,11 +1012,48 @@ func TestCandidateMonitorRejectsNewCandidateWhenPoolIsFull(t *testing.T) {
 	store := newFakeCandidateStore()
 	for index := 0; index < candidatePoolLimit; index++ {
 		address := fmt.Sprintf("token-%02d", index)
-		store.states[address] = candidateMonitorState{TokenAddress: address, Status: candidateStatusWatching, CandidateAt: time.Now().UTC()}
+		store.states[address] = candidateMonitorState{TokenAddress: address, Status: candidateStatusWatching, CandidateAt: time.Now().UTC(), CurrentPrice: 100000}
 	}
 	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
 	if _, _, err := monitor.AddProjectCandidate(context.Background(), "overflow", "OVER", 100000); !errors.Is(err, ErrCandidatePoolFull) {
 		t.Fatalf("expected pool full error, got %v", err)
+	}
+}
+
+func TestCandidateMonitorReplacesLowerPriorityWatchingCandidateWhenPoolIsFull(t *testing.T) {
+	store := newFakeCandidateStore()
+	base := time.Now().UTC()
+	store.states["lower-priority"] = candidateMonitorState{
+		TokenAddress: "lower-priority", Status: candidateStatusWatching,
+		CandidateAt: base.Add(-time.Hour), CurrentPrice: 250000,
+	}
+	store.states["bought"] = candidateMonitorState{
+		TokenAddress: "bought", Status: candidateStatusBought, BuySignalID: "buy-1",
+		CandidateAt: base.Add(-time.Hour), CurrentPrice: 5000,
+	}
+	for index := 0; index < candidatePoolLimit-2; index++ {
+		address := fmt.Sprintf("preferred-%02d", index)
+		store.states[address] = candidateMonitorState{
+			TokenAddress: address, Status: candidateStatusWatching,
+			CandidateAt: base.Add(time.Duration(index) * time.Second), CurrentPrice: 100000,
+		}
+	}
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	item, added, err := monitor.AddProjectCandidate(context.Background(), "new-preferred", "NEW", 120000)
+	if err != nil || !added {
+		t.Fatalf("expected preferred candidate replacement, added=%v err=%v", added, err)
+	}
+	if item.TokenAddress != "new-preferred" {
+		t.Fatalf("unexpected added candidate: %#v", item)
+	}
+	if _, ok := store.states["lower-priority"]; ok {
+		t.Fatal("expected lower priority watching candidate to be replaced")
+	}
+	if _, ok := store.states["bought"]; !ok {
+		t.Fatal("expected bought candidate to remain in pool")
+	}
+	if len(store.states) != candidatePoolLimit {
+		t.Fatalf("expected pool size %d, got %d", candidatePoolLimit, len(store.states))
 	}
 }
 

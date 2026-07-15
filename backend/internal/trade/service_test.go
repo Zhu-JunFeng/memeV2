@@ -557,6 +557,34 @@ func TestProcessSellSignalUsesLatestRedisPositionQuantity(t *testing.T) {
 	}
 }
 
+func TestProcessSellSignalUsesPositionModeAfterRuntimeModeSwitch(t *testing.T) {
+	repo := newFakeRepo()
+	repo.tradeMode = model.TradeModeLive
+	position := model.TradePosition{
+		ID: "pos-paper", AccountID: repo.account.ID, TradeMode: model.TradeModePaper,
+		TokenAddress: "token-paper", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10,
+	}
+	repo.positions[repo.account.ID+":"+position.TokenAddress] = position
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sell-paper", SignalType: model.TradeSignalTypeSell, StrategyCode: "breakout_band_follow",
+		TokenAddress: position.TokenAddress, Interval: "1m", SignalTime: time.Now().UTC(), Reason: "take profit",
+	}); err != nil {
+		t.Fatalf("process sell signal: %v", err)
+	}
+	waitFor(t, func() bool { return len(repo.orders) == 1 && len(repo.signals) == 1 })
+	if executor.lastRequest.Mode != model.TradeModePaper || repo.orders[0].TradeMode != model.TradeModePaper {
+		t.Fatalf("expected position mode paper, request=%s order=%s", executor.lastRequest.Mode, repo.orders[0].TradeMode)
+	}
+	if repo.signals[0].TradeMode != model.TradeModePaper {
+		t.Fatalf("expected persisted sell signal mode paper, got %s", repo.signals[0].TradeMode)
+	}
+}
+
 func TestClosePositionPersistsManualSignal(t *testing.T) {
 	repo := newFakeRepo()
 	repo.tradeMode = model.TradeModePaper

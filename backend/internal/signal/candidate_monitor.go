@@ -36,6 +36,7 @@ const (
 	preferredMarketCapMin       = 50000
 	preferredMarketCapMax       = 200000
 	boughtCandidatePollInterval = 500 * time.Millisecond
+	sellSignalAckTimeout        = 5 * time.Second
 )
 
 var ErrCandidatePoolFull = errors.New("候选池已满")
@@ -90,6 +91,7 @@ type CandidateMonitorItem struct {
 	Status                string          `json:"status"`
 	CandidateAt           time.Time       `json:"candidateAt"`
 	BuySignalID           string          `json:"buySignalId"`
+	SellSignalID          string          `json:"sellSignalId"`
 	EntryTime             *time.Time      `json:"entryTime,omitempty"`
 	EntryMarketCap        float64         `json:"entryMarketCap"`
 	CurrentMarketCap      *float64        `json:"currentMarketCap,omitempty"`
@@ -135,6 +137,9 @@ type candidateMonitorState struct {
 	CandidateAt         time.Time
 	Status              string
 	BuySignalID         string
+	SellSignalID        string
+	SellSignalAt        time.Time
+	SellAttempt         int64
 	EntryTime           time.Time
 	EntryPrice          float64
 	EntryPriceSynced    bool
@@ -361,9 +366,6 @@ func (m *CandidateMonitor) AddProjectCandidate(ctx context.Context, tokenAddress
 			return newCandidateMonitorItem(state), false, nil
 		}
 	}
-	if len(states) >= candidatePoolLimit {
-		return CandidateMonitorItem{}, false, fmt.Errorf("%w，最多保留 %d 个项目", ErrCandidatePoolFull, candidatePoolLimit)
-	}
 	now := m.now()
 	state := candidateMonitorState{
 		TokenAddress: tokenAddress,
@@ -378,8 +380,35 @@ func (m *CandidateMonitor) AddProjectCandidate(ctx context.Context, tokenAddress
 		state.CurrentPrice = marketCap
 		state.CurrentAt = now
 	}
+	var replaced *candidateMonitorState
+	if len(states) >= candidatePoolLimit {
+		for index := range states {
+			candidate := states[index]
+			if candidate.Status != candidateStatusWatching {
+				continue
+			}
+			if replaced == nil || candidateRetentionRank(candidate) > candidateRetentionRank(*replaced) ||
+				(candidateRetentionRank(candidate) == candidateRetentionRank(*replaced) && candidate.CandidateAt.After(replaced.CandidateAt)) {
+				value := candidate
+				replaced = &value
+			}
+		}
+		if replaced == nil || candidateRetentionRank(state) >= candidateRetentionRank(*replaced) {
+			return CandidateMonitorItem{}, false, fmt.Errorf("%w，最多保留 %d 个项目", ErrCandidatePoolFull, candidatePoolLimit)
+		}
+		if err := m.store.StopCandidate(ctx, *replaced, candidateStatusStopped); err != nil {
+			return CandidateMonitorItem{}, false, err
+		}
+	}
 	if err := m.store.UpsertCandidate(ctx, state); err != nil {
+		if replaced != nil {
+			_ = m.store.UpsertCandidate(ctx, *replaced)
+		}
 		return CandidateMonitorItem{}, false, err
+	}
+	if replaced != nil {
+		m.publishCandidateDelete(*replaced)
+		log.Printf("candidate monitor replaced lower priority candidate: removed=%s removedMarketCap=%.2f added=%s addedMarketCap=%.2f", replaced.TokenAddress, replaced.CurrentPrice, state.TokenAddress, state.CurrentPrice)
 	}
 	m.publishCandidateUpsert(state)
 	log.Printf("candidate monitor accepted project candidate: ca=%s symbol=%s marketCap=%.2f", state.TokenAddress, state.Symbol, marketCap)
@@ -538,6 +567,7 @@ func newCandidateMonitorItem(state candidateMonitorState) CandidateMonitorItem {
 		Status:                state.Status,
 		CandidateAt:           state.CandidateAt,
 		BuySignalID:           state.BuySignalID,
+		SellSignalID:          state.SellSignalID,
 		EntryTime:             entryTime,
 		EntryMarketCap:        state.EntryPrice,
 		CurrentMarketCap:      currentMarketCap,
@@ -975,6 +1005,12 @@ func (m *CandidateMonitor) buildBuySignal(state candidateMonitorState, klines []
 }
 
 func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
+	if strings.TrimSpace(state.SellSignalID) != "" {
+		handled, err := m.processPendingSellSignal(ctx, &state, klines)
+		if err != nil || handled {
+			return err
+		}
+	}
 	if m.signalStatus != nil && strings.TrimSpace(state.BuySignalID) != "" {
 		signal, err := m.signalStatus.GetSignalBySignalID(ctx, state.BuySignalID)
 		if err != nil {
@@ -984,6 +1020,9 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 		case "rejected", "failed", "skipped":
 			state.Status = candidateStatusWatching
 			state.BuySignalID = ""
+			state.SellSignalID = ""
+			state.SellSignalAt = time.Time{}
+			state.SellAttempt = 0
 			state.EntryTime = time.Time{}
 			state.EntryPrice = 0
 			state.EntryPriceSynced = false
@@ -996,6 +1035,9 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 						latestBar := klines[len(klines)-1]
 						state.Status = candidateStatusWatching
 						state.BuySignalID = ""
+						state.SellSignalID = ""
+						state.SellSignalAt = time.Time{}
+						state.SellAttempt = 0
 						state.EntryTime = time.Time{}
 						state.EntryPrice = 0
 						state.EntryPriceSynced = false
@@ -1031,12 +1073,75 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	if err != nil || !acquired {
 		return err
 	}
-	if err := m.publisher.PublishTradeSignal(ctx, message); err != nil {
+	state.LastExitBarTime = decisionBar.OpenTime
+	state.SellSignalID = message.SignalID
+	state.SellSignalAt = m.now()
+	if err := m.saveState(ctx, state); err != nil {
 		_ = m.store.ReleaseEmission(ctx, message.SignalID)
 		return err
 	}
+	if err := m.publisher.PublishTradeSignal(ctx, message); err != nil {
+		_ = m.store.ReleaseEmission(ctx, message.SignalID)
+		state.SellSignalID = ""
+		state.SellSignalAt = time.Time{}
+		state.SellAttempt++
+		_ = m.saveState(ctx, state)
+		return err
+	}
+	log.Printf("candidate monitor published sell signal and is awaiting execution: ca=%s signalId=%s reason=%s", state.TokenAddress, message.SignalID, decision.Reason)
+	return nil
+}
+
+func (m *CandidateMonitor) processPendingSellSignal(ctx context.Context, state *candidateMonitorState, klines []model.Kline) (bool, error) {
+	if m.signalStatus == nil {
+		return true, errors.New("candidate monitor trade signal status provider not configured")
+	}
+	signal, err := m.signalStatus.GetSignalBySignalID(ctx, state.SellSignalID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) && !state.SellSignalAt.IsZero() && m.now().Sub(state.SellSignalAt) >= sellSignalAckTimeout {
+			if err := m.store.ReleaseEmission(ctx, state.SellSignalID); err != nil {
+				return true, err
+			}
+			log.Printf("candidate monitor sell signal was not consumed and will retry: ca=%s signalId=%s", state.TokenAddress, state.SellSignalID)
+			state.SellSignalID = ""
+			state.SellSignalAt = time.Time{}
+			state.SellAttempt++
+			return true, m.saveState(ctx, *state)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, m.saveState(ctx, *state)
+		}
+		return true, err
+	}
+	switch signal.ConsumeStatus {
+	case "failed", "rejected", "skipped":
+		if err := m.store.ReleaseEmission(ctx, state.SellSignalID); err != nil {
+			return true, err
+		}
+		log.Printf("candidate monitor sell execution failed and will retry: ca=%s signalId=%s status=%s", state.TokenAddress, state.SellSignalID, signal.ConsumeStatus)
+		state.SellSignalID = ""
+		state.SellSignalAt = time.Time{}
+		state.SellAttempt++
+		return true, m.saveState(ctx, *state)
+	case "executed", "manual":
+		_, err := m.signalStatus.GetOpenPositionBySignalID(ctx, state.BuySignalID)
+		if err == nil {
+			return true, m.saveState(ctx, *state)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return true, err
+		}
+		return true, m.finalizeExecutedSell(ctx, *state, klines)
+	default:
+		return true, m.saveState(ctx, *state)
+	}
+}
+
+func (m *CandidateMonitor) finalizeExecutedSell(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
 	latest := klines[len(klines)-1]
-	state.LastExitBarTime = decisionBar.OpenTime
+	state.SellSignalID = ""
+	state.SellSignalAt = time.Time{}
+	state.SellAttempt = 0
 	if latest.MarketCapClose > m.minMarketCapThreshold() {
 		state.Status = candidateStatusWatching
 		state.BuySignalID = ""
@@ -1050,14 +1155,14 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 		if err := m.saveState(ctx, state); err != nil {
 			return err
 		}
-		log.Printf("candidate monitor rearmed after sell: ca=%s marketCap=%.2f", state.TokenAddress, latest.MarketCapClose)
+		log.Printf("candidate monitor rearmed after confirmed sell: ca=%s marketCap=%.2f", state.TokenAddress, latest.MarketCapClose)
 		return nil
 	}
 	if err := m.store.StopCandidate(ctx, state, candidateStatusSold); err != nil {
 		return err
 	}
 	m.publishCandidateDelete(state)
-	log.Printf("candidate monitor published sell signal: ca=%s signalId=%s reason=%s", state.TokenAddress, message.SignalID, decision.Reason)
+	log.Printf("candidate monitor stopped after confirmed sell: ca=%s marketCap=%.2f", state.TokenAddress, latest.MarketCapClose)
 	return nil
 }
 
@@ -1112,7 +1217,7 @@ func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decision
 	if err != nil {
 		return model.TradeSignalMessage{}, err
 	}
-	signalID := compactSignalID("bbf:sell", state.BuySignalID, state.TokenAddress, strconv.FormatInt(decision.ExitPoint.Time.UnixMilli(), 10))
+	signalID := compactSignalID("bbf:sell", state.BuySignalID, state.TokenAddress, strconv.FormatInt(decision.ExitPoint.Time.UnixMilli(), 10), strconv.FormatInt(state.SellAttempt, 10))
 	return model.TradeSignalMessage{
 		SignalID:         signalID,
 		SignalType:       model.TradeSignalTypeSell,
@@ -1390,6 +1495,9 @@ func encodeCandidateState(state candidateMonitorState) (map[string]any, error) {
 		"candidateAt":         strconv.FormatInt(state.CandidateAt.UnixMilli(), 10),
 		"status":              state.Status,
 		"buySignalId":         state.BuySignalID,
+		"sellSignalId":        state.SellSignalID,
+		"sellSignalAt":        strconv.FormatInt(state.SellSignalAt.UnixMilli(), 10),
+		"sellAttempt":         strconv.FormatInt(state.SellAttempt, 10),
 		"entryTime":           strconv.FormatInt(state.EntryTime.UnixMilli(), 10),
 		"entryPrice":          strconv.FormatFloat(state.EntryPrice, 'f', -1, 64),
 		"entryPriceSynced":    strconv.FormatBool(state.EntryPriceSynced),
@@ -1411,6 +1519,7 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 		RawPayload:   json.RawMessage(fields["rawPayload"]),
 		Status:       fields["status"],
 		BuySignalID:  fields["buySignalId"],
+		SellSignalID: fields["sellSignalId"],
 	}
 	if state.TokenAddress == "" {
 		return candidateMonitorState{}, errors.New("missing tokenAddress")
@@ -1440,6 +1549,22 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 		if value > 0 {
 			state.EntryTime = time.UnixMilli(value).UTC()
 		}
+	}
+	if fields["sellSignalAt"] != "" {
+		value, err := strconv.ParseInt(fields["sellSignalAt"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		if value > 0 {
+			state.SellSignalAt = time.UnixMilli(value).UTC()
+		}
+	}
+	if fields["sellAttempt"] != "" {
+		value, err := strconv.ParseInt(fields["sellAttempt"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		state.SellAttempt = value
 	}
 	if fields["entryPrice"] != "" {
 		value, err := strconv.ParseFloat(fields["entryPrice"], 64)

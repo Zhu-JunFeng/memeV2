@@ -433,6 +433,7 @@ Birdeye K 线专用实时突破信号入口。
 - `items[].currentMarketCap` / `items[].currentMarketCapAt`：V2 最近一次成功计算出的当前市值和对应 K 线时间；GMGN 源下按最新 USD 价格乘 Solana RPC `getTokenSupply` 当前总供应量计算。
 - `items[].birdeyeKlineFetchedAt`：兼容字段名，表示 V2 最近一次成功拉取实时价格并更新本地 1m 市值 K 线的时间，前端按相对时间展示为 `2s前`、`4s前` 等。
 - `items[].buySignalId`：如果已触发 V2 买入信号，这里返回对应信号 ID。
+- `items[].sellSignalId`：如果已发出卖出信号但尚未确认持仓关闭，这里返回待确认的卖出信号 ID。
 - `items[].entryTime` / `items[].entryMarketCap`：如果已触发买入信号，这里返回买点时间和买点市值。
 - `items[].levelMarketCap` / `items[].levelLowerMarketCap` / `items[].levelUpperMarketCap`：如果已触发买入信号，这里返回当时突破的压力带。
 
@@ -499,7 +500,7 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 
 - `paper`：只请求 Jupiter `quote`，不依赖真实钱包余额，也不会执行签名和链上提交
 - `live`：恢复真实下单执行
-- 切换后新进来的信号、订单、成交、持仓都会记录对应 `tradeMode`
+- 切换后新的买入信号、订单、成交和持仓使用新的 `tradeMode`；已有持仓的自动卖出始终使用该持仓自身的 `tradeMode`。
 - 模式持久化成功后向 Telegram 发送切换通知；通知汇总从上一次模式切换到本次切换之间的成交买入、成交卖出、失败订单、已平仓胜负、实现盈亏和当前未平仓数量
 - 切换到 `live` 前通过生产 Solana RPC 查询当前交易钱包余额，查询失败则不切换；实盘切换通知额外显示实时 SOL 余额
 - `trade.mode.started_at` 与模式一起持久化，服务重启后继续沿用原统计区间；首次部署本功能时以服务启动时间作为当前模式统计起点
