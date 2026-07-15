@@ -2,9 +2,11 @@ package signal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -23,6 +25,15 @@ func (p fakeSupplyProvider) GetTokenSupply(context.Context, string) (float64, er
 		return 1, nil
 	}
 	return p.supply, nil
+}
+
+type failingSupplyProvider struct {
+	calls int
+}
+
+func (p *failingSupplyProvider) GetTokenSupply(context.Context, string) (float64, error) {
+	p.calls++
+	return 0, errors.New("unexpected supply request")
 }
 
 type fakePriceProvider struct {
@@ -79,8 +90,9 @@ type fakeCandidateStore struct {
 }
 
 type fakeTradeSignalStatusProvider struct {
-	signals   map[string]model.TradeSignal
-	positions map[string]model.TradePosition
+	signals        map[string]model.TradeSignal
+	positions      map[string]model.TradePosition
+	positionErrors map[string]error
 }
 
 func (p fakeTradeSignalStatusProvider) GetSignalBySignalID(_ context.Context, signalID string) (model.TradeSignal, error) {
@@ -92,11 +104,50 @@ func (p fakeTradeSignalStatusProvider) GetSignalBySignalID(_ context.Context, si
 }
 
 func (p fakeTradeSignalStatusProvider) GetOpenPositionBySignalID(_ context.Context, signalID string) (model.TradePosition, error) {
+	if err := p.positionErrors[signalID]; err != nil {
+		return model.TradePosition{}, err
+	}
 	item, ok := p.positions[signalID]
 	if !ok {
 		return model.TradePosition{}, errors.New("position not found")
 	}
 	return item, nil
+}
+
+func TestCandidateMonitorRearmsClosedPositionWithoutSameBarReentry(t *testing.T) {
+	base := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	klines := []model.Kline{
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10200, MarketCapLow: 9900, MarketCapClose: 10100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10100, MarketCapHigh: 10300, MarketCapLow: 10000, MarketCapClose: 10200},
+	}
+	state := candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
+		EntryTime: base, EntryPrice: 10000, Level: model.PriceLevel{Price: 9800},
+	}
+	store := newFakeCandidateStore()
+	store.states[state.TokenAddress] = state
+	pub := &capturePublisher{}
+	monitor := testCandidateMonitor(store, klines, map[string][]float64{"token-a": {10200}}, base.Add(2*time.Minute+30*time.Second), pub)
+	monitor.signalStatus = fakeTradeSignalStatusProvider{
+		signals:        map[string]model.TradeSignal{"buy-1": {SignalID: "buy-1", ConsumeStatus: "executed"}},
+		positionErrors: map[string]error{"buy-1": sql.ErrNoRows},
+	}
+	monitor.preloadActiveKlines(context.Background())
+
+	if err := monitor.processCandidate(context.Background(), state); err != nil {
+		t.Fatalf("process closed position candidate: %v", err)
+	}
+	stored := store.states[state.TokenAddress]
+	if stored.Status != candidateStatusWatching || stored.BuySignalID != "" || !stored.EntryTime.IsZero() || stored.EntryPrice != 0 || stored.EntryPriceSynced {
+		t.Fatalf("expected closed position to rearm watching state, got %#v", stored)
+	}
+	latestBarTime := monitor.now().UTC().Truncate(time.Minute)
+	if !stored.LastExitBarTime.Equal(latestBarTime) || !stored.LastDecisionBarTime.Equal(latestBarTime) {
+		t.Fatalf("expected latest bar to block same-bar reentry, got exit=%s decision=%s", stored.LastExitBarTime, stored.LastDecisionBarTime)
+	}
+	if len(pub.tradeSignals) != 0 {
+		t.Fatalf("expected no signal while rearming closed position, got %#v", pub.tradeSignals)
+	}
 }
 
 type fakeMonitorKlineStore struct {
@@ -790,6 +841,41 @@ func TestCandidateMonitorProjectCandidateStoresSymbolAndMarketCap(t *testing.T) 
 	}
 }
 
+func TestCandidateMonitorPreloadRestoresSupplyCacheFromPersistedKlines(t *testing.T) {
+	base := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+	store := newFakeCandidateStore()
+	store.states["token-a"] = candidateMonitorState{
+		TokenAddress: "token-a",
+		Status:       candidateStatusBought,
+		CandidateAt:  base.Add(-time.Minute),
+	}
+	systemStore := newFakeMonitorKlineStore()
+	systemStore.recent["token-a|1m"] = []model.Kline{{
+		TokenAddress:   "token-a",
+		Interval:       "1m",
+		OpenTime:       base.Add(-time.Minute),
+		CloseTime:      base,
+		Close:          0.00002,
+		MarketCapClose: 20000,
+	}}
+	provider := &failingSupplyProvider{}
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	monitor.systemKlines = systemStore
+	monitor.supplyProvider = provider
+
+	monitor.preloadActiveKlines(context.Background())
+	supply, err := monitor.tokenSupply(context.Background(), "token-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(supply-1_000_000_000) > 0.001 {
+		t.Fatalf("expected restored supply 1,000,000,000, got %.2f", supply)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("expected no Solana RPC supply request, got %d", provider.calls)
+	}
+}
+
 func TestCandidateMonitorRejectsNewCandidateWhenPoolIsFull(t *testing.T) {
 	store := newFakeCandidateStore()
 	for index := 0; index < candidatePoolLimit; index++ {
@@ -840,6 +926,54 @@ func TestCandidateMonitorTrimRemovesKnownMarketCapBelowThreshold(t *testing.T) {
 	}
 	if _, ok := store.states["kept"]; !ok {
 		t.Fatal("expected threshold candidate to be retained")
+	}
+}
+
+func TestCandidateMonitorTrimRetainsBoughtCandidateBelowThreshold(t *testing.T) {
+	store := newFakeCandidateStore()
+	store.states["bought-low"] = candidateMonitorState{
+		TokenAddress: "bought-low",
+		Status:       candidateStatusBought,
+		BuySignalID:  "buy-low",
+		CurrentPrice: 9999,
+	}
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	if err := monitor.TrimCandidatePool(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.states["bought-low"]; !ok {
+		t.Fatal("expected low market cap bought candidate to remain monitored")
+	}
+}
+
+func TestCandidateMonitorTrimNeverRemovesBoughtCandidateWhenPoolIsOverLimit(t *testing.T) {
+	store := newFakeCandidateStore()
+	base := time.Now().UTC()
+	store.states["bought"] = candidateMonitorState{
+		TokenAddress: "bought",
+		Status:       candidateStatusBought,
+		BuySignalID:  "buy-1",
+		CandidateAt:  base.Add(-time.Hour),
+		CurrentPrice: 5000,
+	}
+	for index := 0; index < candidatePoolLimit; index++ {
+		address := fmt.Sprintf("watching-%02d", index)
+		store.states[address] = candidateMonitorState{
+			TokenAddress: address,
+			Status:       candidateStatusWatching,
+			CandidateAt:  base.Add(time.Duration(index) * time.Second),
+			CurrentPrice: 100000,
+		}
+	}
+	monitor := testCandidateMonitor(store, nil, nil, base, &capturePublisher{})
+	if err := monitor.TrimCandidatePool(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.states["bought"]; !ok {
+		t.Fatal("expected bought candidate to survive over-limit trimming")
+	}
+	if len(store.states) != candidatePoolLimit {
+		t.Fatalf("expected %d total candidates, got %d", candidatePoolLimit, len(store.states))
 	}
 }
 

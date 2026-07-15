@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"crypto/sha1"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -248,8 +249,26 @@ func (m *CandidateMonitor) preloadActiveKlines(ctx context.Context) {
 			log.Printf("candidate monitor preload klines failed: ca=%s err=%v", item.TokenAddress, err)
 			continue
 		}
+		m.restoreSupplyCache(item.TokenAddress, klines)
 		// 候选池监控统一使用本地维护的市值K线，并保留系统内累计出来的样本量能。
 		m.klineCache.Set(item.TokenAddress, m.cfg.Interval, sanitizeMonitorKlines(klines))
+	}
+}
+
+func (m *CandidateMonitor) restoreSupplyCache(tokenAddress string, klines []model.Kline) {
+	for index := len(klines) - 1; index >= 0; index-- {
+		item := klines[index]
+		if item.Close <= 0 || item.MarketCapClose <= 0 {
+			continue
+		}
+		supply := item.MarketCapClose / item.Close
+		if supply <= 0 {
+			continue
+		}
+		m.supplyMu.Lock()
+		m.supplyCache[tokenAddress] = supply
+		m.supplyMu.Unlock()
+		return
 	}
 }
 
@@ -384,7 +403,7 @@ func (m *CandidateMonitor) TrimCandidatePool(ctx context.Context) error {
 	}
 	retained := make([]candidateMonitorState, 0, len(states))
 	for _, state := range states {
-		if state.CurrentPrice > 0 && state.CurrentPrice < m.minMarketCapThreshold() {
+		if state.Status == candidateStatusWatching && state.CurrentPrice > 0 && state.CurrentPrice < m.minMarketCapThreshold() {
 			if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 				return err
 			}
@@ -395,17 +414,30 @@ func (m *CandidateMonitor) TrimCandidatePool(ctx context.Context) error {
 		retained = append(retained, state)
 	}
 	states = retained
-	if len(states) <= candidatePoolLimit {
+	bought := make([]candidateMonitorState, 0, len(states))
+	watching := make([]candidateMonitorState, 0, len(states))
+	for _, state := range states {
+		if state.Status == candidateStatusBought {
+			bought = append(bought, state)
+			continue
+		}
+		watching = append(watching, state)
+	}
+	watchingLimit := candidatePoolLimit - len(bought)
+	if watchingLimit < 0 {
+		watchingLimit = 0
+	}
+	if len(watching) <= watchingLimit {
 		return nil
 	}
-	sort.SliceStable(states, func(i, j int) bool {
-		left, right := candidateRetentionRank(states[i]), candidateRetentionRank(states[j])
+	sort.SliceStable(watching, func(i, j int) bool {
+		left, right := candidateRetentionRank(watching[i]), candidateRetentionRank(watching[j])
 		if left != right {
 			return left < right
 		}
-		return states[i].CandidateAt.Before(states[j].CandidateAt)
+		return watching[i].CandidateAt.Before(watching[j].CandidateAt)
 	})
-	for _, state := range states[candidatePoolLimit:] {
+	for _, state := range watching[watchingLimit:] {
 		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
 			return err
 		}
@@ -960,6 +992,19 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 		case "executed":
 			if !state.EntryPriceSynced {
 				if err := m.syncExecutedEntryMarketCap(ctx, &state); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						latestBar := klines[len(klines)-1]
+						state.Status = candidateStatusWatching
+						state.BuySignalID = ""
+						state.EntryTime = time.Time{}
+						state.EntryPrice = 0
+						state.EntryPriceSynced = false
+						state.Level = model.PriceLevel{}
+						state.LastDecisionBarTime = latestBar.OpenTime
+						state.LastExitBarTime = latestBar.OpenTime
+						log.Printf("candidate monitor rearmed after position closed: ca=%s", state.TokenAddress)
+						return m.saveState(ctx, state)
+					}
 					return err
 				}
 				if err := m.saveState(ctx, state); err != nil {
