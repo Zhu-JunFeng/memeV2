@@ -82,7 +82,7 @@ func (p *ProjectCandidatePoller) pollOnce(ctx context.Context, source alternatin
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		address := strings.TrimSpace(item.TokenAddress)
-		if item.KOL < 3 || address == "" || (item.MarketCap > 0 && item.MarketCap < monitorMinMarketCap) {
+		if item.KOL < 3 || address == "" || item.MarketCap <= candidateEntryMinMarketCap {
 			continue
 		}
 		if _, exists := seen[address]; exists {

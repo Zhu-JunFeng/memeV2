@@ -15,16 +15,18 @@ func (f fakeCompletedProjectFeed) FetchCompletedProjects(context.Context) ([]pro
 	return f.items, nil
 }
 
-func TestProjectCandidatePollerOnlyAddsUniqueKOLAtLeastThree(t *testing.T) {
+func TestProjectCandidatePollerRequiresKOLAtLeastThreeAndMarketCapAbove15K(t *testing.T) {
 	store := &fakeCandidateStore{states: map[string]candidateMonitorState{}}
 	monitor := &CandidateMonitor{cfg: CandidateMonitorConfig{Enabled: true}, store: store}
 	feed := fakeCompletedProjectFeed{items: []project.Item{
-		{TokenAddress: "ca-six", KOL: 6},
-		{TokenAddress: "ca-three", KOL: 3},
-		{TokenAddress: "ca-low", KOL: 2},
-		{TokenAddress: "ca-low-market-cap", KOL: 3, MarketCap: 9999},
-		{TokenAddress: "ca-six", KOL: 8},
-		{TokenAddress: "", KOL: 9},
+		{TokenAddress: "ca-six", KOL: 6, MarketCap: 20000},
+		{TokenAddress: "ca-three", KOL: 3, MarketCap: 15001},
+		{TokenAddress: "ca-low", KOL: 2, MarketCap: 30000},
+		{TokenAddress: "ca-low-market-cap", KOL: 3, MarketCap: 14999},
+		{TokenAddress: "ca-equal-market-cap", KOL: 3, MarketCap: 15000},
+		{TokenAddress: "ca-missing-market-cap", KOL: 3},
+		{TokenAddress: "ca-six", KOL: 8, MarketCap: 25000},
+		{TokenAddress: "", KOL: 9, MarketCap: 40000},
 	}}
 	poller := NewProjectCandidatePoller(feed, feed, monitor, 0)
 

@@ -31,6 +31,7 @@ const (
 	strategyBreakoutFollow      = "breakout_band_follow"
 	monitorIncrementalBars      = 5
 	candidatePollWorkers        = 16
+	candidateEntryMinMarketCap  = 15000
 	monitorMinMarketCap         = 10000
 	candidatePoolLimit          = 50
 	preferredMarketCapMin       = 50000
