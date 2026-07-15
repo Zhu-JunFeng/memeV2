@@ -192,7 +192,7 @@
                     {{ strategyForm.positionSizeUsd }}u</strong
                   >
                   <em
-                    >首根 1m 收盘跌破压力带下沿止损 · 触发
+					>后续 1m 收盘跌破压力带下沿止损 · 触发
                     {{ strategyForm.activationProfitRatePercent }}% / 锁盈
                     {{ strategyForm.lockedProfitRatePercent }}%</em
                   >

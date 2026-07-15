@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,7 +172,7 @@ func TestBreakoutBandFollowMethodSupportsTakeProfitRangeAndFees(t *testing.T) {
 	}
 }
 
-func TestBreakoutBandFollowMethodIgnoresLaterDropBelowFormerHardStop(t *testing.T) {
+func TestBreakoutBandFollowMethodStopsOnLaterCloseBelowBand(t *testing.T) {
 	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	level := model.PriceLevel{
 		Type:  model.LevelTypeResistance,
@@ -202,11 +203,14 @@ func TestBreakoutBandFollowMethodIgnoresLaterDropBelowFormerHardStop(t *testing.
 		t.Fatalf("unexpected err: %v", err)
 	}
 	trade := result.Trades[0]
-	if trade.Outcome != model.BreakoutOutcomeTimeout {
-		t.Fatalf("expected later drop to remain open until backtest timeout, got %#v", trade)
+	if trade.Outcome != model.BreakoutOutcomeStopLoss {
+		t.Fatalf("expected later close below band to stop, got %#v", trade)
 	}
 	if !almostEqual(trade.SellPoint.Price, 10.3) {
-		t.Fatalf("expected timeout exit at final close 10.3, got %#v", trade.SellPoint)
+		t.Fatalf("expected lower-band exit at close 10.3, got %#v", trade.SellPoint)
+	}
+	if !strings.Contains(trade.ExitReason, "后续 K 线收盘市值低于压力带下沿") {
+		t.Fatalf("unexpected exit reason: %q", trade.ExitReason)
 	}
 }
 
