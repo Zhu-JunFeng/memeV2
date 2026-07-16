@@ -428,7 +428,7 @@ Birdeye K 线专用实时突破信号入口。
 - 配置项统一使用 `alert.*`，对应环境变量前缀为 `BACKTEST_ALERT_`；旧配置 `alert.consecutive_rate_limits` 已移除。Telegram 未启用时告警模块不启动。
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
-- `live` 模式保持真实 Jupiter 执行；买入使用 SOL 作为输入资产，按固定 `trade.buy_amount_usd` 美元金额和下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单
+- `live` 模式保持真实 Jupiter 执行；买入使用 SOL 作为输入资产，按固定 `trade.buy_amount_usd=20` 美元金额和下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单
 - 交易模块接收到买入信号后，会用同一笔买入数量调用 Jupiter `quote`，按报价均价乘当前 token supply 折算报价市值；首次与信号 `triggerMarketCap` 的绝对滑点大于 `3%` 时连续重试 3 次，任意一次回落到 `<=3%` 即继续买入，四次均超限才不创建订单并把 Signals 状态记为 `rejected`。
 - GMGN、DexScreener、Solana RPC 与 Jupiter 的外网请求均由服务器直接访问，不经过代理。
 

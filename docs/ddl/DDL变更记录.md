@@ -376,3 +376,16 @@ ALTER TABLE trade_accounts
 - `trade.signal_execution_enabled`：是否接收信号并执行交易，同时作用于模拟盘和实盘
 
 服务首次启动且表中缺少配置键时，分别使用配置文件 `signal.candidate_monitor_enabled` 和 `trade.signal_consumer` 作为默认值并写入数据库；后续以数据库值为准。
+
+## 010-实盘单次买入金额调整为20U（PostgreSQL）
+
+```sql
+ALTER TABLE trade_accounts
+  ALTER COLUMN buy_amount_usd SET DEFAULT 20;
+```
+
+说明：
+
+- 生产配置 `trade.buy_amount_usd` 调整为 `20`
+- 服务启动时 `EnsureAccount` 会把默认交易账户的 `buy_amount_usd` 同步为 `20`
+- 实盘买入仍在下单时按 SOL/USD 价格把 `20u` 换算为对应 lamports，不增加额外价格源

@@ -180,7 +180,7 @@ func migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_trade_signals_trade_mode_signal_time ON trade_signals (trade_mode, signal_time DESC)`,
 		`ALTER TABLE trade_accounts ADD COLUMN IF NOT EXISTS buy_amount_sol double precision`,
 		`UPDATE trade_accounts SET buy_amount_sol = 0 WHERE buy_amount_sol IS NULL`,
-		`ALTER TABLE trade_accounts ALTER COLUMN buy_amount_usd SET DEFAULT 10`,
+		`ALTER TABLE trade_accounts ALTER COLUMN buy_amount_usd SET DEFAULT 20`,
 		`ALTER TABLE trade_accounts ALTER COLUMN buy_amount_sol SET DEFAULT 0`,
 		`ALTER TABLE trade_accounts ALTER COLUMN buy_amount_sol SET NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS trade_orders (
