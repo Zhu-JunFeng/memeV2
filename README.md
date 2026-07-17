@@ -224,6 +224,27 @@ npm run build
 
 - 后端：本地交叉编译 Linux 二进制后上传并重启服务
 - 前端：构建 `frontend/dist` 后同步到服务器静态目录
+- 推荐使用 `./scripts/deploy.sh` 完成测试、构建、交易状态检查、远端备份、切换和健康验证
+
+部署到默认生产服务器：
+
+```bash
+./scripts/deploy.sh
+```
+
+指定服务器和 SSH 用户：
+
+```bash
+./scripts/deploy.sh --host 10.0.0.8 --user admin
+```
+
+查看全部参数：
+
+```bash
+./scripts/deploy.sh --help
+```
+
+脚本默认在存在 `pending/submitted` 订单或 open position 时停止部署；确认允许短暂重启交易监控后，可显式传入 `--allow-active-trades`。SSH 密码由终端交互输入，也可以通过 `--identity` 指定私钥，脚本不会保存密码。目标服务器需要提前准备好配置、systemd 服务和运行环境；ARM64 服务器可额外传入 `--goarch arm64`。
 
 ## 主要接口
 
