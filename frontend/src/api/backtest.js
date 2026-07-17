@@ -70,6 +70,13 @@ export function deleteCandidateMonitor(tokenAddress) {
   return http.delete(`/signal/candidate-monitor/${encodeURIComponent(tokenAddress)}`);
 }
 
+export function blacklistCandidateMonitor(tokenAddress, reason = "手动拉黑") {
+  return http.post(
+    `/signal/candidate-monitor/${encodeURIComponent(tokenAddress)}/blacklist`,
+    { reason },
+  );
+}
+
 export function listTradeOrders(params) {
   return http.get("/trade/orders", { params });
 }

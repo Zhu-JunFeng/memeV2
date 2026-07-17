@@ -82,6 +82,8 @@
   - 保证同一账户同一 token 同时最多一笔 open position
   - 写入 `trade_signals / trade_orders / trade_fills / trade_positions / trade_order_events`
   - 通过 `trade.price_source` 刷新 open position 的最新估值，当前默认 GMGN，可切换 DexScreener
+  - 每次实际卖出成交后按 CA 维护连续亏损状态：亏损冷却 `1h`，连续 `3` 次亏损自动拉黑；盈利或持平清零连续亏损和冷却。模拟盘与实盘共用这套全局 CA 风控状态
+  - Jupiter 报价前校验 `ca_blacklist`；冷却中的 CA 暂停买入，已拉黑 CA 禁止买入和重新进入候选池
 
 当前 Redis 信号消息结构：
 
@@ -239,6 +241,7 @@ npm run build
 - `POST /api/strategy-backtests/run`
 - `GET /api/signal/candidate-monitor` / `GET /api/signal/candidate-monitor/stream`
 - `POST /api/signal/candidate-monitor`：手动输入 CA 加入 Candidates active 监控池
+- `POST /api/signal/candidate-monitor/:tokenAddress/blacklist`：手动拉黑 CA，并立即移出 Candidates active 监控池
 - `GET /api/trade/accounts`
 - `GET /api/trade/runtime`
 - `PUT /api/trade/runtime`

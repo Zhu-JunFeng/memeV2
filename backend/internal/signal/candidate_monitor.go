@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	solana "github.com/gagliardetto/solana-go"
 	"github.com/redis/go-redis/v9"
 
 	"solana-meme-backtest/backend/internal/backtest"
@@ -42,6 +43,7 @@ const (
 
 var ErrCandidatePoolFull = errors.New("候选池已满")
 var ErrCandidateMonitoringDisabled = errors.New("CA 获取和监控已关闭")
+var ErrCandidateBlacklisted = errors.New("CA 已拉黑，不能进入候选池")
 
 type CandidateMonitorConfig struct {
 	Enabled          bool
@@ -59,6 +61,7 @@ type CandidateMonitorConfig struct {
 	SystemKlines     monitorKlineStore
 	EventBus         *eventbus.Broker
 	SignalStatus     tradeSignalStatusProvider
+	CABlacklistStore caBlacklistStore
 	RuntimeEnabled   func() bool
 	Now              func() time.Time
 }
@@ -77,12 +80,18 @@ type CandidateMonitor struct {
 	supplyCache    map[string]float64
 	eventBus       *eventbus.Broker
 	signalStatus   tradeSignalStatusProvider
+	caBlacklist    caBlacklistStore
 	candidateMu    sync.Mutex
 }
 
 type tradeSignalStatusProvider interface {
 	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
 	GetOpenPositionBySignalID(ctx context.Context, signalID string) (model.TradePosition, error)
+}
+
+type caBlacklistStore interface {
+	GetCABlacklistState(ctx context.Context, tokenAddress string) (model.CABlacklistState, error)
+	BlacklistCA(ctx context.Context, tokenAddress string, reason string, source string) (model.CABlacklistState, error)
 }
 
 type CandidateMonitorItem struct {
@@ -193,6 +202,7 @@ func NewCandidateMonitor(redisClient *redis.Client, priceProvider datasource.Tok
 		supplyCache:    map[string]float64{},
 		eventBus:       cfg.EventBus,
 		signalStatus:   cfg.SignalStatus,
+		caBlacklist:    cfg.CABlacklistStore,
 	}
 }
 
@@ -334,6 +344,51 @@ func (m *CandidateMonitor) DeleteCandidate(ctx context.Context, tokenAddress str
 	return CandidateMonitorItem{}, errors.New("候选项目不存在或已不在监控池")
 }
 
+func (m *CandidateMonitor) BlacklistCandidate(ctx context.Context, tokenAddress string, reason string) (model.CABlacklistState, error) {
+	tokenAddress = strings.TrimSpace(tokenAddress)
+	if tokenAddress == "" {
+		return model.CABlacklistState{}, errors.New("CA 不能为空")
+	}
+	if _, err := solana.PublicKeyFromBase58(tokenAddress); err != nil {
+		return model.CABlacklistState{}, errors.New("CA 格式不合法")
+	}
+	if m == nil || m.store == nil || m.caBlacklist == nil {
+		return model.CABlacklistState{}, errors.New("CA 黑名单未启用")
+	}
+	item, err := m.caBlacklist.BlacklistCA(ctx, tokenAddress, reason, "manual")
+	if err != nil {
+		return model.CABlacklistState{}, err
+	}
+	if err := m.StopBlacklistedCandidate(ctx, tokenAddress); err != nil {
+		return model.CABlacklistState{}, err
+	}
+	return item, nil
+}
+
+func (m *CandidateMonitor) StopBlacklistedCandidate(ctx context.Context, tokenAddress string) error {
+	if m == nil || m.store == nil {
+		return nil
+	}
+	m.candidateMu.Lock()
+	defer m.candidateMu.Unlock()
+	states, err := m.store.ListActive(ctx)
+	if err != nil {
+		return err
+	}
+	for _, state := range states {
+		if state.TokenAddress != strings.TrimSpace(tokenAddress) {
+			continue
+		}
+		if err := m.store.StopCandidate(ctx, state, candidateStatusStopped); err != nil {
+			return err
+		}
+		m.publishCandidateDelete(state)
+		log.Printf("candidate monitor stopped blacklisted candidate: ca=%s", state.TokenAddress)
+		break
+	}
+	return nil
+}
+
 func (m *CandidateMonitor) AddManualCandidate(ctx context.Context, tokenAddress string) (CandidateMonitorItem, error) {
 	if !m.RuntimeEnabled() {
 		return CandidateMonitorItem{}, ErrCandidateMonitoringDisabled
@@ -353,6 +408,13 @@ func (m *CandidateMonitor) AddProjectCandidate(ctx context.Context, tokenAddress
 	}
 	if m == nil || m.store == nil {
 		return CandidateMonitorItem{}, false, errors.New("候选池监控未启用")
+	}
+	blacklisted, err := m.isBlacklisted(ctx, tokenAddress)
+	if err != nil {
+		return CandidateMonitorItem{}, false, err
+	}
+	if blacklisted {
+		return CandidateMonitorItem{}, false, ErrCandidateBlacklisted
 	}
 	m.candidateMu.Lock()
 	defer m.candidateMu.Unlock()
@@ -724,6 +786,13 @@ func (m *CandidateMonitor) handleCandidatePayload(ctx context.Context, payload [
 	if err != nil {
 		return err
 	}
+	blacklisted, err := m.isBlacklisted(ctx, candidate.TokenAddress)
+	if err != nil {
+		return err
+	}
+	if blacklisted {
+		return ErrCandidateBlacklisted
+	}
 	state := candidateMonitorState{
 		TokenAddress: candidate.TokenAddress,
 		Symbol:       candidate.Token,
@@ -769,6 +838,13 @@ func decodeCandidateScorePassed(payload []byte) (candidateScorePassedMessage, er
 }
 
 func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidateMonitorState) error {
+	blacklisted, err := m.isBlacklisted(ctx, state.TokenAddress)
+	if err != nil {
+		return err
+	}
+	if blacklisted {
+		return m.StopBlacklistedCandidate(ctx, state.TokenAddress)
+	}
 	klines, err := m.loadLatestKlines(ctx, state)
 	if err != nil {
 		return err
@@ -797,6 +873,17 @@ func (m *CandidateMonitor) processCandidate(ctx context.Context, state candidate
 	default:
 		return nil
 	}
+}
+
+func (m *CandidateMonitor) isBlacklisted(ctx context.Context, tokenAddress string) (bool, error) {
+	if m == nil || m.caBlacklist == nil {
+		return false, nil
+	}
+	item, err := m.caBlacklist.GetCABlacklistState(ctx, tokenAddress)
+	if err != nil {
+		return false, err
+	}
+	return item.IsBlacklisted, nil
 }
 
 func (m *CandidateMonitor) loadLatestKlines(ctx context.Context, state candidateMonitorState) ([]model.Kline, error) {

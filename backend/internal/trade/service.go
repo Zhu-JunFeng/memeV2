@@ -66,6 +66,10 @@ type Notifier interface {
 	NotifyTradeModeChange(ctx context.Context, change model.TradeModeChange) error
 }
 
+type CARiskStore interface {
+	GetCABlacklistState(ctx context.Context, tokenAddress string) (model.CABlacklistState, error)
+}
+
 type ExecutionRequest struct {
 	Account  model.TradeAccount
 	Signal   model.TradeSignal
@@ -120,6 +124,8 @@ type Service struct {
 	seenSignals     map[string]struct{}
 	positionStore   PositionStore
 	notifier        Notifier
+	caRiskStore     CARiskStore
+	onCABlacklisted func(context.Context, string) error
 }
 
 type ServiceOption func(*Service)
@@ -151,6 +157,18 @@ func WithNotifier(notifier Notifier) ServiceOption {
 func WithPositionStore(store PositionStore) ServiceOption {
 	return func(s *Service) {
 		s.positionStore = store
+	}
+}
+
+func WithCARiskStore(store CARiskStore) ServiceOption {
+	return func(s *Service) {
+		s.caRiskStore = store
+	}
+}
+
+func WithCABlacklistedHandler(handler func(context.Context, string) error) ServiceOption {
+	return func(s *Service) {
+		s.onCABlacklisted = handler
 	}
 }
 
@@ -528,6 +546,21 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 }
 
 func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (signalProcessResult, error) {
+	if s.caRiskStore != nil {
+		risk, err := s.caRiskStore.GetCABlacklistState(ctx, signal.TokenAddress)
+		if err != nil {
+			s.finishInFlight(signal.TokenAddress)
+			return signalProcessResult{}, err
+		}
+		if risk.IsBlacklisted {
+			s.finishInFlight(signal.TokenAddress)
+			return signalProcessResult{status: "rejected", reason: "CA 已拉黑，禁止买入"}, nil
+		}
+		if risk.CooldownUntil != nil && time.Now().UTC().Before(risk.CooldownUntil.UTC()) {
+			s.finishInFlight(signal.TokenAddress)
+			return signalProcessResult{status: "rejected", reason: fmt.Sprintf("CA 亏损冷却中，冷却至 %s", risk.CooldownUntil.UTC().Format(time.RFC3339))}, nil
+		}
+	}
 	mode := signal.TradeMode
 	order := model.TradeOrder{
 		ID:                uuid.NewString(),
@@ -876,6 +909,16 @@ func (s *Service) enqueueFilledSell(position model.TradePosition, order model.Tr
 			}
 			if err := s.repo.SaveFilledSell(ctx, position, order, fill); err != nil {
 				return err
+			}
+			if s.caRiskStore != nil && s.onCABlacklisted != nil {
+				risk, err := s.caRiskStore.GetCABlacklistState(ctx, fill.TokenAddress)
+				if err != nil {
+					log.Printf("load CA blacklist state after filled sell failed: ca=%s err=%v", fill.TokenAddress, err)
+				} else if risk.IsBlacklisted {
+					if err := s.onCABlacklisted(ctx, fill.TokenAddress); err != nil {
+						log.Printf("stop automatically blacklisted candidate failed: ca=%s err=%v", fill.TokenAddress, err)
+					}
+				}
 			}
 			s.publishOrder(ctx, order.ID)
 			s.publishPosition(ctx, position.ID)

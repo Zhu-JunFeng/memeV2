@@ -539,7 +539,7 @@
                 shortAddress(row.buySignalId || "-")
               }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="86" fixed="right">
+            <el-table-column label="操作" width="138" fixed="right">
               <template #default="{ row }">
                 <el-button
                   link
@@ -548,6 +548,14 @@
                   @click="handleDeleteCandidate(row)"
                 >
                   删除
+                </el-button>
+                <el-button
+                  link
+                  type="danger"
+                  :loading="blacklistingCandidateAddress === row.tokenAddress"
+                  @click="handleBlacklistCandidate(row)"
+                >
+                  拉黑
                 </el-button>
               </template>
             </el-table-column>
@@ -1379,6 +1387,7 @@ const isStrategyConfigExpanded = ref(false);
 const hasAutoSelectedCandidateToken = ref(false);
 const tokenAddressTouched = ref(false);
 const deletingCandidateAddress = ref("");
+const blacklistingCandidateAddress = ref("");
 const viewingPositionID = ref("");
 const closingPositionID = ref("");
 const levelView = ref("resistance");
@@ -1887,6 +1896,41 @@ async function handleDeleteCandidate(row) {
     ElMessage.success("已从候选池删除");
   } finally {
     deletingCandidateAddress.value = "";
+  }
+}
+
+async function handleBlacklistCandidate(row) {
+  const tokenAddress = String(row?.tokenAddress || "").trim();
+  if (!tokenAddress) {
+    ElMessage.error("候选项目缺少 CA");
+    return;
+  }
+  const symbol = row.symbol || shortAddress(tokenAddress);
+  try {
+    await ElMessageBox.confirm(
+      `确认拉黑 ${symbol}？拉黑后将立即停止监控、移出候选池，且该 CA 以后不能再次进入候选池或执行买入。`,
+      "拉黑候选项目",
+      {
+        confirmButtonText: "确认拉黑",
+        cancelButtonText: "取消",
+        type: "error",
+      },
+    );
+  } catch {
+    return;
+  }
+  blacklistingCandidateAddress.value = tokenAddress;
+  try {
+    await store.blacklistCandidateMonitor(tokenAddress);
+    if (form.tokenAddress === tokenAddress) {
+      const nextCandidate = store.candidateMonitorItems[0];
+      form.tokenAddress = nextCandidate?.tokenAddress || "";
+      hasAutoSelectedCandidateToken.value = Boolean(nextCandidate);
+      tokenAddressTouched.value = false;
+    }
+    ElMessage.success("已拉黑并移出候选池");
+  } finally {
+    blacklistingCandidateAddress.value = "";
   }
 }
 

@@ -134,6 +134,7 @@ func main() {
 			SystemKlines:     systemKlineStore,
 			EventBus:         events,
 			SignalStatus:     tradeRepo,
+			CABlacklistStore: tradeRepo,
 			RuntimeEnabled:   runtimeControl.CAMonitoringEnabled,
 		})
 		candidateMonitor.Start(appCtx)
@@ -158,7 +159,10 @@ func main() {
 	if telegramClient != nil {
 		tradeNotifier = telegramClient
 	}
-	tradeOptions := []trade.ServiceOption{trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider), trade.WithWalletBalanceProvider(supplyProvider), trade.WithNotifier(tradeNotifier)}
+	tradeOptions := []trade.ServiceOption{trade.WithEventBus(events), trade.WithSupplyProvider(supplyProvider), trade.WithWalletBalanceProvider(supplyProvider), trade.WithNotifier(tradeNotifier), trade.WithCARiskStore(tradeRepo)}
+	if candidateMonitor != nil {
+		tradeOptions = append(tradeOptions, trade.WithCABlacklistedHandler(candidateMonitor.StopBlacklistedCandidate))
+	}
 	if redisClient != nil {
 		tradeOptions = append(tradeOptions, trade.WithPositionStore(trade.NewRedisPositionStore(redisClient, "")))
 	}

@@ -2,12 +2,78 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"solana-meme-backtest/backend/internal/model"
 )
+
+func TestSaveFilledSellUpdatesCARiskInSameTransaction(t *testing.T) {
+	tests := []struct {
+		name        string
+		filledQuote float64
+		fee         float64
+		profitRate  float64
+		loss        bool
+	}{
+		{name: "loss", filledQuote: 9, fee: 0.1, profitRate: -0.11, loss: true},
+		{name: "non-loss resets streak", filledQuote: 11, fee: 0.1, profitRate: 0.09, loss: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+
+			executedAt := time.Date(2026, 7, 17, 1, 30, 0, 0, time.UTC)
+			position := model.TradePosition{ID: "position-1", CostAmount: 10}
+			order := model.TradeOrder{ID: "order-1"}
+			fill := model.TradeFill{
+				ID: "fill-1", OrderID: order.ID, TradeMode: model.TradeModePaper,
+				IsSimulated: true, TxHash: "paper-tx", Side: model.TradeSignalTypeSell,
+				TokenAddress: "token-1", FilledTokenAmount: 100, FilledQuoteAmount: tt.filledQuote,
+				AvgPrice: 0.1, FeeAmount: tt.fee, FeeAsset: "USD", ExecutedAt: executedAt,
+				ProfitRate: tt.profitRate,
+			}
+
+			mock.ExpectBegin()
+			mock.ExpectExec("INSERT INTO trade_fills").
+				WithArgs("fill-1", "order-1", model.TradeModePaper, true, "paper-tx", model.TradeSignalTypeSell, "token-1", 100.0, tt.filledQuote, 0.1, tt.fee, "USD", executedAt, sqlmock.AnyArg()).
+				WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectExec("UPDATE trade_orders").
+				WithArgs("order-1", "paper-tx", executedAt, sqlmock.AnyArg()).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			realized := tt.filledQuote - position.CostAmount - tt.fee
+			mock.ExpectExec("UPDATE trade_positions").
+				WithArgs("position-1", "order-1", 100.0, 0.1, realized, executedAt, sqlmock.AnyArg()).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("INSERT INTO ca_blacklist").
+				WithArgs("token-1", tt.loss, executedAt, model.TradeModePaper, tt.profitRate, anyTimeArgument{}).
+				WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectCommit()
+
+			if err := NewTradeRepository(database).SaveFilledSell(context.Background(), position, order, fill); err != nil {
+				t.Fatalf("save filled sell: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type anyTimeArgument struct{}
+
+func (anyTimeArgument) Match(value driver.Value) bool {
+	_, ok := value.(time.Time)
+	return ok
+}
 
 func TestGetOpenPositionBySignalIDScansBasicPositionColumns(t *testing.T) {
 	db, mock, err := sqlmock.New()

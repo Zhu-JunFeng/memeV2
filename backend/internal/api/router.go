@@ -62,6 +62,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.POST("/gmgn/api-keys", h.createGMGNAPIKey)
 	api.GET("/signal/candidate-monitor", h.listCandidateMonitor)
 	api.POST("/signal/candidate-monitor", h.addCandidateMonitor)
+	api.POST("/signal/candidate-monitor/:tokenAddress/blacklist", h.blacklistCandidateMonitor)
 	api.DELETE("/signal/candidate-monitor/:tokenAddress", h.deleteCandidateMonitor)
 	api.GET("/signal/candidate-monitor/stream", h.streamCandidateMonitor)
 	api.GET("/market/db/support-resistance", h.getDBSupportResistance)
@@ -179,6 +180,10 @@ type createGMGNAPIKeyRequest struct {
 
 type addCandidateMonitorRequest struct {
 	TokenAddress string `json:"tokenAddress" binding:"required"`
+}
+
+type blacklistCandidateMonitorRequest struct {
+	Reason string `json:"reason"`
 }
 
 func (h *Handler) getBirdeyeKlines(c *gin.Context) {
@@ -363,6 +368,29 @@ func (h *Handler) deleteCandidateMonitor(c *gin.Context) {
 		return
 	}
 	item, err := h.candidateMonitor.DeleteCandidate(c.Request.Context(), tokenAddress)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"item": item})
+}
+
+func (h *Handler) blacklistCandidateMonitor(c *gin.Context) {
+	tokenAddress := strings.TrimSpace(c.Param("tokenAddress"))
+	if tokenAddress == "" {
+		response.Fail(c, http.StatusBadRequest, "CA 不能为空")
+		return
+	}
+	var req blacklistCandidateMonitorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	if h.candidateMonitor == nil {
+		response.Fail(c, http.StatusBadRequest, "候选池监控未启用")
+		return
+	}
+	item, err := h.candidateMonitor.BlacklistCandidate(c.Request.Context(), tokenAddress, req.Reason)
 	if err != nil {
 		h.handleError(c, err)
 		return

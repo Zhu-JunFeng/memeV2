@@ -38,6 +38,20 @@ type TradeModePeriodSummary struct {
 	OpenPositionCount   int
 }
 
+type CABlacklistState struct {
+	TokenAddress         string     `json:"tokenAddress"`
+	ConsecutiveLossCount int        `json:"consecutiveLossCount"`
+	CooldownUntil        *time.Time `json:"cooldownUntil,omitempty"`
+	IsBlacklisted        bool       `json:"isBlacklisted"`
+	BlacklistReason      string     `json:"blacklistReason"`
+	BlacklistSource      string     `json:"blacklistSource"`
+	BlacklistedAt        *time.Time `json:"blacklistedAt,omitempty"`
+	LastTradeMode        TradeMode  `json:"lastTradeMode,omitempty"`
+	LastProfitRate       float64    `json:"lastProfitRate"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
+}
+
 const (
 	TradeSignalTypeBuy  TradeSignalType = "buy"
 	TradeSignalTypeSell TradeSignalType = "sell"

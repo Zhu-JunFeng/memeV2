@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -970,6 +971,56 @@ func TestCandidateMonitorRejectsNewCandidateWhenRuntimeDisabled(t *testing.T) {
 	}
 	if len(store.states) != 0 {
 		t.Fatalf("disabled monitor should not persist candidates: %#v", store.states)
+	}
+}
+
+type fakeCABlacklistStore struct {
+	states map[string]model.CABlacklistState
+}
+
+func (s *fakeCABlacklistStore) GetCABlacklistState(_ context.Context, tokenAddress string) (model.CABlacklistState, error) {
+	return s.states[tokenAddress], nil
+}
+
+func (s *fakeCABlacklistStore) BlacklistCA(_ context.Context, tokenAddress string, reason string, source string) (model.CABlacklistState, error) {
+	item := s.states[tokenAddress]
+	item.TokenAddress = tokenAddress
+	item.IsBlacklisted = true
+	item.BlacklistReason = reason
+	item.BlacklistSource = source
+	s.states[tokenAddress] = item
+	return item, nil
+}
+
+func TestCandidateMonitorRejectsBlacklistedCandidateAndManualBlacklistStopsMonitoring(t *testing.T) {
+	store := newFakeCandidateStore()
+	manualCA := "So11111111111111111111111111111111111111112"
+	store.states[manualCA] = candidateMonitorState{TokenAddress: manualCA, Status: candidateStatusWatching}
+	blacklist := &fakeCABlacklistStore{states: map[string]model.CABlacklistState{
+		"already-blacklisted": {TokenAddress: "already-blacklisted", IsBlacklisted: true},
+	}}
+	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
+	monitor.caBlacklist = blacklist
+
+	if _, _, err := monitor.AddProjectCandidate(context.Background(), "already-blacklisted", "BLOCKED", 20000); !errors.Is(err, ErrCandidateBlacklisted) {
+		t.Fatalf("expected blacklisted error, got %v", err)
+	}
+	if _, err := monitor.BlacklistCandidate(context.Background(), manualCA, "手动拉黑"); err != nil {
+		t.Fatalf("manual blacklist: %v", err)
+	}
+	if _, ok := store.states[manualCA]; ok {
+		t.Fatal("manually blacklisted CA must be removed from active candidates")
+	}
+	if !blacklist.states[manualCA].IsBlacklisted || blacklist.states[manualCA].BlacklistSource != "manual" {
+		t.Fatalf("unexpected blacklist state: %+v", blacklist.states[manualCA])
+	}
+}
+
+func TestCandidateMonitorRejectsInvalidManualBlacklistCA(t *testing.T) {
+	monitor := testCandidateMonitor(newFakeCandidateStore(), nil, nil, time.Now().UTC(), &capturePublisher{})
+	monitor.caBlacklist = &fakeCABlacklistStore{states: map[string]model.CABlacklistState{}}
+	if _, err := monitor.BlacklistCandidate(context.Background(), "not-a-ca", "手动拉黑"); err == nil || !strings.Contains(err.Error(), "格式不合法") {
+		t.Fatalf("expected invalid CA error, got %v", err)
 	}
 }
 

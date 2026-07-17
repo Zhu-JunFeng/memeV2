@@ -389,3 +389,31 @@ ALTER TABLE trade_accounts
 - 生产配置 `trade.buy_amount_usd` 调整为 `20`
 - 服务启动时 `EnsureAccount` 会把默认交易账户的 `buy_amount_usd` 同步为 `20`
 - 实盘买入仍在下单时按 SOL/USD 价格把 `20u` 换算为对应 lamports，不增加额外价格源
+
+## 011-CA亏损冷却与黑名单（PostgreSQL）
+
+```sql
+CREATE TABLE ca_blacklist (
+  token_address varchar(128) PRIMARY KEY,
+  consecutive_loss_count integer NOT NULL DEFAULT 0,
+  cooldown_until timestamptz,
+  is_blacklisted boolean NOT NULL DEFAULT false,
+  blacklist_reason text NOT NULL DEFAULT '',
+  blacklist_source varchar(16) NOT NULL DEFAULT '',
+  blacklisted_at timestamptz,
+  last_trade_mode varchar(16) NOT NULL DEFAULT '',
+  last_profit_rate double precision NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+
+CREATE INDEX idx_ca_blacklist_status_updated_at
+  ON ca_blacklist (is_blacklisted, updated_at DESC);
+```
+
+说明：
+
+- 表同时保存 CA 的连续亏损、`1h` 冷却和黑名单状态；未拉黑但正在冷却的 CA 也会有记录。
+- 卖出成交和风控状态在同一个 PostgreSQL 事务中落库，模拟盘、实盘共同按 CA 累计。
+- `blacklist_source` 为 `auto` 或 `manual`；自动拉黑原因为连续 `3` 次卖出亏损。
+- 盈利或持平卖出会把连续亏损次数归零并清除冷却，但不会解除已存在的黑名单。

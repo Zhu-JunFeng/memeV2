@@ -476,7 +476,94 @@ func (r *TradeRepository) SaveFilledSell(ctx context.Context, position model.Tra
 	); err != nil {
 		return err
 	}
+	loss := realized < 0
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO ca_blacklist (
+			token_address, consecutive_loss_count, cooldown_until, is_blacklisted,
+			blacklist_reason, blacklist_source, blacklisted_at, last_trade_mode,
+			last_profit_rate, created_at, updated_at
+		)
+		VALUES (
+			$1, CASE WHEN $2 THEN 1 ELSE 0 END,
+			CASE WHEN $2 THEN $3 + INTERVAL '1 hour' ELSE NULL END,
+			false, '', '', NULL, $4, $5, $6, $6
+		)
+		ON CONFLICT (token_address) DO UPDATE SET
+			consecutive_loss_count = CASE WHEN $2 THEN ca_blacklist.consecutive_loss_count + 1 ELSE 0 END,
+			cooldown_until = CASE WHEN $2 THEN $3 + INTERVAL '1 hour' ELSE NULL END,
+			is_blacklisted = ca_blacklist.is_blacklisted OR ($2 AND ca_blacklist.consecutive_loss_count + 1 >= 3),
+			blacklist_reason = CASE
+				WHEN ca_blacklist.is_blacklisted THEN ca_blacklist.blacklist_reason
+				WHEN $2 AND ca_blacklist.consecutive_loss_count + 1 >= 3 THEN '连续3次卖出亏损'
+				ELSE ''
+			END,
+			blacklist_source = CASE
+				WHEN ca_blacklist.is_blacklisted THEN ca_blacklist.blacklist_source
+				WHEN $2 AND ca_blacklist.consecutive_loss_count + 1 >= 3 THEN 'auto'
+				ELSE ''
+			END,
+			blacklisted_at = CASE
+				WHEN ca_blacklist.is_blacklisted THEN ca_blacklist.blacklisted_at
+				WHEN $2 AND ca_blacklist.consecutive_loss_count + 1 >= 3 THEN $3
+				ELSE NULL
+			END,
+			last_trade_mode = excluded.last_trade_mode,
+			last_profit_rate = excluded.last_profit_rate,
+			updated_at = excluded.updated_at`,
+		fill.TokenAddress, loss, fill.ExecutedAt.UTC(), fill.TradeMode, fill.ProfitRate, now,
+	); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func (r *TradeRepository) GetCABlacklistState(ctx context.Context, tokenAddress string) (model.CABlacklistState, error) {
+	var item model.CABlacklistState
+	err := r.db.QueryRowContext(ctx, `
+		SELECT token_address, consecutive_loss_count, cooldown_until, is_blacklisted,
+			blacklist_reason, blacklist_source, blacklisted_at, last_trade_mode,
+			last_profit_rate, created_at, updated_at
+		FROM ca_blacklist
+		WHERE token_address = $1`, strings.TrimSpace(tokenAddress),
+	).Scan(
+		&item.TokenAddress, &item.ConsecutiveLossCount, &item.CooldownUntil, &item.IsBlacklisted,
+		&item.BlacklistReason, &item.BlacklistSource, &item.BlacklistedAt, &item.LastTradeMode,
+		&item.LastProfitRate, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.CABlacklistState{TokenAddress: strings.TrimSpace(tokenAddress)}, nil
+	}
+	return item, err
+}
+
+func (r *TradeRepository) BlacklistCA(ctx context.Context, tokenAddress string, reason string, source string) (model.CABlacklistState, error) {
+	now := time.Now().UTC()
+	tokenAddress = strings.TrimSpace(tokenAddress)
+	reason = strings.TrimSpace(reason)
+	source = strings.TrimSpace(source)
+	if reason == "" {
+		reason = "手动拉黑"
+	}
+	if source == "" {
+		source = "manual"
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO ca_blacklist (
+			token_address, consecutive_loss_count, cooldown_until, is_blacklisted,
+			blacklist_reason, blacklist_source, blacklisted_at, last_trade_mode,
+			last_profit_rate, created_at, updated_at
+		)
+		VALUES ($1, 0, NULL, true, $2, $3, $4, '', 0, $4, $4)
+		ON CONFLICT (token_address) DO UPDATE SET
+			is_blacklisted = true,
+			blacklist_reason = excluded.blacklist_reason,
+			blacklist_source = excluded.blacklist_source,
+			blacklisted_at = excluded.blacklisted_at,
+			updated_at = excluded.updated_at`, tokenAddress, reason, source, now)
+	if err != nil {
+		return model.CABlacklistState{}, err
+	}
+	return r.GetCABlacklistState(ctx, tokenAddress)
 }
 
 func (r *TradeRepository) ListOrders(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeOrder, error) {

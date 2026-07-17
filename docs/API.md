@@ -415,6 +415,8 @@ Birdeye K 线专用实时突破信号入口。
 - 候选池买入/卖出信号的 `triggerMarketCap` / `triggerPrice` 使用触发当刻 CA 的实时真实市值；策略突破阈值、策略止盈/止损目标价分别保留在 metadata 的 `strategyMarketCap`、`breakoutThreshold`、`strategyExitPoint` 字段里，便于回看策略依据。
 - 候选池自维护 K 线的 `volume` 直接使用 GMGN 返回的真实成交额，用这组量能执行试压/突破量能过滤
 - 候选池卖出后如果市值仍高于阈值会重新进入 `watching`，但同一根已卖出的 bar 不允许再次买入，实时语义与回测的单持仓约束保持一致
+- 每次卖出实际成交后按 CA 更新全局风控状态：成交亏损则冷却 `1h`，连续 `3` 次成交亏损自动拉黑；盈利或持平会清零连续亏损次数和冷却。模拟盘和实盘成交共同计入同一连续序列。
+- 冷却仅阻止新买入，不移除候选监控；拉黑会移出候选池并阻止所有来源再次入池。交易模块在 Jupiter 报价和执行前再次查询数据库，作为最终买入拦截。
 
 ### 独立运行告警
 
@@ -480,6 +482,24 @@ Birdeye K 线专用实时突破信号入口。
 返回：
 
 - `item`：被删除的候选池项目。
+
+### POST /api/signal/candidate-monitor/:tokenAddress/blacklist
+
+手动拉黑候选 CA。请求体：
+
+```json
+{
+  "reason": "手动拉黑"
+}
+```
+
+说明：
+
+- `reason` 可选；页面当前固定传“手动拉黑”。
+- `tokenAddress` 必须是合法的 Solana Base58 公钥地址。
+- 成功后写入 `ca_blacklist`，立即从 Redis Candidates active 池移除该 CA，并发送 Candidates SSE `delete` 事件。
+- 拉黑状态对模拟盘、实盘和所有候选来源共同生效；该 CA 之后不能重新入池，也不能执行新的买入。
+- 返回 `item` 为当前黑名单状态，包含 `isBlacklisted`、`blacklistReason`、`blacklistSource`、`blacklistedAt` 和连续亏损信息。
 
 ### GET /api/signal/candidate-monitor/stream
 

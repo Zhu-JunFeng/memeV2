@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ElNotification } from "element-plus";
 import {
   addCandidateMonitor,
+  blacklistCandidateMonitor,
   candidateMonitorStreamURL,
   closeTradePosition,
   createBacktest,
@@ -241,6 +242,23 @@ export const useBacktestStore = defineStore("backtest", {
       this.error = "";
       try {
         const data = await deleteCandidateMonitor(tokenAddress);
+        this.candidateMonitorItems = this.candidateMonitorItems.filter(
+          (item) => String(item.tokenAddress) !== String(tokenAddress),
+        );
+        return data.item;
+      } catch (error) {
+        this.error = error.message;
+        throw error;
+      } finally {
+        this.tradeLoading = false;
+      }
+    },
+
+    async blacklistCandidateMonitor(tokenAddress) {
+      this.tradeLoading = true;
+      this.error = "";
+      try {
+        const data = await blacklistCandidateMonitor(tokenAddress);
         this.candidateMonitorItems = this.candidateMonitorItems.filter(
           (item) => String(item.tokenAddress) !== String(tokenAddress),
         );

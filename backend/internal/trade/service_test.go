@@ -257,6 +257,14 @@ type fakeWalletBalanceProvider struct {
 	err     error
 }
 
+type fakeCARiskStore struct {
+	states map[string]model.CABlacklistState
+}
+
+func (s *fakeCARiskStore) GetCABlacklistState(_ context.Context, tokenAddress string) (model.CABlacklistState, error) {
+	return s.states[tokenAddress], nil
+}
+
 type fakePositionStore struct {
 	positions map[string]model.TradePosition
 }
@@ -482,6 +490,51 @@ func TestProcessBuySignalRejectsWhenJupiterQuoteSlippageTooLarge(t *testing.T) {
 	}
 	if !strings.Contains(repo.signals[0].Reason, "连续 4 次报价滑点均大于 3.00%") {
 		t.Fatalf("expected slippage rejection reason, got %q", repo.signals[0].Reason)
+	}
+}
+
+func TestProcessBuySignalRejectsBlacklistedCAWithoutCallingExecutor(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{}
+	riskStore := &fakeCARiskStore{states: map[string]model.CABlacklistState{
+		"token-blacklisted": {TokenAddress: "token-blacklisted", IsBlacklisted: true},
+	}}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithCARiskStore(riskStore))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sig-blacklisted", SignalType: model.TradeSignalTypeBuy,
+		TokenAddress: "token-blacklisted", SignalTime: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("process signal: %v", err)
+	}
+	waitFor(t, func() bool { return len(repo.signals) == 1 && repo.signals[0].ConsumeStatus == "rejected" })
+	if executor.quoteCalls != 0 || executor.executeCalls != 0 || len(repo.orders) != 0 {
+		t.Fatalf("blacklisted CA must stop before quote/order: quote=%d execute=%d orders=%d", executor.quoteCalls, executor.executeCalls, len(repo.orders))
+	}
+}
+
+func TestProcessBuySignalRejectsCADuringLossCooldown(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{}
+	cooldownUntil := time.Now().UTC().Add(time.Hour)
+	riskStore := &fakeCARiskStore{states: map[string]model.CABlacklistState{
+		"token-cooling": {TokenAddress: "token-cooling", ConsecutiveLossCount: 1, CooldownUntil: &cooldownUntil},
+	}}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil, WithCARiskStore(riskStore))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sig-cooling", SignalType: model.TradeSignalTypeBuy,
+		TokenAddress: "token-cooling", SignalTime: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("process signal: %v", err)
+	}
+	waitFor(t, func() bool { return len(repo.signals) == 1 && repo.signals[0].ConsumeStatus == "rejected" })
+	if executor.quoteCalls != 0 || executor.executeCalls != 0 || len(repo.orders) != 0 {
+		t.Fatalf("cooling CA must stop before quote/order: quote=%d execute=%d orders=%d", executor.quoteCalls, executor.executeCalls, len(repo.orders))
 	}
 }
 
