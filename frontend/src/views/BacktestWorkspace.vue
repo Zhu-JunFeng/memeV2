@@ -1279,6 +1279,7 @@ import {
   formatBeijingRFC3339,
   formatHoldingDuration,
 } from "../utils/time.js";
+import { summarizeOpenPositions } from "../utils/positions.js";
 
 const store = useBacktestStore();
 const TRADE_LIST_LIMIT = 20;
@@ -1574,17 +1575,7 @@ const openTradePositions = computed(() =>
 const closedTradePositions = computed(() =>
   store.tradePositions.filter((item) => item.status === "closed"),
 );
-const positionTotals = computed(() =>
-  store.tradePositions.reduce(
-    (total, item) => {
-      total.cost += Number(item.costAmount || 0);
-      total.marketValue += positionDisplayMarketValue(item);
-      total.totalPnl += positionTotalPnl(item);
-      return total;
-    },
-    { cost: 0, marketValue: 0, totalPnl: 0 },
-  ),
-);
+const positionTotals = computed(() => summarizeOpenPositions(store.tradePositions));
 const candidateMonitorMap = computed(() =>
   Object.fromEntries(
     (store.candidateMonitorItems || []).map((item) => [item.tokenAddress, item]),
