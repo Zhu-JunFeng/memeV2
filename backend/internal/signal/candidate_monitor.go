@@ -67,26 +67,31 @@ type CandidateMonitorConfig struct {
 }
 
 type CandidateMonitor struct {
-	redis          *redis.Client
-	priceProvider  datasource.TokenPriceProvider
-	klineSource    datasource.KlineDataSource
-	publisher      Publisher
-	store          candidateMonitorStore
-	cfg            CandidateMonitorConfig
-	supplyProvider datasource.TokenSupplyProvider
-	systemKlines   monitorKlineStore
-	klineCache     *candidateKlineCache
-	supplyMu       sync.RWMutex
-	supplyCache    map[string]float64
-	eventBus       *eventbus.Broker
-	signalStatus   tradeSignalStatusProvider
-	caBlacklist    caBlacklistStore
-	candidateMu    sync.Mutex
+	redis           *redis.Client
+	priceProvider   datasource.TokenPriceProvider
+	klineSource     datasource.KlineDataSource
+	publisher       Publisher
+	store           candidateMonitorStore
+	cfg             CandidateMonitorConfig
+	supplyProvider  datasource.TokenSupplyProvider
+	systemKlines    monitorKlineStore
+	klineCache      *candidateKlineCache
+	supplyMu        sync.RWMutex
+	supplyCache     map[string]float64
+	eventBus        *eventbus.Broker
+	signalStatus    tradeSignalStatusProvider
+	runtimePosition runtimePositionProvider
+	caBlacklist     caBlacklistStore
+	candidateMu     sync.Mutex
 }
 
 type tradeSignalStatusProvider interface {
 	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
 	GetOpenPositionBySignalID(ctx context.Context, signalID string) (model.TradePosition, error)
+}
+
+type runtimePositionProvider interface {
+	FindRuntimePosition(ctx context.Context, tokenAddress string) (model.TradePosition, bool, error)
 }
 
 type caBlacklistStore interface {
@@ -203,6 +208,12 @@ func NewCandidateMonitor(redisClient *redis.Client, priceProvider datasource.Tok
 		eventBus:       cfg.EventBus,
 		signalStatus:   cfg.SignalStatus,
 		caBlacklist:    cfg.CABlacklistStore,
+	}
+}
+
+func (m *CandidateMonitor) SetRuntimePositionProvider(provider runtimePositionProvider) {
+	if m != nil {
+		m.runtimePosition = provider
 	}
 }
 
@@ -1123,47 +1134,58 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 	if m.signalStatus != nil && strings.TrimSpace(state.BuySignalID) != "" {
 		signal, err := m.signalStatus.GetSignalBySignalID(ctx, state.BuySignalID)
 		if err != nil {
-			return m.saveState(ctx, state)
-		}
-		switch signal.ConsumeStatus {
-		case "rejected", "failed", "skipped":
-			state.Status = candidateStatusWatching
-			state.BuySignalID = ""
-			state.SellSignalID = ""
-			state.SellSignalAt = time.Time{}
-			state.SellAttempt = 0
-			state.EntryTime = time.Time{}
-			state.EntryPrice = 0
-			state.EntryPriceSynced = false
-			state.Level = model.PriceLevel{}
-			return m.saveState(ctx, state)
-		case "executed":
-			if !state.EntryPriceSynced {
-				if err := m.syncExecutedEntryMarketCap(ctx, &state); err != nil {
-					if errors.Is(err, sql.ErrNoRows) {
-						latestBar := klines[len(klines)-1]
-						state.Status = candidateStatusWatching
-						state.BuySignalID = ""
-						state.SellSignalID = ""
-						state.SellSignalAt = time.Time{}
-						state.SellAttempt = 0
-						state.EntryTime = time.Time{}
-						state.EntryPrice = 0
-						state.EntryPriceSynced = false
-						state.Level = model.PriceLevel{}
-						state.LastDecisionBarTime = latestBar.OpenTime
-						state.LastExitBarTime = latestBar.OpenTime
-						log.Printf("candidate monitor rearmed after position closed: ca=%s", state.TokenAddress)
-						return m.saveState(ctx, state)
-					}
-					return err
-				}
-				if err := m.saveState(ctx, state); err != nil {
-					return err
-				}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
 			}
-		default:
-			return m.saveState(ctx, state)
+			recovered, err := m.syncRuntimeEntryMarketCap(ctx, &state)
+			if err != nil {
+				return err
+			}
+			if !recovered {
+				return m.saveState(ctx, state)
+			}
+			log.Printf("candidate monitor recovered missing buy signal from Redis position: ca=%s signalId=%s", state.TokenAddress, state.BuySignalID)
+		} else {
+			switch signal.ConsumeStatus {
+			case "rejected", "failed", "skipped":
+				state.Status = candidateStatusWatching
+				state.BuySignalID = ""
+				state.SellSignalID = ""
+				state.SellSignalAt = time.Time{}
+				state.SellAttempt = 0
+				state.EntryTime = time.Time{}
+				state.EntryPrice = 0
+				state.EntryPriceSynced = false
+				state.Level = model.PriceLevel{}
+				return m.saveState(ctx, state)
+			case "executed":
+				if !state.EntryPriceSynced {
+					if err := m.syncExecutedEntryMarketCap(ctx, &state); err != nil {
+						if errors.Is(err, sql.ErrNoRows) {
+							latestBar := klines[len(klines)-1]
+							state.Status = candidateStatusWatching
+							state.BuySignalID = ""
+							state.SellSignalID = ""
+							state.SellSignalAt = time.Time{}
+							state.SellAttempt = 0
+							state.EntryTime = time.Time{}
+							state.EntryPrice = 0
+							state.EntryPriceSynced = false
+							state.Level = model.PriceLevel{}
+							state.LastDecisionBarTime = latestBar.OpenTime
+							state.LastExitBarTime = latestBar.OpenTime
+							log.Printf("candidate monitor rearmed after position closed: ca=%s", state.TokenAddress)
+							return m.saveState(ctx, state)
+						}
+						return err
+					}
+					if err := m.saveState(ctx, state); err != nil {
+						return err
+					}
+				}
+			default:
+				return m.saveState(ctx, state)
+			}
 		}
 	}
 	decision, decisionBar, ok := backtest.EvaluateLiveBandFollowExitAt(klines, state.EntryTime, state.Level, m.cfg.BreakoutFollow, m.now())
@@ -1294,6 +1316,30 @@ func (m *CandidateMonitor) syncExecutedEntryMarketCap(ctx context.Context, state
 		state.Level.Breakout.BuyPoint.Price = entryMarketCap
 	}
 	return nil
+}
+
+func (m *CandidateMonitor) syncRuntimeEntryMarketCap(ctx context.Context, state *candidateMonitorState) (bool, error) {
+	if m.runtimePosition == nil {
+		return false, nil
+	}
+	position, found, err := m.runtimePosition.FindRuntimePosition(ctx, state.TokenAddress)
+	if err != nil || !found {
+		return false, err
+	}
+	supply, err := m.tokenSupply(ctx, state.TokenAddress)
+	if err != nil {
+		return false, err
+	}
+	entryMarketCap := position.AvgCostPrice * supply
+	if entryMarketCap <= 0 {
+		return false, fmt.Errorf("Redis executed entry market cap invalid: ca=%s avgPrice=%.12f supply=%.4f", state.TokenAddress, position.AvgCostPrice, supply)
+	}
+	state.EntryPrice = entryMarketCap
+	state.EntryPriceSynced = true
+	if state.Level.Breakout != nil && state.Level.Breakout.BuyPoint != nil {
+		state.Level.Breakout.BuyPoint.Price = entryMarketCap
+	}
+	return true, m.saveState(ctx, *state)
 }
 
 func (m *CandidateMonitor) buildSellSignal(state candidateMonitorState, decisionBar model.Kline, decision backtest.BandFollowExitDecision) (model.TradeSignalMessage, error) {

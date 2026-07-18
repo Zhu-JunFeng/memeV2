@@ -713,17 +713,43 @@ func (s *Service) loadRuntimePositions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
 	for _, item := range items {
 		if s.positionStore != nil {
 			if err := s.positionStore.Save(ctx, item); err != nil {
 				return err
 			}
 		}
+	}
+	if s.positionStore != nil {
+		stored, err := s.positionStore.List(ctx, s.account.ID)
+		if err != nil {
+			return err
+		}
+		items = append(items, stored...)
+	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	for _, item := range items {
 		s.openPositions[item.TokenAddress] = item
 	}
 	return nil
+}
+
+func (s *Service) FindRuntimePosition(ctx context.Context, tokenAddress string) (model.TradePosition, bool, error) {
+	if s.positionStore != nil {
+		position, err := s.positionStore.Get(ctx, s.account.ID, tokenAddress)
+		if errors.Is(err, ErrRuntimePositionNotFound) {
+			return model.TradePosition{}, false, nil
+		}
+		if err != nil {
+			return model.TradePosition{}, false, err
+		}
+		return position, position.Status == model.TradePositionStatusOpen, nil
+	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	position, ok := s.openPositions[tokenAddress]
+	return position, ok && position.Status == model.TradePositionStatusOpen, nil
 }
 
 func (s *Service) markSignalSeen(signalID string) bool {

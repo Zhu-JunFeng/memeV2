@@ -137,12 +137,6 @@ func main() {
 			CABlacklistStore: tradeRepo,
 			RuntimeEnabled:   runtimeControl.CAMonitoringEnabled,
 		})
-		candidateMonitor.Start(appCtx)
-		if cfg.XXYY.Enabled {
-			xxyyClient := xxyy.NewClient(cfg.XXYY.BaseURL, cfg.XXYY.APIKey, nil).WithHTTPObserver(alertMonitor)
-			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, "", nil).WithKeyScheduler(gmgnKeyScheduler).WithHTTPObserver(alertMonitor)
-			signal.NewProjectCandidatePoller(xxyyClient, gmgnProjectClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(appCtx)
-		}
 	}
 	priceSource, err := selectPriceSource(cfg.Trade.PriceSource, datasource.NewDexScreenerPriceSource(cfg.Trade.DexScreener.BaseURL).WithHTTPObserver(alertMonitor), gmgnSource)
 	if err != nil {
@@ -169,6 +163,15 @@ func main() {
 	tradeService, err := trade.NewService(appCtx, cfg.Trade, tradeRepo, jupiterExecutor, priceSource, tradeOptions...)
 	if err != nil {
 		logg.Fatal().Err(err).Msg("初始化交易模块失败")
+	}
+	if candidateMonitor != nil {
+		candidateMonitor.SetRuntimePositionProvider(tradeService)
+		candidateMonitor.Start(appCtx)
+		if cfg.XXYY.Enabled {
+			xxyyClient := xxyy.NewClient(cfg.XXYY.BaseURL, cfg.XXYY.APIKey, nil).WithHTTPObserver(alertMonitor)
+			gmgnProjectClient := gmgnprojects.NewClient(cfg.GMGN.BaseURL, "", nil).WithKeyScheduler(gmgnKeyScheduler).WithHTTPObserver(alertMonitor)
+			signal.NewProjectCandidatePoller(xxyyClient, gmgnProjectClient, candidateMonitor, time.Duration(cfg.XXYY.PollIntervalSeconds)*time.Second).Start(appCtx)
+		}
 	}
 	if tradeService.Enabled() {
 		consumerChannel := cfg.Redis.ConsumerChannel

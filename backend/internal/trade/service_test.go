@@ -286,6 +286,16 @@ func (s *fakePositionStore) Get(_ context.Context, accountID string, tokenAddres
 	return position, nil
 }
 
+func (s *fakePositionStore) List(_ context.Context, accountID string) ([]model.TradePosition, error) {
+	items := make([]model.TradePosition, 0)
+	for _, position := range s.positions {
+		if position.AccountID == accountID && position.Status == model.TradePositionStatusOpen {
+			items = append(items, position)
+		}
+	}
+	return items, nil
+}
+
 func (s *fakePositionStore) Delete(_ context.Context, accountID string, tokenAddress string) error {
 	delete(s.positions, accountID+":"+tokenAddress)
 	return nil

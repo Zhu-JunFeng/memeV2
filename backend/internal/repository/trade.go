@@ -190,17 +190,17 @@ func (r *TradeRepository) InsertSignalIfAbsent(ctx context.Context, signal model
 }
 
 func (r *TradeRepository) UpdateSignalStatus(ctx context.Context, signalID string, status string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE trade_signals SET consume_status = $2 WHERE id = $1`, signalID, status)
-	return err
+	result, err := r.db.ExecContext(ctx, `UPDATE trade_signals SET consume_status = $2 WHERE id = $1`, signalID, status)
+	return requireAffectedRow(result, err)
 }
 
 func (r *TradeRepository) UpdateSignalStatusAndReason(ctx context.Context, signalID string, status string, reason string) error {
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE trade_signals
 		SET consume_status = $2,
 			reason = $3
 		WHERE id = $1`, signalID, status, reason)
-	return err
+	return requireAffectedRow(result, err)
 }
 
 func (r *TradeRepository) GetSignalByExternalID(ctx context.Context, externalID string) (model.TradeSignal, error) {
@@ -386,9 +386,9 @@ func (r *TradeRepository) CreateOrder(ctx context.Context, order model.TradeOrde
 }
 
 func (r *TradeRepository) UpdateOrderExecution(ctx context.Context, orderID string, status model.TradeOrderStatus, txHash string, requestJSON json.RawMessage, responseJSON json.RawMessage, failReason string, confirmedAt *time.Time) error {
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE trade_orders
-		SET status = $2,
+		SET status = CASE WHEN status = 'filled' THEN status ELSE $2 END,
 			submit_tx_hash = $3,
 			jupiter_request_json = COALESCE($4, jupiter_request_json),
 			jupiter_response_json = COALESCE($5, jupiter_response_json),
@@ -396,7 +396,7 @@ func (r *TradeRepository) UpdateOrderExecution(ctx context.Context, orderID stri
 			confirmed_at = $7,
 			updated_at = $8
 		WHERE id = $1`, orderID, status, txHash, nullableJSON(requestJSON), nullableJSON(responseJSON), failReason, confirmedAt, time.Now().UTC())
-	return err
+	return requireAffectedRow(result, err)
 }
 
 func (r *TradeRepository) AddOrderEvent(ctx context.Context, orderID string, eventType string, detail any) error {
@@ -427,11 +427,12 @@ func (r *TradeRepository) SaveFilledBuy(ctx context.Context, position model.Trad
 	); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE trade_orders
 		SET status = 'filled', submit_tx_hash = $2, confirmed_at = $3, fail_reason = '', updated_at = $4
 		WHERE id = $1`, order.ID, fill.TxHash, fill.ExecutedAt.UTC(), now,
-	); err != nil {
+	)
+	if err := requireAffectedRow(result, err); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -462,18 +463,20 @@ func (r *TradeRepository) SaveFilledSell(ctx context.Context, position model.Tra
 		return err
 	}
 	realized := fill.FilledQuoteAmount - position.CostAmount - fill.FeeAmount
-	if _, err := tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE trade_orders
 		SET status = 'filled', submit_tx_hash = $2, confirmed_at = $3, fail_reason = '', updated_at = $4
 		WHERE id = $1`, order.ID, fill.TxHash, fill.ExecutedAt.UTC(), now,
-	); err != nil {
+	)
+	if err := requireAffectedRow(result, err); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `
+	result, err = tx.ExecContext(ctx, `
 		UPDATE trade_positions
 		SET status = 'closed', close_order_id = $2, quantity = $3, last_price = $4, market_value = 0, realized_pnl = $5, unrealized_pnl = 0, closed_at = $6, updated_at = $7
 		WHERE id = $1`, position.ID, order.ID, fill.FilledTokenAmount, fill.AvgPrice, realized, fill.ExecutedAt.UTC(), now,
-	); err != nil {
+	)
+	if err := requireAffectedRow(result, err); err != nil {
 		return err
 	}
 	loss := realized < 0
@@ -485,12 +488,12 @@ func (r *TradeRepository) SaveFilledSell(ctx context.Context, position model.Tra
 		)
 		VALUES (
 			$1, CASE WHEN $2 THEN 1 ELSE 0 END,
-			CASE WHEN $2 THEN $3 + INTERVAL '1 hour' ELSE NULL END,
+			CASE WHEN $2 THEN $3::timestamptz + INTERVAL '1 hour' ELSE NULL END,
 			false, '', '', NULL, $4, $5, $6, $6
 		)
 		ON CONFLICT (token_address) DO UPDATE SET
 			consecutive_loss_count = CASE WHEN $2 THEN ca_blacklist.consecutive_loss_count + 1 ELSE 0 END,
-			cooldown_until = CASE WHEN $2 THEN $3 + INTERVAL '1 hour' ELSE NULL END,
+			cooldown_until = CASE WHEN $2 THEN $3::timestamptz + INTERVAL '1 hour' ELSE NULL END,
 			is_blacklisted = ca_blacklist.is_blacklisted OR ($2 AND ca_blacklist.consecutive_loss_count + 1 >= 3),
 			blacklist_reason = CASE
 				WHEN ca_blacklist.is_blacklisted THEN ca_blacklist.blacklist_reason
@@ -837,4 +840,18 @@ func enrichTradePositionMeta(item *model.TradePosition, raw []byte) {
 
 func itoa(value int) string {
 	return strconv.Itoa(value)
+}
+
+func requireAffectedRow(result sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

@@ -2,7 +2,10 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -11,6 +14,29 @@ import (
 
 	"solana-meme-backtest/backend/internal/model"
 )
+
+func TestTradeStatusUpdatesRetryWhenDependencyIsMissing(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repo := NewTradeRepository(database)
+
+	mock.ExpectExec("UPDATE trade_signals").WithArgs("signal-1", "executed").WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := repo.UpdateSignalStatus(context.Background(), "signal-1", "executed"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected missing signal to retry, got %v", err)
+	}
+	mock.ExpectExec("SET status = CASE WHEN status = 'filled' THEN status ELSE \\$2 END").
+		WithArgs("order-1", model.TradeOrderStatusSubmitted, "tx", nil, nil, "", nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := repo.UpdateOrderExecution(context.Background(), "order-1", model.TradeOrderStatusSubmitted, "tx", json.RawMessage(nil), json.RawMessage(nil), "", nil); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected missing order to retry, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestSaveFilledSellUpdatesCARiskInSameTransaction(t *testing.T) {
 	tests := []struct {
@@ -53,7 +79,7 @@ func TestSaveFilledSellUpdatesCARiskInSameTransaction(t *testing.T) {
 			mock.ExpectExec("UPDATE trade_positions").
 				WithArgs("position-1", "order-1", 100.0, 0.1, realized, executedAt, sqlmock.AnyArg()).
 				WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec("INSERT INTO ca_blacklist").
+			mock.ExpectExec(regexp.QuoteMeta("CASE WHEN $2 THEN $3::timestamptz + INTERVAL '1 hour' ELSE NULL END")).
 				WithArgs("token-1", tt.loss, executedAt, model.TradeModePaper, tt.profitRate, anyTimeArgument{}).
 				WillReturnResult(sqlmock.NewResult(1, 1))
 			mock.ExpectCommit()

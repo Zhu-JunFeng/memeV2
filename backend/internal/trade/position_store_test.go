@@ -36,6 +36,10 @@ func (c *fakeRedisHashClient) HGet(_ context.Context, _ string, field string) *r
 	return redis.NewStringResult(value, nil)
 }
 
+func (c *fakeRedisHashClient) HGetAll(_ context.Context, _ string) *redis.MapStringStringCmd {
+	return redis.NewMapStringStringResult(c.values, nil)
+}
+
 func (c *fakeRedisHashClient) HDel(_ context.Context, _ string, fields ...string) *redis.IntCmd {
 	for _, field := range fields {
 		delete(c.values, field)
@@ -63,5 +67,21 @@ func TestRedisPositionStoreSavesPositionInPersistentAccountHash(t *testing.T) {
 	}
 	if stored.Quantity != 321.5 {
 		t.Fatalf("unexpected stored position: %#v", stored)
+	}
+}
+
+func TestRedisPositionStoreListsOnlyOpenPositions(t *testing.T) {
+	openPayload, _ := json.Marshal(model.TradePosition{ID: "open", TokenAddress: "token-open", Status: model.TradePositionStatusOpen})
+	closedPayload, _ := json.Marshal(model.TradePosition{ID: "closed", TokenAddress: "token-closed", Status: model.TradePositionStatusClosed})
+	client := &fakeRedisHashClient{values: map[string]string{
+		"token-open":   string(openPayload),
+		"token-closed": string(closedPayload),
+	}}
+	positions, err := NewRedisPositionStore(client, "").List(context.Background(), "account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 || positions[0].TokenAddress != "token-open" {
+		t.Fatalf("unexpected positions: %#v", positions)
 	}
 }
