@@ -52,6 +52,11 @@ func (r *fakeRepo) GetAccountByName(context.Context, string) (model.TradeAccount
 func (r *fakeRepo) ListAccounts(context.Context) ([]model.TradeAccount, error) {
 	return []model.TradeAccount{r.account}, nil
 }
+func (r *fakeRepo) UpdateAccountBuyAmountUSD(_ context.Context, _ string, buyAmountUSD float64) (model.TradeAccount, error) {
+	r.account.BuyAmountUSD = buyAmountUSD
+	r.account.UpdatedAt = time.Now().UTC()
+	return r.account, nil
+}
 func (r *fakeRepo) GetTradeModeState(context.Context) (model.TradeMode, time.Time, error) {
 	return r.tradeMode, r.modeStartedAt, nil
 }
@@ -344,6 +349,35 @@ func TestNewServiceDefaultsTradeModeToPaper(t *testing.T) {
 	}
 	if repo.tradeMode != model.TradeModePaper || repo.setTradeModeCalls != 1 {
 		t.Fatalf("expected repo trade mode to be persisted once, got mode=%s calls=%d", repo.tradeMode, repo.setTradeModeCalls)
+	}
+}
+
+func TestUpdateBuyAmountUSDUpdatesRuntimeAccountForBothModes(t *testing.T) {
+	repo := newFakeRepo()
+	executor := &fakeExecutor{}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, executor, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	amount, err := svc.UpdateBuyAmountUSD(context.Background(), 12.5)
+	if err != nil {
+		t.Fatalf("update buy amount: %v", err)
+	}
+	if amount != 12.5 || svc.GetBuyAmountUSD() != 12.5 || repo.account.BuyAmountUSD != 12.5 {
+		t.Fatalf("buy amount was not synchronized: return=%.2f runtime=%.2f repo=%.2f", amount, svc.GetBuyAmountUSD(), repo.account.BuyAmountUSD)
+	}
+	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "configured-amount-buy", SignalType: model.TradeSignalTypeBuy,
+		StrategyCode: "test", TokenAddress: "token-configured", Interval: "1m", SignalTime: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("process configured amount buy: %v", err)
+	}
+	waitFor(t, func() bool { return len(repo.orders) == 1 })
+	if repo.orders[0].IntentAmountUSD != 12.5 || executor.lastRequest.Account.BuyAmountUSD != 12.5 {
+		t.Fatalf("configured amount was not used consistently: order=%.2f executor=%.2f", repo.orders[0].IntentAmountUSD, executor.lastRequest.Account.BuyAmountUSD)
+	}
+	if _, err := svc.UpdateBuyAmountUSD(context.Background(), 0); !errors.Is(err, ErrInvalidBuyAmountUSD) {
+		t.Fatalf("expected invalid amount error, got %v", err)
 	}
 }
 

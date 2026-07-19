@@ -84,6 +84,7 @@
   - 通过 `trade.price_source` 刷新 open position 的最新估值，当前默认 GMGN，可切换 DexScreener
   - 每次实际卖出成交后按 CA 维护连续亏损状态：亏损冷却 `1h`，连续 `3` 次亏损自动拉黑；盈利或持平清零连续亏损和冷却。模拟盘与实盘共用这套全局 CA 风控状态
   - Jupiter 报价前校验 `ca_blacklist`；冷却中的 CA 暂停买入，已拉黑 CA 禁止买入和重新进入候选池
+  - 页面可修改每笔买入金额，保存到默认交易账户；模拟盘和实盘共用，默认 `10 U`，从下一笔买入开始生效
 
 当前 Redis 信号消息结构：
 
@@ -196,7 +197,7 @@ npm run build
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：数据库尚无运行时配置时，“接收信号并执行交易”开关的首次默认值
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
-- `trade.buy_amount_sol`：固定买入数量，默认 `0.1 SOL`
+- `trade.buy_amount_usd`：首次初始化默认账户时使用的每笔买入金额，默认 `10 U`；运行后可在页面修改并持久化，模拟盘和实盘共用
 - `trade.slippage_bps`：实盘 `/order` 固定滑点保护，默认 `200`（2%）；模拟盘直接采用 Jupiter 即时报价，不额外扣减滑点
 - `trade.wallet_private_key`：Solana 钱包私钥（base58）
 - `trade.solana_rpc_url`：用于查询 token decimals 的 Solana RPC

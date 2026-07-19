@@ -417,3 +417,16 @@ CREATE INDEX idx_ca_blacklist_status_updated_at
 - 卖出成交和风控状态在同一个 PostgreSQL 事务中落库，模拟盘、实盘共同按 CA 累计。
 - `blacklist_source` 为 `auto` 或 `manual`；自动拉黑原因为连续 `3` 次卖出亏损。
 - 盈利或持平卖出会把连续亏损次数归零并清除冷却，但不会解除已存在的黑名单。
+
+## 012-每笔买入金额恢复为10U并支持运行时配置（PostgreSQL）
+
+```sql
+ALTER TABLE trade_accounts
+  ALTER COLUMN buy_amount_usd SET DEFAULT 10;
+```
+
+说明：
+
+- 默认账户的 `buy_amount_usd` 由 `20` 调整为 `10`。
+- 页面修改金额时直接更新默认交易账户记录，模拟盘和实盘共用该值。
+- `EnsureAccount` 只在首次创建默认账户时使用配置值；账户已存在时不再覆盖页面保存的 `buy_amount_usd`，因此重启后保持用户配置。

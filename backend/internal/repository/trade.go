@@ -42,7 +42,6 @@ func (r *TradeRepository) EnsureAccount(ctx context.Context, account model.Trade
 		ON CONFLICT (name) DO UPDATE SET
 			wallet_address = excluded.wallet_address,
 			status = excluded.status,
-			buy_amount_usd = excluded.buy_amount_usd,
 			buy_amount_sol = excluded.buy_amount_sol,
 			slippage_bps = excluded.slippage_bps,
 			priority_fee_lamports = excluded.priority_fee_lamports,
@@ -82,6 +81,18 @@ func (r *TradeRepository) ListAccounts(ctx context.Context) ([]model.TradeAccoun
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (r *TradeRepository) UpdateAccountBuyAmountUSD(ctx context.Context, accountID string, buyAmountUSD float64) (model.TradeAccount, error) {
+	var item model.TradeAccount
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE trade_accounts
+		SET buy_amount_usd = $2, updated_at = $3
+		WHERE id = $1
+		RETURNING id, name, wallet_address, status, buy_amount_usd, buy_amount_sol, slippage_bps, priority_fee_lamports, created_at, updated_at`,
+		accountID, buyAmountUSD, time.Now().UTC(),
+	).Scan(&item.ID, &item.Name, &item.WalletAddress, &item.Status, &item.BuyAmountUSD, &item.BuyAmountSOL, &item.SlippageBPS, &item.PriorityFeeLamports, &item.CreatedAt, &item.UpdatedAt)
+	return item, err
 }
 
 func (r *TradeRepository) GetTradeModeState(ctx context.Context) (model.TradeMode, time.Time, error) {

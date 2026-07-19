@@ -23,6 +23,7 @@ import (
 var ErrTradeDisabled = errors.New("交易模块未启用")
 var ErrTradeExecutionNotReady = errors.New("Jupiter 执行器尚未配置完成")
 var ErrInvalidTradeMode = errors.New("交易模式不合法")
+var ErrInvalidBuyAmountUSD = errors.New("单次买入金额必须大于 0")
 var ErrPositionNotOpen = errors.New("持仓已平仓或不在可平仓状态")
 var ErrPositionSellInFlight = errors.New("持仓正在卖出，请勿重复提交")
 
@@ -33,6 +34,7 @@ type Repository interface {
 	EnsureAccount(ctx context.Context, account model.TradeAccount) (model.TradeAccount, error)
 	GetAccountByName(ctx context.Context, name string) (model.TradeAccount, error)
 	ListAccounts(ctx context.Context) ([]model.TradeAccount, error)
+	UpdateAccountBuyAmountUSD(ctx context.Context, accountID string, buyAmountUSD float64) (model.TradeAccount, error)
 	GetTradeModeState(ctx context.Context) (model.TradeMode, time.Time, error)
 	SetTradeModeState(ctx context.Context, mode model.TradeMode, startedAt time.Time) error
 	GetTradeModePeriodSummary(ctx context.Context, accountID string, mode model.TradeMode, startedAt time.Time, endedAt time.Time) (model.TradeModePeriodSummary, error)
@@ -112,6 +114,7 @@ type Service struct {
 	supplyProvider  datasource.TokenSupplyProvider
 	balanceProvider datasource.WalletBalanceProvider
 	account         model.TradeAccount
+	accountMu       sync.RWMutex
 	enabled         bool
 	modeMu          sync.RWMutex
 	tradeMode       model.TradeMode
@@ -241,6 +244,34 @@ func (s *Service) ListAccounts(ctx context.Context) ([]model.TradeAccount, error
 	return s.repo.ListAccounts(ctx)
 }
 
+func (s *Service) GetBuyAmountUSD() float64 {
+	return s.currentAccount().BuyAmountUSD
+}
+
+func (s *Service) UpdateBuyAmountUSD(ctx context.Context, buyAmountUSD float64) (float64, error) {
+	if !s.enabled {
+		return 0, ErrTradeDisabled
+	}
+	if buyAmountUSD <= 0 || math.IsNaN(buyAmountUSD) || math.IsInf(buyAmountUSD, 0) {
+		return 0, ErrInvalidBuyAmountUSD
+	}
+	account := s.currentAccount()
+	updated, err := s.repo.UpdateAccountBuyAmountUSD(ctx, account.ID, buyAmountUSD)
+	if err != nil {
+		return 0, err
+	}
+	s.accountMu.Lock()
+	s.account = updated
+	s.accountMu.Unlock()
+	return updated.BuyAmountUSD, nil
+}
+
+func (s *Service) currentAccount() model.TradeAccount {
+	s.accountMu.RLock()
+	defer s.accountMu.RUnlock()
+	return s.account
+}
+
 func (s *Service) GetTradeMode() model.TradeMode {
 	s.modeMu.RLock()
 	defer s.modeMu.RUnlock()
@@ -262,7 +293,8 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 		return mode, nil
 	}
 	changedAt := time.Now().UTC()
-	summary, err := s.repo.GetTradeModePeriodSummary(ctx, s.account.ID, previousMode, startedAt, changedAt)
+	account := s.currentAccount()
+	summary, err := s.repo.GetTradeModePeriodSummary(ctx, account.ID, previousMode, startedAt, changedAt)
 	if err != nil {
 		return "", err
 	}
@@ -271,7 +303,7 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 		if s.balanceProvider == nil {
 			return "", errors.New("Solana 钱包余额查询尚未配置")
 		}
-		balance, err := s.balanceProvider.GetSOLBalance(ctx, s.account.WalletAddress)
+		balance, err := s.balanceProvider.GetSOLBalance(ctx, account.WalletAddress)
 		if err != nil {
 			return "", err
 		}
@@ -287,7 +319,7 @@ func (s *Service) UpdateTradeMode(ctx context.Context, mode model.TradeMode) (mo
 	s.notifyTradeModeChange(ctx, model.TradeModeChange{
 		PreviousMode:  previousMode,
 		CurrentMode:   mode,
-		WalletAddress: s.account.WalletAddress,
+		WalletAddress: account.WalletAddress,
 		ChangedAt:     changedAt,
 		Summary:       summary,
 		WalletBalance: walletBalance,
@@ -546,6 +578,7 @@ func (s *Service) RefreshOpenPositions(ctx context.Context) error {
 }
 
 func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (signalProcessResult, error) {
+	account := s.currentAccount()
 	if s.caRiskStore != nil {
 		risk, err := s.caRiskStore.GetCABlacklistState(ctx, signal.TokenAddress)
 		if err != nil {
@@ -564,18 +597,18 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 	mode := signal.TradeMode
 	order := model.TradeOrder{
 		ID:                uuid.NewString(),
-		AccountID:         s.account.ID,
+		AccountID:         account.ID,
 		SignalID:          signal.ID,
 		TradeMode:         mode,
 		ExecutionChannel:  executionChannelForMode(mode),
 		TokenAddress:      signal.TokenAddress,
 		Side:              model.TradeSignalTypeBuy,
-		IntentAmountUSD:   s.account.BuyAmountUSD,
+		IntentAmountUSD:   account.BuyAmountUSD,
 		IntentAmountSOL:   0,
 		IntentTokenAmount: 0,
 		Status:            model.TradeOrderStatusPending,
 	}
-	blocked, reason, err := s.rejectBuyForQuoteSlippage(ctx, signal, order)
+	blocked, reason, err := s.rejectBuyForQuoteSlippage(ctx, account, signal, order)
 	if err != nil {
 		s.finishInFlight(signal.TokenAddress)
 		return signalProcessResult{}, err
@@ -585,7 +618,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 		return signalProcessResult{status: "rejected", reason: reason}, nil
 	}
 	s.enqueueCreateOrder(order, map[string]any{"signalId": signal.SignalID})
-	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: mode})
+	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: account, Signal: signal, Order: order, Config: s.cfg, Mode: mode})
 	if err != nil {
 		s.finishInFlight(signal.TokenAddress)
 		s.enqueueOrderFailure(order.ID, err.Error())
@@ -593,7 +626,7 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 	}
 	position := model.TradePosition{
 		ID:           uuid.NewString(),
-		AccountID:    s.account.ID,
+		AccountID:    account.ID,
 		TradeMode:    mode,
 		TokenAddress: order.TokenAddress,
 		Status:       model.TradePositionStatusOpen,
@@ -628,10 +661,11 @@ func (s *Service) executeBuy(ctx context.Context, signal model.TradeSignal) (sig
 }
 
 func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, position model.TradePosition) error {
+	account := s.currentAccount()
 	mode := signal.TradeMode
 	order := model.TradeOrder{
 		ID:                uuid.NewString(),
-		AccountID:         s.account.ID,
+		AccountID:         account.ID,
 		SignalID:          signal.ID,
 		TradeMode:         mode,
 		ExecutionChannel:  executionChannelForMode(mode),
@@ -643,7 +677,7 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 		Status:            model.TradeOrderStatusPending,
 	}
 	s.enqueueCreateOrder(order, map[string]any{"positionId": position.ID})
-	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Position: &position, Config: s.cfg, Mode: mode})
+	result, err := s.executor.Execute(ctx, ExecutionRequest{Account: account, Signal: signal, Order: order, Position: &position, Config: s.cfg, Mode: mode})
 	if err != nil {
 		s.restoreOpenPosition(ctx, position)
 		s.enqueueOrderFailure(order.ID, err.Error())
@@ -678,7 +712,7 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	return nil
 }
 
-func (s *Service) rejectBuyForQuoteSlippage(ctx context.Context, signal model.TradeSignal, order model.TradeOrder) (bool, string, error) {
+func (s *Service) rejectBuyForQuoteSlippage(ctx context.Context, account model.TradeAccount, signal model.TradeSignal, order model.TradeOrder) (bool, string, error) {
 	if signal.TriggerMarketCap <= 0 || s.supplyProvider == nil {
 		return false, "", nil
 	}
@@ -691,7 +725,7 @@ func (s *Service) rejectBuyForQuoteSlippage(ctx context.Context, signal model.Tr
 	}
 	var slippageRate float64
 	for attempt := 1; attempt <= buyQuoteMaxAttempts; attempt++ {
-		quote, err := s.executor.Quote(ctx, ExecutionRequest{Account: s.account, Signal: signal, Order: order, Config: s.cfg, Mode: signal.TradeMode})
+		quote, err := s.executor.Quote(ctx, ExecutionRequest{Account: account, Signal: signal, Order: order, Config: s.cfg, Mode: signal.TradeMode})
 		if err != nil {
 			return false, "", err
 		}
@@ -721,7 +755,7 @@ func (s *Service) loadRuntimePositions(ctx context.Context) error {
 		}
 	}
 	if s.positionStore != nil {
-		stored, err := s.positionStore.List(ctx, s.account.ID)
+		stored, err := s.positionStore.List(ctx, s.currentAccount().ID)
 		if err != nil {
 			return err
 		}
@@ -737,7 +771,7 @@ func (s *Service) loadRuntimePositions(ctx context.Context) error {
 
 func (s *Service) FindRuntimePosition(ctx context.Context, tokenAddress string) (model.TradePosition, bool, error) {
 	if s.positionStore != nil {
-		position, err := s.positionStore.Get(ctx, s.account.ID, tokenAddress)
+		position, err := s.positionStore.Get(ctx, s.currentAccount().ID, tokenAddress)
 		if errors.Is(err, ErrRuntimePositionNotFound) {
 			return model.TradePosition{}, false, nil
 		}
@@ -789,7 +823,7 @@ func (s *Service) tryBeginSell(ctx context.Context, tokenAddress string) (model.
 	s.inFlight[tokenAddress] = model.TradeSignalTypeSell
 	s.runtimeMu.Unlock()
 	if s.positionStore != nil {
-		stored, err := s.positionStore.Get(ctx, s.account.ID, tokenAddress)
+		stored, err := s.positionStore.Get(ctx, s.currentAccount().ID, tokenAddress)
 		if err != nil {
 			s.finishInFlight(tokenAddress)
 			return model.TradePosition{}, false, err

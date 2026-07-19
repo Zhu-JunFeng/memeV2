@@ -432,7 +432,7 @@ Birdeye K 线专用实时突破信号入口。
 - 配置项统一使用 `alert.*`，对应环境变量前缀为 `BACKTEST_ALERT_`；旧配置 `alert.consecutive_rate_limits` 已移除。Telegram 未启用时告警模块不启动。
 - 交易模块支持全局 `paper/live` 两种模式，模式值持久化在数据库 `system_runtime_settings`
 - `paper` 模式只调用 Jupiter `quote` 报价接口，不依赖真实钱包余额，也不会签名和执行；系统会基于报价结果生成模拟成交
-- `live` 模式保持真实 Jupiter 执行；买入使用 SOL 作为输入资产，按固定 `trade.buy_amount_usd=20` 美元金额和下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单
+- `paper` 和 `live` 共用交易账户的 `buyAmountUsd` 作为每笔买入金额，默认 `10 U`；`live` 使用下单时的 SOL/USD 价格换算输入 SOL 后向 Jupiter 下单，`paper` 按相同美元金额请求 Jupiter 报价
 - 交易模块接收到买入信号后，会用同一笔买入数量调用 Jupiter `quote`，按报价均价乘当前 token supply 折算报价市值；首次与信号 `triggerMarketCap` 的绝对滑点大于 `3%` 时连续重试 3 次，任意一次回落到 `<=3%` 即继续买入，四次均超限才不创建订单并把 Signals 状态记为 `rejected`。
 - GMGN、DexScreener、Solana RPC 与 Jupiter 的外网请求均由服务器直接访问，不经过代理。
 
@@ -513,24 +513,26 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 
 ### GET /api/trade/runtime
 
-返回当前全局交易模式及运行时开关。
+返回当前全局交易模式、每笔买入金额及运行时开关。
 
 返回：
 
 - `tradeMode`：当前模式，`paper` 或 `live`
+- `buyAmountUsd`：模拟盘和实盘共用的每笔买入金额，单位 `U`
 - `caMonitoringEnabled`：是否开启 CA 获取和监控
 - `tradeExecutionEnabled`：是否接收信号并执行交易；同时作用于模拟盘和实盘
 - `options[]`：前端可直接渲染的模式选项
 
 ### PUT /api/trade/runtime
 
-部分更新并持久化全局交易模式或运行时开关。请求至少提供一个字段，未提供的字段保持不变。
+部分更新并持久化全局交易模式、每笔买入金额或运行时开关。请求至少提供一个字段，未提供的字段保持不变。
 
 请求体：
 
 ```json
 {
   "tradeMode": "paper",
+  "buyAmountUsd": 10,
   "caMonitoringEnabled": true,
   "tradeExecutionEnabled": true
 }
@@ -540,9 +542,10 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 
 - `paper`：只请求 Jupiter `quote`，不依赖真实钱包余额，也不会执行签名和链上提交
 - `live`：恢复真实下单执行
+- `buyAmountUsd`：必须大于 `0`，保存到默认交易账户；模拟盘和实盘从下一笔买入开始共同使用该金额，已有订单和持仓不变
 - `caMonitoringEnabled=false`：停止 XXYY/GMGN 项目发现、Redis CA 接收、候选池扫描及已买入候选的策略卖出检查；不删除候选池现有数据
 - `tradeExecutionEnabled=false`：信号仍会生成和发布，但 Redis 自动交易消费者不再执行信号；模拟盘和实盘都停止自动买卖，手动平仓等直接操作不受影响
-- 两个开关写入 `system_runtime_settings` 并即时生效，服务重启后保持；配置文件 `signal.candidate_monitor_enabled`、`trade.signal_consumer` 只在数据库中尚无对应配置时提供首次默认值
+- 两个开关写入 `system_runtime_settings`；每笔买入金额写入 `trade_accounts.buy_amount_usd`，均即时生效并在服务重启后保持
 - 切换后新的买入信号、订单、成交和持仓使用新的 `tradeMode`；已有持仓的自动卖出始终使用该持仓自身的 `tradeMode`。
 - 模式持久化成功后向 Telegram 发送切换通知；通知汇总从上一次模式切换到本次切换之间的成交买入、成交卖出、失败订单、已平仓胜负、实现盈亏和当前未平仓数量
 - 切换到 `live` 前通过生产 Solana RPC 查询当前交易钱包余额，查询失败则不切换；实盘切换通知额外显示实时 SOL 余额

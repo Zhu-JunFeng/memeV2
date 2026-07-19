@@ -43,6 +43,7 @@ export const useBacktestStore = defineStore("backtest", {
     strategyBacktestResult: null,
     tradeRuntime: {
       tradeMode: "paper",
+      buyAmountUsd: 10,
       caMonitoringEnabled: false,
       tradeExecutionEnabled: false,
       options: [],
@@ -140,6 +141,7 @@ export const useBacktestStore = defineStore("backtest", {
       const data = await fetchTradeRuntime();
       this.tradeRuntime = {
         tradeMode: data.tradeMode || "paper",
+        buyAmountUsd: Number(data.buyAmountUsd || 10),
         caMonitoringEnabled: Boolean(data.caMonitoringEnabled),
         tradeExecutionEnabled: Boolean(data.tradeExecutionEnabled),
         options: data.options || [],
@@ -157,6 +159,7 @@ export const useBacktestStore = defineStore("backtest", {
         this.tradeRuntime = {
           ...this.tradeRuntime,
           tradeMode: data.tradeMode || this.tradeRuntime.tradeMode,
+          buyAmountUsd: Number(data.buyAmountUsd || this.tradeRuntime.buyAmountUsd),
           caMonitoringEnabled: Boolean(data.caMonitoringEnabled),
           tradeExecutionEnabled: Boolean(data.tradeExecutionEnabled),
         };

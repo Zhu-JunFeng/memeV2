@@ -636,6 +636,7 @@ func (h *Handler) getTradeRuntime(c *gin.Context) {
 	runtimeState := h.runtimeControl.State()
 	response.OK(c, gin.H{
 		"tradeMode":             h.tradeService.GetTradeMode(),
+		"buyAmountUsd":          h.tradeService.GetBuyAmountUSD(),
 		"caMonitoringEnabled":   runtimeState.CAMonitoringEnabled,
 		"tradeExecutionEnabled": runtimeState.TradeExecutionEnabled,
 		"options": []gin.H{
@@ -647,6 +648,7 @@ func (h *Handler) getTradeRuntime(c *gin.Context) {
 
 type updateTradeRuntimeRequest struct {
 	TradeMode             *model.TradeMode `json:"tradeMode"`
+	BuyAmountUSD          *float64         `json:"buyAmountUsd"`
 	CAMonitoringEnabled   *bool            `json:"caMonitoringEnabled"`
 	TradeExecutionEnabled *bool            `json:"tradeExecutionEnabled"`
 }
@@ -657,7 +659,7 @@ func (h *Handler) updateTradeRuntime(c *gin.Context) {
 		response.Fail(c, http.StatusBadRequest, "请求参数格式错误")
 		return
 	}
-	if req.TradeMode == nil && req.CAMonitoringEnabled == nil && req.TradeExecutionEnabled == nil {
+	if req.TradeMode == nil && req.BuyAmountUSD == nil && req.CAMonitoringEnabled == nil && req.TradeExecutionEnabled == nil {
 		response.Fail(c, http.StatusBadRequest, "至少提供一个运行配置")
 		return
 	}
@@ -670,6 +672,15 @@ func (h *Handler) updateTradeRuntime(c *gin.Context) {
 		}
 		mode = updatedMode
 	}
+	buyAmountUSD := h.tradeService.GetBuyAmountUSD()
+	if req.BuyAmountUSD != nil {
+		updatedAmount, err := h.tradeService.UpdateBuyAmountUSD(c.Request.Context(), *req.BuyAmountUSD)
+		if err != nil {
+			h.handleError(c, err)
+			return
+		}
+		buyAmountUSD = updatedAmount
+	}
 	state, err := h.runtimeControl.Update(c.Request.Context(), req.CAMonitoringEnabled, req.TradeExecutionEnabled)
 	if err != nil {
 		h.handleError(c, err)
@@ -677,6 +688,7 @@ func (h *Handler) updateTradeRuntime(c *gin.Context) {
 	}
 	response.OK(c, gin.H{
 		"tradeMode":             mode,
+		"buyAmountUsd":          buyAmountUSD,
 		"caMonitoringEnabled":   state.CAMonitoringEnabled,
 		"tradeExecutionEnabled": state.TradeExecutionEnabled,
 	})
@@ -804,6 +816,8 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 	case errors.Is(err, trade.ErrTradeExecutionNotReady):
 		response.Fail(c, http.StatusBadRequest, "Jupiter 执行器尚未配置完成")
 	case errors.Is(err, trade.ErrInvalidTradeMode):
+		response.Fail(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, trade.ErrInvalidBuyAmountUSD):
 		response.Fail(c, http.StatusBadRequest, err.Error())
 	case errors.Is(err, trade.ErrPositionNotOpen):
 		response.Fail(c, http.StatusBadRequest, err.Error())

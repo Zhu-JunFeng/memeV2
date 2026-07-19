@@ -38,6 +38,29 @@ func TestTradeStatusUpdatesRetryWhenDependencyIsMissing(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountBuyAmountUSDReturnsUpdatedAccount(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Date(2026, 7, 19, 1, 2, 3, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{"id", "name", "wallet_address", "status", "buy_amount_usd", "buy_amount_sol", "slippage_bps", "priority_fee_lamports", "created_at", "updated_at"}).
+		AddRow("account-1", "default", "wallet", "active", 12.5, 0.0, 200, int64(0), now, now)
+	mock.ExpectQuery("UPDATE trade_accounts").WithArgs("account-1", 12.5, sqlmock.AnyArg()).WillReturnRows(rows)
+
+	account, err := NewTradeRepository(database).UpdateAccountBuyAmountUSD(context.Background(), "account-1", 12.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.ID != "account-1" || account.BuyAmountUSD != 12.5 {
+		t.Fatalf("unexpected account: %#v", account)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSaveFilledSellUpdatesCARiskInSameTransaction(t *testing.T) {
 	tests := []struct {
 		name        string

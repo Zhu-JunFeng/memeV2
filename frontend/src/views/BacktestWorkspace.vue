@@ -402,6 +402,30 @@
           </div>
         </div>
         <div class="trade-runtime-card">
+          <span class="trade-runtime-label">每笔买入金额</span>
+          <div class="runtime-amount-row">
+            <el-input-number
+              v-model="tradeBuyAmountUsd"
+              :min="0.01"
+              :step="1"
+              :precision="2"
+              :disabled="store.runtimeUpdating"
+              controls-position="right"
+            />
+            <span class="runtime-amount-unit">U</span>
+            <el-button
+              size="small"
+              type="primary"
+              :loading="store.runtimeUpdating"
+              @click="handleBuyAmountSave"
+              >保存</el-button
+            >
+          </div>
+          <div class="trade-runtime-hint">
+            模拟盘和实盘共用；新的买入订单从下一笔开始使用。
+          </div>
+        </div>
+        <div class="trade-runtime-card">
           <span class="trade-runtime-label">列表筛选</span>
           <el-segmented
             v-model="tradeFilterMode"
@@ -1372,6 +1396,7 @@ const strategyForm = reactive({
 });
 const tradeTab = ref("candidates");
 const tradeRuntimeMode = ref("paper");
+const tradeBuyAmountUsd = ref(10);
 const caMonitoringEnabled = ref(false);
 const tradeExecutionEnabled = ref(false);
 const tradeFilterMode = ref("all");
@@ -2005,6 +2030,22 @@ async function handleTradeExecutionChange(value) {
     if (error !== "cancel" && error !== "close") {
       ElMessage.error(error.message || "更新交易执行配置失败");
     }
+  }
+}
+
+async function handleBuyAmountSave() {
+  const amount = Number(tradeBuyAmountUsd.value);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    ElMessage.error("每笔买入金额必须大于 0");
+    return;
+  }
+  try {
+    await store.updateRuntimeConfig({ buyAmountUsd: amount });
+    tradeBuyAmountUsd.value = store.tradeRuntime.buyAmountUsd;
+    ElMessage.success(`每笔买入金额已更新为 ${amount.toFixed(2)} U`);
+  } catch (error) {
+    tradeBuyAmountUsd.value = store.tradeRuntime.buyAmountUsd;
+    ElMessage.error(error.message || "更新每笔买入金额失败");
   }
 }
 
@@ -2716,6 +2757,7 @@ onMounted(async () => {
   }, 1000);
   await Promise.all([store.loadStrategyMethods(), store.loadTradeRuntime()]);
   tradeRuntimeMode.value = store.tradeRuntime.tradeMode || "paper";
+  tradeBuyAmountUsd.value = store.tradeRuntime.buyAmountUsd || 10;
   caMonitoringEnabled.value = store.tradeRuntime.caMonitoringEnabled;
   tradeExecutionEnabled.value = store.tradeRuntime.tradeExecutionEnabled;
   await refreshTradeDashboard();
@@ -2793,6 +2835,23 @@ onUnmounted(() => {
 
 .runtime-switch-card {
   align-content: center;
+}
+
+.runtime-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.runtime-amount-row :deep(.el-input-number) {
+  width: 100%;
+}
+
+.runtime-amount-unit {
+  color: #7dd3b0;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .runtime-switch-head {
