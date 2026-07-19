@@ -194,6 +194,7 @@ npm run build
 - 候选池监控会把最新价格实时写入当前 forming bar；买点判定只使用紧贴当前 bar 的最新实时窗口，满足突破条件就立即发出买入信号；满足止盈/止损条件时发出卖出信号并进入交易执行；候选池买卖信号的 `triggerMarketCap` 使用触发当刻 CA 的实时真实市值，策略突破阈值/目标价保留在 metadata
 - 候选池实时补价只会刷新当前 forming bar 的 OHLC；`volume` 始终沿用 GMGN 返回值，若当前分钟尚无 GMGN bar，则临时补价 bar 的 `volume=0`
 - 候选池卖出后若市值仍高于阈值会 rearm，但同一根已卖出的 bar 不允许立刻重新买入
+- `bought` 候选每轮卖出判断前都会确认数据库或 Redis 仍有真实未平仓持仓；持仓已关闭时立即 rearm 或停止，不再重复发布无仓位卖出信号
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：数据库尚无运行时配置时，“接收信号并执行交易”开关的首次默认值
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值

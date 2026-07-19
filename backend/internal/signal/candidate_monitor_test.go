@@ -137,7 +137,7 @@ func TestCandidateMonitorRearmsClosedPositionWithoutSameBarReentry(t *testing.T)
 	}
 	state := candidateMonitorState{
 		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
-		EntryTime: base, EntryPrice: 10000, Level: model.PriceLevel{Price: 9800},
+		EntryTime: base, EntryPrice: 10000, EntryPriceSynced: true, Level: model.PriceLevel{Price: 9800},
 	}
 	store := newFakeCandidateStore()
 	store.states[state.TokenAddress] = state
@@ -827,6 +827,8 @@ func TestCandidateMonitorRetriesFailedSellWithoutDroppingBoughtState(t *testing.
 	}
 	monitor.signalStatus = fakeTradeSignalStatusProvider{signals: map[string]model.TradeSignal{
 		state.BuySignalID: {SignalID: state.BuySignalID, ConsumeStatus: "executed"},
+	}, positions: map[string]model.TradePosition{
+		state.BuySignalID: {TokenAddress: state.TokenAddress, Status: model.TradePositionStatusOpen, AvgCostPrice: 10},
 	}}
 	if err := monitor.processBoughtCandidate(context.Background(), stored, klines); err != nil {
 		t.Fatal(err)
