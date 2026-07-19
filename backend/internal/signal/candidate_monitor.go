@@ -38,6 +38,7 @@ const (
 	preferredMarketCapMin       = 50000
 	preferredMarketCapMax       = 200000
 	boughtCandidatePollInterval = 500 * time.Millisecond
+	buySignalAckTimeout         = 10 * time.Second
 	sellSignalAckTimeout        = 5 * time.Second
 )
 
@@ -154,6 +155,7 @@ type candidateMonitorState struct {
 	CandidateAt         time.Time
 	Status              string
 	BuySignalID         string
+	BuySignalAt         time.Time
 	SellSignalID        string
 	SellSignalAt        time.Time
 	SellAttempt         int64
@@ -1027,18 +1029,30 @@ func (m *CandidateMonitor) processWatchingCandidate(ctx context.Context, state c
 	if err != nil || !acquired {
 		return err
 	}
-	if err := m.publisher.PublishTradeSignal(ctx, message); err != nil {
-		_ = m.store.ReleaseEmission(ctx, message.SignalID)
-		return err
-	}
 	state.Status = candidateStatusBought
 	state.BuySignalID = message.SignalID
+	state.BuySignalAt = m.now()
 	state.EntryTime = decisionBar.OpenTime
 	state.EntryPrice = message.TriggerMarketCap
 	state.EntryPriceSynced = false
 	state.LastDecisionBarTime = decisionBar.OpenTime
 	state.Level = level
 	if err := m.saveState(ctx, state); err != nil {
+		_ = m.store.ReleaseEmission(ctx, message.SignalID)
+		return err
+	}
+	if err := m.publisher.PublishTradeSignal(ctx, message); err != nil {
+		_ = m.store.ReleaseEmission(ctx, message.SignalID)
+		state.Status = candidateStatusWatching
+		state.BuySignalID = ""
+		state.BuySignalAt = time.Time{}
+		state.EntryTime = time.Time{}
+		state.EntryPrice = 0
+		state.EntryPriceSynced = false
+		state.Level = model.PriceLevel{}
+		if saveErr := m.saveState(ctx, state); saveErr != nil {
+			return errors.Join(err, saveErr)
+		}
 		return err
 	}
 	log.Printf("candidate monitor published buy signal: ca=%s signalId=%s marketCap=%.2f", state.TokenAddress, message.SignalID, message.TriggerMarketCap)
@@ -1142,6 +1156,13 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 				return err
 			}
 			if !recovered {
+				if state.BuySignalAt.IsZero() || m.now().Sub(state.BuySignalAt) >= buySignalAckTimeout {
+					if err := m.store.ReleaseEmission(ctx, state.BuySignalID); err != nil {
+						return err
+					}
+					log.Printf("candidate monitor buy signal was not consumed and candidate will rearm: ca=%s signalId=%s", state.TokenAddress, state.BuySignalID)
+					return m.rearmInactiveCandidate(ctx, state, klines, candidateStatusStopped)
+				}
 				return m.saveState(ctx, state)
 			}
 			log.Printf("candidate monitor recovered missing buy signal from Redis position: ca=%s signalId=%s", state.TokenAddress, state.BuySignalID)
@@ -1150,6 +1171,7 @@ func (m *CandidateMonitor) processBoughtCandidate(ctx context.Context, state can
 			case "rejected", "failed", "skipped":
 				state.Status = candidateStatusWatching
 				state.BuySignalID = ""
+				state.BuySignalAt = time.Time{}
 				state.SellSignalID = ""
 				state.SellSignalAt = time.Time{}
 				state.SellAttempt = 0
@@ -1229,12 +1251,25 @@ func (m *CandidateMonitor) findExecutedOpenPosition(ctx context.Context, state c
 }
 
 func (m *CandidateMonitor) rearmAfterClosedPosition(ctx context.Context, state candidateMonitorState, klines []model.Kline) error {
+	return m.rearmInactiveCandidate(ctx, state, klines, candidateStatusSold)
+}
+
+func (m *CandidateMonitor) rearmInactiveCandidate(ctx context.Context, state candidateMonitorState, klines []model.Kline, lowMarketCapStatus string) error {
 	if len(klines) == 0 {
 		return errors.New("candidate monitor cannot rearm closed position without klines")
 	}
 	latestBar := klines[len(klines)-1]
+	if latestBar.MarketCapClose <= m.minMarketCapThreshold() {
+		if err := m.store.StopCandidate(ctx, state, lowMarketCapStatus); err != nil {
+			return err
+		}
+		m.publishCandidateDelete(state)
+		log.Printf("candidate monitor stopped inactive candidate below threshold: ca=%s marketCap=%.2f", state.TokenAddress, latestBar.MarketCapClose)
+		return nil
+	}
 	state.Status = candidateStatusWatching
 	state.BuySignalID = ""
+	state.BuySignalAt = time.Time{}
 	state.SellSignalID = ""
 	state.SellSignalAt = time.Time{}
 	state.SellAttempt = 0
@@ -1244,7 +1279,7 @@ func (m *CandidateMonitor) rearmAfterClosedPosition(ctx context.Context, state c
 	state.Level = model.PriceLevel{}
 	state.LastDecisionBarTime = latestBar.OpenTime
 	state.LastExitBarTime = latestBar.OpenTime
-	log.Printf("candidate monitor rearmed after position closed: ca=%s", state.TokenAddress)
+	log.Printf("candidate monitor rearmed inactive candidate: ca=%s", state.TokenAddress)
 	return m.saveState(ctx, state)
 }
 
@@ -1301,6 +1336,7 @@ func (m *CandidateMonitor) finalizeExecutedSell(ctx context.Context, state candi
 	if latest.MarketCapClose > m.minMarketCapThreshold() {
 		state.Status = candidateStatusWatching
 		state.BuySignalID = ""
+		state.BuySignalAt = time.Time{}
 		state.EntryTime = time.Time{}
 		state.EntryPrice = 0
 		state.EntryPriceSynced = false
@@ -1661,6 +1697,7 @@ func encodeCandidateState(state candidateMonitorState) (map[string]any, error) {
 		"candidateAt":         strconv.FormatInt(state.CandidateAt.UnixMilli(), 10),
 		"status":              state.Status,
 		"buySignalId":         state.BuySignalID,
+		"buySignalAt":         strconv.FormatInt(state.BuySignalAt.UnixMilli(), 10),
 		"sellSignalId":        state.SellSignalID,
 		"sellSignalAt":        strconv.FormatInt(state.SellSignalAt.UnixMilli(), 10),
 		"sellAttempt":         strconv.FormatInt(state.SellAttempt, 10),
@@ -1714,6 +1751,15 @@ func decodeCandidateState(fields map[string]string) (candidateMonitorState, erro
 		}
 		if value > 0 {
 			state.EntryTime = time.UnixMilli(value).UTC()
+		}
+	}
+	if fields["buySignalAt"] != "" {
+		value, err := strconv.ParseInt(fields["buySignalAt"], 10, 64)
+		if err != nil {
+			return candidateMonitorState{}, err
+		}
+		if value > 0 {
+			state.BuySignalAt = time.UnixMilli(value).UTC()
 		}
 	}
 	if fields["sellSignalAt"] != "" {

@@ -705,6 +705,7 @@ func (s *Service) executeSell(ctx context.Context, signal model.TradeSignal, pos
 	if s.positionStore != nil {
 		if err := s.positionStore.Delete(ctx, position.AccountID, position.TokenAddress); err != nil {
 			log.Printf("delete filled Redis position failed: ca=%s err=%v", position.TokenAddress, err)
+			s.enqueueRuntimePositionDelete(position)
 		}
 	}
 	s.finishInFlight(signal.TokenAddress)
@@ -759,7 +760,17 @@ func (s *Service) loadRuntimePositions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		items = append(items, stored...)
+		for _, position := range stored {
+			persisted, err := s.repo.GetPosition(ctx, position.ID)
+			if err == nil && persisted.Status != model.TradePositionStatusOpen {
+				if err := s.positionStore.Delete(ctx, position.AccountID, position.TokenAddress); err != nil {
+					return err
+				}
+				log.Printf("removed stale closed Redis position during startup: ca=%s positionId=%s", position.TokenAddress, position.ID)
+				continue
+			}
+			items = append(items, position)
+		}
 	}
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
@@ -938,6 +949,18 @@ func (s *Service) enqueueOrderFailure(orderID string, reason string) {
 			}
 			s.publishOrder(ctx, orderID)
 			return nil
+		},
+	})
+}
+
+func (s *Service) enqueueRuntimePositionDelete(position model.TradePosition) {
+	if s.positionStore == nil {
+		return
+	}
+	s.persister.Enqueue(persistTask{
+		name: "delete_runtime_position",
+		run: func(ctx context.Context) error {
+			return s.positionStore.Delete(ctx, position.AccountID, position.TokenAddress)
 		},
 	})
 }

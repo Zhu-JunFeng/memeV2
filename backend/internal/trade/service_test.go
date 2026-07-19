@@ -271,7 +271,9 @@ func (s *fakeCARiskStore) GetCABlacklistState(_ context.Context, tokenAddress st
 }
 
 type fakePositionStore struct {
-	positions map[string]model.TradePosition
+	positions      map[string]model.TradePosition
+	deleteCalls    int
+	deleteFailures int
 }
 
 func newFakePositionStore() *fakePositionStore {
@@ -302,6 +304,11 @@ func (s *fakePositionStore) List(_ context.Context, accountID string) ([]model.T
 }
 
 func (s *fakePositionStore) Delete(_ context.Context, accountID string, tokenAddress string) error {
+	s.deleteCalls++
+	if s.deleteFailures > 0 {
+		s.deleteFailures--
+		return errors.New("temporary Redis delete failure")
+	}
 	delete(s.positions, accountID+":"+tokenAddress)
 	return nil
 }
@@ -651,6 +658,59 @@ func TestProcessSellSignalUsesLatestRedisPositionQuantity(t *testing.T) {
 	}
 	if _, ok := store.positions[repo.account.ID+":"+databasePosition.TokenAddress]; ok {
 		t.Fatal("expected successful sell to delete Redis position")
+	}
+}
+
+func TestSuccessfulSellRetriesFailedRuntimePositionDelete(t *testing.T) {
+	repo := newFakeRepo()
+	position := model.TradePosition{
+		ID: "pos-1", AccountID: repo.account.ID, TradeMode: model.TradeModePaper,
+		TokenAddress: "token-a", Status: model.TradePositionStatusOpen, Quantity: 100, CostAmount: 10,
+	}
+	repo.positions[repo.account.ID+":"+position.TokenAddress] = position
+	repo.positionByID[position.ID] = position
+	store := newFakePositionStore()
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil, WithPositionStore(store))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	store.deleteFailures = 1
+
+	if _, err := svc.ProcessSignal(context.Background(), model.TradeSignalMessage{
+		SignalID: "sell-1", SignalType: model.TradeSignalTypeSell,
+		TokenAddress: position.TokenAddress, SignalTime: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("process sell signal: %v", err)
+	}
+	waitFor(t, func() bool {
+		_, exists := store.positions[repo.account.ID+":"+position.TokenAddress]
+		return store.deleteCalls >= 2 && !exists
+	})
+}
+
+func TestNewServiceRemovesClosedPositionLeftInRuntimeStore(t *testing.T) {
+	repo := newFakeRepo()
+	position := model.TradePosition{
+		ID: "pos-closed", AccountID: repo.account.ID, TradeMode: model.TradeModeLive,
+		TokenAddress: "token-stale", Status: model.TradePositionStatusOpen, Quantity: 100,
+	}
+	closed := position
+	closed.Status = model.TradePositionStatusClosed
+	repo.positionByID[position.ID] = closed
+	store := newFakePositionStore()
+	if err := store.Save(context.Background(), position); err != nil {
+		t.Fatal(err)
+	}
+
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil, WithPositionStore(store))
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if _, exists := store.positions[repo.account.ID+":"+position.TokenAddress]; exists {
+		t.Fatal("expected stale closed Redis position to be deleted during startup")
+	}
+	if _, found, err := svc.FindRuntimePosition(context.Background(), position.TokenAddress); err != nil || found {
+		t.Fatalf("expected stale closed position to stay out of runtime state, found=%v err=%v", found, err)
 	}
 }
 

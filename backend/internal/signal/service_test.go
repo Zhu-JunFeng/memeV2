@@ -23,6 +23,7 @@ type capturePublisher struct {
 	interval     string
 	signals      []backtest.RealtimeScenarioSignal
 	tradeSignals []model.TradeSignalMessage
+	beforeTrade  func(model.TradeSignalMessage)
 }
 
 func (c *capturePublisher) PublishRealtimeSignals(_ context.Context, tokenAddress string, interval string, signals []backtest.RealtimeScenarioSignal) error {
@@ -33,6 +34,9 @@ func (c *capturePublisher) PublishRealtimeSignals(_ context.Context, tokenAddres
 }
 
 func (c *capturePublisher) PublishTradeSignal(_ context.Context, message model.TradeSignalMessage) error {
+	if c.beforeTrade != nil {
+		c.beforeTrade(message)
+	}
 	c.tradeSignals = append(c.tradeSignals, message)
 	return nil
 }

@@ -195,6 +195,8 @@ npm run build
 - 候选池实时补价只会刷新当前 forming bar 的 OHLC；`volume` 始终沿用 GMGN 返回值，若当前分钟尚无 GMGN bar，则临时补价 bar 的 `volume=0`
 - 候选池卖出后若市值仍高于阈值会 rearm，但同一根已卖出的 bar 不允许立刻重新买入
 - `bought` 候选每轮卖出判断前都会确认数据库或 Redis 仍有真实未平仓持仓；持仓已关闭时立即 rearm 或停止，不再重复发布无仓位卖出信号
+- 候选在发布买入信号前先持久化待确认状态；买入信号 10 秒内未被消费且 Redis 也没有实际持仓时自动解除 `bought`，避免候选永久卡死
+- 卖出成交后的 Redis 持仓删除失败会自动重试；服务启动时会剔除数据库已确认关闭的 Redis 残留持仓，避免重启后复活已平仓仓位
 - `trade.enabled`：是否启用交易模块
 - `trade.signal_consumer`：数据库尚无运行时配置时，“接收信号并执行交易”开关的首次默认值
 - `trade.price_sync_enabled`：是否定时刷新 open positions 估值
