@@ -132,17 +132,17 @@ func (p fakeTradeSignalStatusProvider) GetOpenPositionBySignalID(_ context.Conte
 func TestCandidateMonitorRearmsClosedPositionWithoutSameBarReentry(t *testing.T) {
 	base := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
 	klines := []model.Kline{
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10200, MarketCapLow: 9900, MarketCapClose: 10100},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10100, MarketCapHigh: 10300, MarketCapLow: 10000, MarketCapClose: 10200},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 20000, MarketCapHigh: 20400, MarketCapLow: 19800, MarketCapClose: 20200},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 20200, MarketCapHigh: 20600, MarketCapLow: 20000, MarketCapClose: 20400},
 	}
 	state := candidateMonitorState{
 		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
-		EntryTime: base, EntryPrice: 10000, EntryPriceSynced: true, Level: model.PriceLevel{Price: 9800},
+		EntryTime: base, EntryPrice: 20000, EntryPriceSynced: true, Level: model.PriceLevel{Price: 19600},
 	}
 	store := newFakeCandidateStore()
 	store.states[state.TokenAddress] = state
 	pub := &capturePublisher{}
-	monitor := testCandidateMonitor(store, klines, map[string][]float64{"token-a": {10200}}, base.Add(2*time.Minute+30*time.Second), pub)
+	monitor := testCandidateMonitor(store, klines, map[string][]float64{"token-a": {20400}}, base.Add(2*time.Minute+30*time.Second), pub)
 	monitor.signalStatus = fakeTradeSignalStatusProvider{
 		signals:        map[string]model.TradeSignal{"buy-1": {SignalID: "buy-1", ConsumeStatus: "executed"}},
 		positionErrors: map[string]error{"buy-1": sql.ErrNoRows},
@@ -535,7 +535,7 @@ func TestCandidateMonitorSkipsSameBarReentryAfterSell(t *testing.T) {
 
 func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 	base := time.Date(2026, 6, 29, 11, 0, 0, 0, time.UTC)
-	entry := model.LevelAnchorPoint{Time: base, Price: 10000}
+	entry := model.LevelAnchorPoint{Time: base, Price: 20000}
 	state := candidateMonitorState{
 		TokenAddress: "token-a",
 		RunID:        "run-1",
@@ -543,18 +543,18 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		BuySignalID:  "buy-1",
 		CandidateAt:  base.Add(-time.Minute),
 		EntryTime:    base,
-		EntryPrice:   10000,
+		EntryPrice:   20000,
 		RawPayload:   json.RawMessage(`{"event":"candidate_score_passed"}`),
-		Level:        model.PriceLevel{Price: 9800, Upper: 9800, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
+		Level:        model.PriceLevel{Price: 19600, Upper: 19600, Breakout: &model.BreakoutSetup{BuyPoint: &entry, BreakoutPoint: &entry}},
 	}
 	preloaded := []model.Kline{
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 10000, MarketCapHigh: 10100, MarketCapLow: 9900, MarketCapClose: 10000, Volume: 100},
-		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 10000, MarketCapHigh: 11000, MarketCapLow: 9950, MarketCapClose: 10800, Volume: 120},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base, CloseTime: base.Add(time.Minute), MarketCapOpen: 20000, MarketCapHigh: 20200, MarketCapLow: 19800, MarketCapClose: 20000, Volume: 100},
+		{TokenAddress: "token-a", Interval: "1m", OpenTime: base.Add(time.Minute), CloseTime: base.Add(2 * time.Minute), MarketCapOpen: 20000, MarketCapHigh: 22000, MarketCapLow: 19900, MarketCapClose: 21600, Volume: 120},
 	}
 	store := newFakeCandidateStore()
 	pub := &capturePublisher{}
 	now := base.Add(2*time.Minute + 30*time.Second)
-	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {10.9}}, now, pub)
+	monitor := testCandidateMonitor(store, preloaded, map[string][]float64{"token-a": {21.8}}, now, pub)
 	monitor.supplyProvider = fakeSupplyProvider{supply: 1000}
 	monitor.cfg.SupplyProvider = fakeSupplyProvider{supply: 1000}
 	store.states[state.TokenAddress] = state
@@ -570,7 +570,7 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 	if signal.SignalType != model.TradeSignalTypeSell || signal.StrategyCode != strategyBreakoutFollow {
 		t.Fatalf("unexpected sell signal: %#v", signal)
 	}
-	if signal.TriggerMarketCap != 10900 {
+	if signal.TriggerMarketCap != 21800 {
 		t.Fatalf("expected sell signal to use realtime market cap, got %.2f", signal.TriggerMarketCap)
 	}
 	var payload map[string]any
@@ -578,11 +578,11 @@ func TestCandidateMonitorPublishesSellAfterTakeProfit(t *testing.T) {
 		t.Fatalf("unmarshal sell metadata: %v", err)
 	}
 	exitPoint := payload["exitPoint"].(map[string]any)
-	if exitPoint["marketCap"].(float64) != 10900 {
+	if exitPoint["marketCap"].(float64) != 21800 {
 		t.Fatalf("expected realtime exit point, got %#v", exitPoint)
 	}
 	strategyExitPoint := payload["strategyExitPoint"].(map[string]any)
-	if strategyExitPoint["marketCap"].(float64) != 10800 {
+	if strategyExitPoint["marketCap"].(float64) != 21600 {
 		t.Fatalf("expected strategy exit point to use the default 8%% take profit, got %#v", strategyExitPoint)
 	}
 	stored := store.states["token-a"]
@@ -787,13 +787,32 @@ func TestCandidateMonitorStopsClosedPositionBelowMarketCapThreshold(t *testing.T
 		signals:        map[string]model.TradeSignal{state.BuySignalID: {SignalID: state.BuySignalID, ConsumeStatus: "executed"}},
 		positionErrors: map[string]error{state.BuySignalID: sql.ErrNoRows},
 	}
-	klines := []model.Kline{{TokenAddress: state.TokenAddress, OpenTime: base, MarketCapClose: monitorMinMarketCap}}
+	klines := []model.Kline{{TokenAddress: state.TokenAddress, OpenTime: base, MarketCapClose: monitorMinMarketCap - 1}}
 
 	if err := monitor.processBoughtCandidate(context.Background(), state, klines); err != nil {
 		t.Fatal(err)
 	}
 	if store.stopped[state.TokenAddress] != candidateStatusSold {
 		t.Fatalf("expected closed low-market-cap candidate to stop, got %#v", store.stopped)
+	}
+}
+
+func TestCandidateMonitorRearmsClosedPositionAtMarketCapThreshold(t *testing.T) {
+	base := time.Date(2026, 7, 19, 11, 0, 0, 0, time.UTC)
+	state := candidateMonitorState{
+		TokenAddress: "token-a", Status: candidateStatusBought, BuySignalID: "buy-1",
+		EntryTime: base, EntryPrice: 16000, EntryPriceSynced: true,
+	}
+	store := newFakeCandidateStore()
+	store.states[state.TokenAddress] = state
+	monitor := testCandidateMonitor(store, nil, nil, base.Add(time.Minute), &capturePublisher{})
+	klines := []model.Kline{{TokenAddress: state.TokenAddress, OpenTime: base, MarketCapClose: monitorMinMarketCap}}
+
+	if err := monitor.rearmAfterClosedPosition(context.Background(), state, klines); err != nil {
+		t.Fatal(err)
+	}
+	if stored := store.states[state.TokenAddress]; stored.Status != candidateStatusWatching {
+		t.Fatalf("expected threshold candidate to rearm, got %#v", stored)
 	}
 }
 
@@ -1298,8 +1317,8 @@ func TestCandidateMonitorTrimPrefersMarketCapBand(t *testing.T) {
 
 func TestCandidateMonitorTrimRemovesKnownMarketCapBelowThreshold(t *testing.T) {
 	store := newFakeCandidateStore()
-	store.states["low"] = candidateMonitorState{TokenAddress: "low", Status: candidateStatusWatching, CurrentPrice: 9999}
-	store.states["kept"] = candidateMonitorState{TokenAddress: "kept", Status: candidateStatusWatching, CurrentPrice: 10000}
+	store.states["low"] = candidateMonitorState{TokenAddress: "low", Status: candidateStatusWatching, CurrentPrice: 14999}
+	store.states["kept"] = candidateMonitorState{TokenAddress: "kept", Status: candidateStatusWatching, CurrentPrice: 15000}
 	monitor := testCandidateMonitor(store, nil, nil, time.Now().UTC(), &capturePublisher{})
 	if err := monitor.TrimCandidatePool(context.Background()); err != nil {
 		t.Fatal(err)
@@ -1309,6 +1328,17 @@ func TestCandidateMonitorTrimRemovesKnownMarketCapBelowThreshold(t *testing.T) {
 	}
 	if _, ok := store.states["kept"]; !ok {
 		t.Fatal("expected threshold candidate to be retained")
+	}
+}
+
+func TestCandidateMonitorRemovalThresholdCannotBeConfiguredBelow15K(t *testing.T) {
+	monitor := &CandidateMonitor{cfg: CandidateMonitorConfig{MinMarketCap: 10000}}
+	if got := monitor.minMarketCapThreshold(); got != 15000 {
+		t.Fatalf("expected 15k minimum removal threshold, got %.2f", got)
+	}
+	monitor.cfg.MinMarketCap = 20000
+	if got := monitor.minMarketCapThreshold(); got != 20000 {
+		t.Fatalf("expected higher configured threshold, got %.2f", got)
 	}
 }
 

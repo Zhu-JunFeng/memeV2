@@ -172,7 +172,7 @@ func Load() (Config, error) {
 	v.SetDefault("signal.candidate_channel", "solana_scalper:candidate_pool")
 	v.SetDefault("signal.poll_interval_seconds", 2)
 	v.SetDefault("signal.interval", "1m")
-	v.SetDefault("signal.min_market_cap", 10000)
+	v.SetDefault("signal.min_market_cap", 15000)
 	v.SetDefault("signal.lookback_bars", 120)
 	v.SetDefault("signal.redis_key_prefix", "solana_meme_v2:signal_monitor")
 	v.SetDefault("trade.enabled", false)

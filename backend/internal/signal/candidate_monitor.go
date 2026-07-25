@@ -33,7 +33,7 @@ const (
 	monitorIncrementalBars      = 5
 	candidatePollWorkers        = 16
 	candidateEntryMinMarketCap  = 15000
-	monitorMinMarketCap         = 10000
+	monitorMinMarketCap         = 15000
 	candidatePoolLimit          = 50
 	preferredMarketCapMin       = 50000
 	preferredMarketCapMax       = 200000
@@ -1259,7 +1259,7 @@ func (m *CandidateMonitor) rearmInactiveCandidate(ctx context.Context, state can
 		return errors.New("candidate monitor cannot rearm closed position without klines")
 	}
 	latestBar := klines[len(klines)-1]
-	if latestBar.MarketCapClose <= m.minMarketCapThreshold() {
+	if latestBar.MarketCapClose < m.minMarketCapThreshold() {
 		if err := m.store.StopCandidate(ctx, state, lowMarketCapStatus); err != nil {
 			return err
 		}
@@ -1333,7 +1333,7 @@ func (m *CandidateMonitor) finalizeExecutedSell(ctx context.Context, state candi
 	state.SellSignalID = ""
 	state.SellSignalAt = time.Time{}
 	state.SellAttempt = 0
-	if latest.MarketCapClose > m.minMarketCapThreshold() {
+	if latest.MarketCapClose >= m.minMarketCapThreshold() {
 		state.Status = candidateStatusWatching
 		state.BuySignalID = ""
 		state.BuySignalAt = time.Time{}
@@ -1571,7 +1571,7 @@ func preferMarketCap(marketCap float64, fallback float64) float64 {
 }
 
 func (m *CandidateMonitor) minMarketCapThreshold() float64 {
-	if m != nil && m.cfg.MinMarketCap > 0 {
+	if m != nil && m.cfg.MinMarketCap > monitorMinMarketCap {
 		return m.cfg.MinMarketCap
 	}
 	return monitorMinMarketCap
