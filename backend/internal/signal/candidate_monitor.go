@@ -34,7 +34,7 @@ const (
 	candidatePollWorkers        = 16
 	candidateEntryMinMarketCap  = 15000
 	monitorMinMarketCap         = 15000
-	candidatePoolLimit          = 50
+	candidatePoolLimit          = 40
 	preferredMarketCapMin       = 50000
 	preferredMarketCapMax       = 200000
 	boughtCandidatePollInterval = 500 * time.Millisecond

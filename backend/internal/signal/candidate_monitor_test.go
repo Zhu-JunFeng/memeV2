@@ -1253,6 +1253,12 @@ func TestCandidateMonitorRejectsNewCandidateWhenPoolIsFull(t *testing.T) {
 	}
 }
 
+func TestCandidatePoolLimitIs40(t *testing.T) {
+	if candidatePoolLimit != 40 {
+		t.Fatalf("expected candidate pool limit 40, got %d", candidatePoolLimit)
+	}
+}
+
 func TestCandidateMonitorReplacesLowerPriorityWatchingCandidateWhenPoolIsFull(t *testing.T) {
 	store := newFakeCandidateStore()
 	base := time.Now().UTC()
@@ -1308,7 +1314,10 @@ func TestCandidateMonitorTrimPrefersMarketCapBand(t *testing.T) {
 	if len(store.states) != candidatePoolLimit {
 		t.Fatalf("expected %d candidates, got %d", candidatePoolLimit, len(store.states))
 	}
-	for _, address := range []string{"token-50", "token-51"} {
+	for _, address := range []string{
+		fmt.Sprintf("token-%02d", candidatePoolLimit),
+		fmt.Sprintf("token-%02d", candidatePoolLimit+1),
+	} {
 		if _, ok := store.states[address]; !ok {
 			t.Fatalf("expected preferred candidate %s to be retained", address)
 		}
