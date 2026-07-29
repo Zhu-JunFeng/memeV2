@@ -14,6 +14,7 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/google/uuid"
 
+	"solana-meme-backtest/backend/internal/apptime"
 	"solana-meme-backtest/backend/internal/config"
 	"solana-meme-backtest/backend/internal/datasource"
 	"solana-meme-backtest/backend/internal/eventbus"
@@ -45,6 +46,7 @@ type Repository interface {
 	GetSignalBySignalID(ctx context.Context, signalID string) (model.TradeSignal, error)
 	ListSignals(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeSignal, error)
 	ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error)
+	ListDailyStats(ctx context.Context, tradeMode model.TradeMode, startTime time.Time, endTime time.Time) ([]model.TradeDailyStatsItem, error)
 	CreateOrder(ctx context.Context, order model.TradeOrder) (model.TradeOrder, error)
 	UpdateOrderExecution(ctx context.Context, orderID string, status model.TradeOrderStatus, txHash string, requestJSON json.RawMessage, responseJSON json.RawMessage, failReason string, confirmedAt *time.Time) error
 	AddOrderEvent(ctx context.Context, orderID string, eventType string, detail any) error
@@ -341,6 +343,13 @@ func (s *Service) GetSignalBySignalID(ctx context.Context, signalID string) (mod
 
 func (s *Service) ListTradeSummaries(ctx context.Context) ([]model.TradeSummaryItem, error) {
 	return s.repo.ListTradeSummaries(ctx)
+}
+
+func (s *Service) ListDailyStats(ctx context.Context, tradeMode model.TradeMode, days int) ([]model.TradeDailyStatsItem, error) {
+	now := time.Now().In(apptime.Beijing)
+	endTime := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, apptime.Beijing)
+	startTime := endTime.AddDate(0, 0, -days)
+	return s.repo.ListDailyStats(ctx, normalizeTradeModeFilter(tradeMode), startTime, endTime)
 }
 
 func (s *Service) ListOrders(ctx context.Context, tradeMode model.TradeMode, limit int) ([]model.TradeOrder, error) {

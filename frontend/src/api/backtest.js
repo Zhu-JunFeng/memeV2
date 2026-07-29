@@ -46,6 +46,10 @@ export function listTradeSummary() {
   return http.get("/trade/summary");
 }
 
+export function listTradeDailyStats(params) {
+  return http.get("/trade/daily-stats", { params });
+}
+
 export function listTradeSignals(params) {
   return http.get("/trade/signals", { params });
 }

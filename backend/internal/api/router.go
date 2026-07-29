@@ -75,6 +75,7 @@ func NewRouter(backtestService *backtest.Service, signalService *signal.Service,
 	api.GET("/trade/runtime", h.getTradeRuntime)
 	api.PUT("/trade/runtime", h.updateTradeRuntime)
 	api.GET("/trade/summary", h.listTradeSummary)
+	api.GET("/trade/daily-stats", h.listTradeDailyStats)
 	api.GET("/trade/signals", h.listTradeSignals)
 	api.GET("/trade/signals/:id", h.getTradeSignal)
 	api.GET("/trade/signals/by-signal-id/:signalId", h.getTradeSignalBySignalID)
@@ -734,6 +735,25 @@ func (h *Handler) listTradeSummary(c *gin.Context) {
 	response.OK(c, gin.H{"items": items})
 }
 
+func (h *Handler) listTradeDailyStats(c *gin.Context) {
+	mode, ok := parseTradeModeValue(c.DefaultQuery("tradeMode", string(model.TradeModePaper)))
+	if !ok {
+		responseBadTradeMode(c)
+		return
+	}
+	days, ok := parseDays(c.Query("days"), 5, 90)
+	if !ok {
+		response.Fail(c, http.StatusBadRequest, "days 必须为 1-90 的整数")
+		return
+	}
+	items, err := h.tradeService.ListDailyStats(c.Request.Context(), mode, days)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": items, "days": days})
+}
+
 func (h *Handler) listTradeOrders(c *gin.Context) {
 	mode, ok := parseTradeModeFilter(c)
 	if !ok {
@@ -858,6 +878,17 @@ func parseLimit(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func parseDays(value string, fallback int, max int) (int, bool) {
+	if value == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 || parsed > max {
+		return 0, false
+	}
+	return parsed, true
 }
 
 func parseTradeModeFilter(c *gin.Context) (model.TradeMode, bool) {

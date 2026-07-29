@@ -191,6 +191,35 @@ type TradeSummaryItem struct {
 	UpdatedAt           *time.Time `json:"updatedAt,omitempty"`
 }
 
+type TradeDailyStatsItem struct {
+	Date                string     `json:"date"`
+	TradeMode           TradeMode  `json:"tradeMode"`
+	SignalCount         int        `json:"signalCount"`
+	BuySignalCount      int        `json:"buySignalCount"`
+	SellSignalCount     int        `json:"sellSignalCount"`
+	ExecutedSignalCount int        `json:"executedSignalCount"`
+	SkippedSignalCount  int        `json:"skippedSignalCount"`
+	RejectedSignalCount int        `json:"rejectedSignalCount"`
+	OrderCount          int        `json:"orderCount"`
+	BuyOrderCount       int        `json:"buyOrderCount"`
+	SellOrderCount      int        `json:"sellOrderCount"`
+	FilledOrderCount    int        `json:"filledOrderCount"`
+	FailedOrderCount    int        `json:"failedOrderCount"`
+	PendingOrderCount   int        `json:"pendingOrderCount"`
+	SubmittedOrderCount int        `json:"submittedOrderCount"`
+	OpenedPositionCount int        `json:"openedPositionCount"`
+	ClosedPositionCount int        `json:"closedPositionCount"`
+	WinCount            int        `json:"winCount"`
+	LossCount           int        `json:"lossCount"`
+	NeutralCount        int        `json:"neutralCount"`
+	WinRate             float64    `json:"winRate"`
+	RealizedPNL         float64    `json:"realizedPnl"`
+	AveragePNL          float64    `json:"averagePnl"`
+	BestPNL             float64    `json:"bestPnl"`
+	WorstPNL            float64    `json:"worstPnl"`
+	LastActivityAt      *time.Time `json:"lastActivityAt,omitempty"`
+}
+
 type TradeOrderEvent struct {
 	ID         string          `json:"id"`
 	OrderID    string          `json:"orderId"`

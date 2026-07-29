@@ -198,3 +198,55 @@ func TestGetOpenPositionScansBasicPositionColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestListDailyStats(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	start := time.Date(2026, 7, 25, 0, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	end := start.AddDate(0, 0, 5)
+	last := time.Date(2026, 7, 29, 9, 6, 56, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"stat_date", "trade_mode", "signal_count", "buy_signal_count", "sell_signal_count",
+		"executed_signal_count", "skipped_signal_count", "rejected_signal_count",
+		"order_count", "buy_order_count", "sell_order_count", "filled_order_count",
+		"failed_order_count", "pending_order_count", "submitted_order_count",
+		"opened_position_count", "closed_position_count", "win_count", "loss_count",
+		"neutral_count", "realized_pnl", "average_pnl", "best_pnl", "worst_pnl",
+		"last_activity_at",
+	}).AddRow(
+		"2026-07-29", "paper", 4, 2, 2,
+		4, 0, 0,
+		4, 2, 2, 4,
+		0, 0, 0,
+		2, 4, 3, 1,
+		0, 1.25, 0.3125, 0.8, -0.2,
+		last,
+	)
+
+	mock.ExpectQuery(regexp.QuoteMeta("WITH days AS")).
+		WithArgs(string(model.TradeModePaper), start.UTC(), end.UTC()).
+		WillReturnRows(rows)
+
+	items, err := NewTradeRepository(db).ListDailyStats(context.Background(), model.TradeModePaper, start, end)
+	if err != nil {
+		t.Fatalf("list daily stats: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 stat row, got %d", len(items))
+	}
+	if items[0].Date != "2026-07-29" || items[0].TradeMode != model.TradeModePaper {
+		t.Fatalf("unexpected identity fields: %#v", items[0])
+	}
+	if items[0].ClosedPositionCount != 4 || items[0].WinRate != 0.75 || items[0].RealizedPNL != 1.25 {
+		t.Fatalf("unexpected pnl fields: %#v", items[0])
+	}
+	if items[0].LastActivityAt == nil || items[0].LastActivityAt.Location().String() != "Asia/Shanghai" {
+		t.Fatalf("expected Beijing last activity, got %#v", items[0].LastActivityAt)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}

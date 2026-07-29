@@ -21,6 +21,10 @@ type fakeRepo struct {
 	modeStartedAt     time.Time
 	periodSummary     model.TradeModePeriodSummary
 	summaries         []model.TradeSummaryItem
+	dailyStats        []model.TradeDailyStatsItem
+	dailyStatsMode    model.TradeMode
+	dailyStatsStart   time.Time
+	dailyStatsEnd     time.Time
 	signals           []model.TradeSignal
 	orders            []model.TradeOrder
 	positions         map[string]model.TradePosition
@@ -118,6 +122,12 @@ func (r *fakeRepo) GetSignalBySignalID(_ context.Context, signalID string) (mode
 }
 func (r *fakeRepo) ListTradeSummaries(context.Context) ([]model.TradeSummaryItem, error) {
 	return append([]model.TradeSummaryItem(nil), r.summaries...), nil
+}
+func (r *fakeRepo) ListDailyStats(_ context.Context, tradeMode model.TradeMode, startTime time.Time, endTime time.Time) ([]model.TradeDailyStatsItem, error) {
+	r.dailyStatsMode = tradeMode
+	r.dailyStatsStart = startTime
+	r.dailyStatsEnd = endTime
+	return append([]model.TradeDailyStatsItem(nil), r.dailyStats...), nil
 }
 func (r *fakeRepo) ListSignals(context.Context, model.TradeMode, int) ([]model.TradeSignal, error) {
 	return r.signals, nil
@@ -854,5 +864,30 @@ func TestListTradeSummaries(t *testing.T) {
 	}
 	if items[0].TotalPNL != 12.5 || items[2].TradeMode != model.TradeModeLive {
 		t.Fatalf("unexpected summaries: %#v", items)
+	}
+}
+
+func TestListDailyStatsNormalizesModeAndUsesBeijingDays(t *testing.T) {
+	repo := newFakeRepo()
+	repo.dailyStats = []model.TradeDailyStatsItem{{Date: "2026-07-29", TradeMode: model.TradeModePaper, RealizedPNL: 1.5}}
+	svc, err := NewService(context.Background(), testTradeConfig(t), repo, &fakeExecutor{}, nil)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	items, err := svc.ListDailyStats(context.Background(), model.TradeModePaper, 5)
+	if err != nil {
+		t.Fatalf("list daily stats: %v", err)
+	}
+	if len(items) != 1 || items[0].RealizedPNL != 1.5 {
+		t.Fatalf("unexpected daily stats: %#v", items)
+	}
+	if repo.dailyStatsMode != model.TradeModePaper {
+		t.Fatalf("expected paper mode, got %s", repo.dailyStatsMode)
+	}
+	if repo.dailyStatsStart.Location() != repo.dailyStatsEnd.Location() || repo.dailyStatsStart.Location().String() != "Asia/Shanghai" {
+		t.Fatalf("expected Beijing day bounds, got %s - %s", repo.dailyStatsStart.Location(), repo.dailyStatsEnd.Location())
+	}
+	if repo.dailyStatsEnd.Sub(repo.dailyStatsStart) != 5*24*time.Hour {
+		t.Fatalf("expected 5 Beijing days, got %s", repo.dailyStatsEnd.Sub(repo.dailyStatsStart))
 	}
 }

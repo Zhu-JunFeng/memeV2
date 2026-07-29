@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"solana-meme-backtest/backend/internal/apptime"
 	"solana-meme-backtest/backend/internal/model"
 )
 
@@ -351,6 +352,167 @@ func (r *TradeRepository) ListTradeSummaries(ctx context.Context) ([]model.Trade
 		if updatedAt.Valid {
 			value := updatedAt.Time
 			item.UpdatedAt = &value
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *TradeRepository) ListDailyStats(ctx context.Context, tradeMode model.TradeMode, startTime time.Time, endTime time.Time) ([]model.TradeDailyStatsItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		WITH days AS (
+			SELECT generate_series(
+				date(timezone('Asia/Shanghai', $2::timestamptz)),
+				date(timezone('Asia/Shanghai', $3::timestamptz - INTERVAL '1 microsecond')),
+				INTERVAL '1 day'
+			)::date AS stat_day
+		),
+		signals AS (
+			SELECT
+				date(timezone('Asia/Shanghai', signal_time)) AS stat_day,
+				COUNT(*) AS signal_count,
+				COUNT(*) FILTER (WHERE signal_type = 'buy') AS buy_signal_count,
+				COUNT(*) FILTER (WHERE signal_type = 'sell') AS sell_signal_count,
+				COUNT(*) FILTER (WHERE consume_status = 'executed') AS executed_signal_count,
+				COUNT(*) FILTER (WHERE consume_status = 'skipped') AS skipped_signal_count,
+				COUNT(*) FILTER (WHERE consume_status = 'rejected') AS rejected_signal_count,
+				MAX(signal_time) AS last_activity_at
+			FROM trade_signals
+			WHERE ($1 = '' OR trade_mode = $1)
+				AND signal_time >= $2
+				AND signal_time < $3
+			GROUP BY 1
+		),
+		orders AS (
+			SELECT
+				date(timezone('Asia/Shanghai', created_at)) AS stat_day,
+				COUNT(*) AS order_count,
+				COUNT(*) FILTER (WHERE side = 'buy') AS buy_order_count,
+				COUNT(*) FILTER (WHERE side = 'sell') AS sell_order_count,
+				COUNT(*) FILTER (WHERE status = 'filled') AS filled_order_count,
+				COUNT(*) FILTER (WHERE status = 'failed') AS failed_order_count,
+				COUNT(*) FILTER (WHERE status = 'pending') AS pending_order_count,
+				COUNT(*) FILTER (WHERE status = 'submitted') AS submitted_order_count,
+				MAX(created_at) AS last_activity_at
+			FROM trade_orders
+			WHERE ($1 = '' OR trade_mode = $1)
+				AND created_at >= $2
+				AND created_at < $3
+			GROUP BY 1
+		),
+		opened_positions AS (
+			SELECT
+				date(timezone('Asia/Shanghai', opened_at)) AS stat_day,
+				COUNT(*) AS opened_position_count,
+				MAX(opened_at) AS last_activity_at
+			FROM trade_positions
+			WHERE ($1 = '' OR trade_mode = $1)
+				AND opened_at >= $2
+				AND opened_at < $3
+			GROUP BY 1
+		),
+		closed_positions AS (
+			SELECT
+				date(timezone('Asia/Shanghai', closed_at)) AS stat_day,
+				COUNT(*) AS closed_position_count,
+				COUNT(*) FILTER (WHERE realized_pnl > 0) AS win_count,
+				COUNT(*) FILTER (WHERE realized_pnl < 0) AS loss_count,
+				COUNT(*) FILTER (WHERE realized_pnl = 0) AS neutral_count,
+				COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
+				COALESCE(AVG(realized_pnl), 0) AS average_pnl,
+				COALESCE(MAX(realized_pnl), 0) AS best_pnl,
+				COALESCE(MIN(realized_pnl), 0) AS worst_pnl,
+				MAX(closed_at) AS last_activity_at
+			FROM trade_positions
+			WHERE ($1 = '' OR trade_mode = $1)
+				AND status = 'closed'
+				AND closed_at >= $2
+				AND closed_at < $3
+			GROUP BY 1
+		)
+		SELECT
+			to_char(days.stat_day, 'YYYY-MM-DD') AS stat_date,
+			CASE WHEN $1 = '' THEN 'all' ELSE $1 END AS trade_mode,
+			COALESCE(signals.signal_count, 0),
+			COALESCE(signals.buy_signal_count, 0),
+			COALESCE(signals.sell_signal_count, 0),
+			COALESCE(signals.executed_signal_count, 0),
+			COALESCE(signals.skipped_signal_count, 0),
+			COALESCE(signals.rejected_signal_count, 0),
+			COALESCE(orders.order_count, 0),
+			COALESCE(orders.buy_order_count, 0),
+			COALESCE(orders.sell_order_count, 0),
+			COALESCE(orders.filled_order_count, 0),
+			COALESCE(orders.failed_order_count, 0),
+			COALESCE(orders.pending_order_count, 0),
+			COALESCE(orders.submitted_order_count, 0),
+			COALESCE(opened_positions.opened_position_count, 0),
+			COALESCE(closed_positions.closed_position_count, 0),
+			COALESCE(closed_positions.win_count, 0),
+			COALESCE(closed_positions.loss_count, 0),
+			COALESCE(closed_positions.neutral_count, 0),
+			COALESCE(closed_positions.realized_pnl, 0),
+			COALESCE(closed_positions.average_pnl, 0),
+			COALESCE(closed_positions.best_pnl, 0),
+			COALESCE(closed_positions.worst_pnl, 0),
+			(
+				SELECT MAX(value)
+				FROM (VALUES
+					(signals.last_activity_at),
+					(orders.last_activity_at),
+					(opened_positions.last_activity_at),
+					(closed_positions.last_activity_at)
+				) AS activity(value)
+			) AS last_activity_at
+		FROM days
+		LEFT JOIN signals ON signals.stat_day = days.stat_day
+		LEFT JOIN orders ON orders.stat_day = days.stat_day
+		LEFT JOIN opened_positions ON opened_positions.stat_day = days.stat_day
+		LEFT JOIN closed_positions ON closed_positions.stat_day = days.stat_day
+		ORDER BY days.stat_day DESC`, string(tradeMode), startTime.UTC(), endTime.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.TradeDailyStatsItem, 0)
+	for rows.Next() {
+		var item model.TradeDailyStatsItem
+		var lastActivityAt sql.NullTime
+		if err := rows.Scan(
+			&item.Date,
+			&item.TradeMode,
+			&item.SignalCount,
+			&item.BuySignalCount,
+			&item.SellSignalCount,
+			&item.ExecutedSignalCount,
+			&item.SkippedSignalCount,
+			&item.RejectedSignalCount,
+			&item.OrderCount,
+			&item.BuyOrderCount,
+			&item.SellOrderCount,
+			&item.FilledOrderCount,
+			&item.FailedOrderCount,
+			&item.PendingOrderCount,
+			&item.SubmittedOrderCount,
+			&item.OpenedPositionCount,
+			&item.ClosedPositionCount,
+			&item.WinCount,
+			&item.LossCount,
+			&item.NeutralCount,
+			&item.RealizedPNL,
+			&item.AveragePNL,
+			&item.BestPNL,
+			&item.WorstPNL,
+			&lastActivityAt,
+		); err != nil {
+			return nil, err
+		}
+		if item.ClosedPositionCount > 0 {
+			item.WinRate = float64(item.WinCount) / float64(item.ClosedPositionCount)
+		}
+		if lastActivityAt.Valid {
+			value := apptime.InBeijing(lastActivityAt.Time)
+			item.LastActivityAt = &value
 		}
 		items = append(items, item)
 	}

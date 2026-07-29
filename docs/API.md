@@ -575,6 +575,34 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 - 汇总口径基于 `trade_positions`
 - 没有数据时各字段返回 `0`，`updatedAt` 为空
 
+### GET /api/trade/daily-stats
+
+按北京时间自然日返回交易数据统计，默认用于本地前端直接查询生产后端数据。
+
+参数：
+
+- `days`：可选，默认 `5`，范围 `1-90`，包含今天在内向前统计。
+- `tradeMode`：可选，`paper` / `live` / `all`，默认 `paper`。
+
+返回字段：
+
+- `items[].date`：北京时间日期，格式 `YYYY-MM-DD`。
+- `items[].tradeMode`：`paper` / `live` / `all`。
+- `items[].signalCount` / `buySignalCount` / `sellSignalCount`：信号数。
+- `items[].executedSignalCount` / `skippedSignalCount` / `rejectedSignalCount`：信号消费状态统计。
+- `items[].orderCount` / `buyOrderCount` / `sellOrderCount`：订单数。
+- `items[].filledOrderCount` / `failedOrderCount` / `pendingOrderCount` / `submittedOrderCount`：订单状态统计。
+- `items[].openedPositionCount` / `closedPositionCount`：开仓和平仓笔数。
+- `items[].winCount` / `lossCount` / `neutralCount` / `winRate`：已平仓胜负统计。
+- `items[].realizedPnl` / `averagePnl` / `bestPnl` / `worstPnl`：按平仓日统计的已实现盈亏。
+- `items[].lastActivityAt`：该日 Signals、Orders、Positions 中最近一次活动时间。
+
+说明：
+
+- 日期边界按北京时间计算；数据库时间字段仍按 `timestamptz` 比较。
+- 没有活动的日期也会返回，计数字段为 `0`，`lastActivityAt` 为空。
+- 该接口是只读业务统计接口，不接受任意 SQL。
+
 ### GET /api/trade/signals
 
 参数：
