@@ -118,7 +118,7 @@ Birdeye K 线专用支撑/压力位入口。参数同 `/api/market/support-resis
 - `volumeWindow`：可选，成交量确认窗口，默认 `20`。
 - `volumeMultiplier`：可选，放量突破倍数，默认 `1.2`。
 - `maxLevels`：可选，每类最多返回多少个强支撑/压力位，默认 `8`。
-- `minTouches`：可选，定义“多次试压”最少需要几次触及压力带，默认 `3`；每根试压阳线除满足阳线且最高点进入压力带外，还必须满足更高的成交量门槛，当前按最近 `volumeWindow` 根均量的至少 `1.35x` 与 `volumeMultiplier` 中较高者执行。
+- `minTouches`：可选，定义“多次试压”最少需要几次触及压力带，默认 `3`；每根试压阳线除满足阳线且最高点进入压力带外，还必须满足更高的成交量门槛，当前按最近 `volumeWindow` 根均量的至少 `1.6x` 与 `volumeMultiplier` 中较高者执行。
 - `entryOffsetBars`：可选，突破后延迟多少根 K 线再买入，默认 `1`，即下一根开盘买入。
 - `takeProfitRR`：可选，止盈盈亏比，默认 `2`。
 - `maxHoldBars`：可选，买入后最多持有多少根 K 线，默认 `30`。

@@ -210,7 +210,7 @@ func touchVolumeConfirmed(klines []model.Kline, index int, options LevelOptions)
 		return true
 	}
 	// 试压阳线要求比普通突破更高一些的相对量能，降低弱触碰被纳入场景的概率。
-	requiredMultiplier := math.Max(options.VolumeMultiplier, 1.35)
+	requiredMultiplier := math.Max(options.VolumeMultiplier, 1.6)
 	return klines[index].Volume >= baselineVolume*requiredMultiplier
 }
 

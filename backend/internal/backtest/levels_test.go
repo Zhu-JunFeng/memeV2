@@ -213,7 +213,7 @@ func TestCalculateSupportResistanceByWindowsUsesFirstIntrabarThresholdBreakout(t
 		{Interval: "1m", OpenTime: base.Add(2 * time.Minute), CloseTime: base.Add(3 * time.Minute), MarketCapOpen: 9.8, MarketCapHigh: 9.9, MarketCapLow: 9.2, MarketCapClose: 9.4, Volume: 120},
 		{Interval: "1m", OpenTime: base.Add(3 * time.Minute), CloseTime: base.Add(4 * time.Minute), MarketCapOpen: 9.4, MarketCapHigh: 10.45, MarketCapLow: 9.3, MarketCapClose: 9.85, Volume: 240},
 		{Interval: "1m", OpenTime: base.Add(4 * time.Minute), CloseTime: base.Add(5 * time.Minute), MarketCapOpen: 9.85, MarketCapHigh: 10.9, MarketCapLow: 9.4, MarketCapClose: 9.7, Volume: 180},
-		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.7, MarketCapHigh: 10.5, MarketCapLow: 9.5, MarketCapClose: 9.9, Volume: 280},
+		{Interval: "1m", OpenTime: base.Add(5 * time.Minute), CloseTime: base.Add(6 * time.Minute), MarketCapOpen: 9.7, MarketCapHigh: 10.5, MarketCapLow: 9.5, MarketCapClose: 9.9, Volume: 340},
 		{Interval: "1m", OpenTime: base.Add(6 * time.Minute), CloseTime: base.Add(7 * time.Minute), MarketCapOpen: 9.9, MarketCapHigh: 10.95, MarketCapLow: 9.8, MarketCapClose: 9.95, Volume: 190},
 		{Interval: "1m", OpenTime: base.Add(7 * time.Minute), CloseTime: base.Add(8 * time.Minute), MarketCapOpen: 9.95, MarketCapHigh: 11.2, MarketCapLow: 9.9, MarketCapClose: 10.95, Volume: 320},
 	}
