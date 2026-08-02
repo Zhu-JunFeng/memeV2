@@ -218,6 +218,47 @@ func TestGetOpenPositionScansBasicPositionColumns(t *testing.T) {
 	}
 }
 
+func TestListTradeSummariesIgnoresClosedUnrealizedPNL(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, 7, 23, 10, 30, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"trade_mode", "total_pnl", "realized_pnl", "unrealized_pnl",
+		"trade_count", "win_count", "loss_count", "open_position_count",
+		"closed_position_count", "max_drawdown_amount", "updated_at",
+	}).
+		AddRow("", -1.5, -4.0, 2.5, 2, 1, 1, 1, 2, -3.2, now).
+		AddRow("paper", 2.0, 1.0, 1.0, 1, 1, 0, 1, 1, -0.5, now).
+		AddRow("live", -3.5, -5.0, 1.5, 1, 0, 1, 0, 1, -3.2, now)
+
+	mock.ExpectQuery(regexp.QuoteMeta("COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS total_pnl")).
+		WillReturnRows(rows)
+
+	items, err := NewTradeRepository(db).ListTradeSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("list trade summaries: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 summary rows, got %d", len(items))
+	}
+	if items[0].TradeMode != "all" || items[0].TotalPNL != -1.5 || items[0].UnrealizedPNL != 2.5 {
+		t.Fatalf("unexpected all summary: %#v", items[0])
+	}
+	if items[0].WinRate != 0.5 {
+		t.Fatalf("unexpected win rate: %v", items[0].WinRate)
+	}
+	if items[2].TradeMode != model.TradeModeLive || items[2].TotalPNL != -3.5 {
+		t.Fatalf("unexpected live summary: %#v", items[2])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestListDailyStats(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

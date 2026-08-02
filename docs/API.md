@@ -560,7 +560,7 @@ Candidates 实时 SSE 流。连接后先发送 `event: snapshot`，数据为 `{ 
 返回交易汇总，固定包含三组：
 
 - `items[].tradeMode`：`all` / `paper` / `live`
-- `items[].totalPnl`：总盈亏，口径为 `realizedPnl + unrealizedPnl`
+- `items[].totalPnl`：总盈亏，口径为全部持仓 `realizedPnl` + open 持仓 `unrealizedPnl`；closed 持仓残留的 `unrealizedPnl` 不计入
 - `items[].realizedPnl`：已实现盈亏
 - `items[].unrealizedPnl`：未实现盈亏，仅统计 open 持仓
 - `items[].tradeCount`：已平仓笔数

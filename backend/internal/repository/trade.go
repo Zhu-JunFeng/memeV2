@@ -278,7 +278,7 @@ func (r *TradeRepository) ListTradeSummaries(ctx context.Context) ([]model.Trade
 		aggregated AS (
 			SELECT
 				''::varchar(16) AS trade_mode,
-				COALESCE(SUM(realized_pnl + unrealized_pnl), 0) AS total_pnl,
+				COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS total_pnl,
 				COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
 				COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS unrealized_pnl,
 				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) AS trade_count,
@@ -292,7 +292,7 @@ func (r *TradeRepository) ListTradeSummaries(ctx context.Context) ([]model.Trade
 			UNION ALL
 			SELECT
 				trade_mode,
-				COALESCE(SUM(realized_pnl + unrealized_pnl), 0) AS total_pnl,
+				COALESCE(SUM(realized_pnl), 0) + COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS total_pnl,
 				COALESCE(SUM(realized_pnl), 0) AS realized_pnl,
 				COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) AS unrealized_pnl,
 				COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) AS trade_count,
