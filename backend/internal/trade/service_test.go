@@ -342,6 +342,29 @@ func testTradeConfig(t *testing.T) config.TradeConfig {
 	}
 }
 
+func TestNormalizeClosedPositionMetricsClearsUnrealizedPNL(t *testing.T) {
+	position := model.TradePosition{
+		Status:            model.TradePositionStatusClosed,
+		LastPrice:         0.02,
+		ExitExecutedPrice: 0.015,
+		MarketValue:       12.5,
+		RealizedPNL:       -1.2,
+		UnrealizedPNL:     -8.3,
+	}
+
+	normalizeClosedPositionMetrics(&position)
+
+	if position.UnrealizedPNL != 0 || position.MarketValue != 0 {
+		t.Fatalf("closed position must not keep unrealized metrics: %#v", position)
+	}
+	if position.LastPrice != position.ExitExecutedPrice {
+		t.Fatalf("closed position should expose exit price as last price: %#v", position)
+	}
+	if position.RealizedPNL != -1.2 {
+		t.Fatalf("closed position realized pnl should be preserved: %#v", position)
+	}
+}
+
 func waitFor(t *testing.T, check func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

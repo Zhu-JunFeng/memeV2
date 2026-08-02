@@ -367,6 +367,7 @@ func (s *Service) ListPositions(ctx context.Context, status string, tradeMode mo
 	}
 	for index := range items {
 		s.enrichExecutedMarketCaps(ctx, &items[index])
+		normalizeClosedPositionMetrics(&items[index])
 	}
 	return items, nil
 }
@@ -377,6 +378,7 @@ func (s *Service) GetPosition(ctx context.Context, id string) (model.TradePositi
 		return model.TradePosition{}, err
 	}
 	s.enrichExecutedMarketCaps(ctx, &item)
+	normalizeClosedPositionMetrics(&item)
 	return item, nil
 }
 
@@ -1093,6 +1095,17 @@ func (s *Service) enrichExecutedMarketCaps(ctx context.Context, item *model.Trad
 	}
 	if item.ExitExecutedPrice > 0 {
 		item.ExitMarketCap = item.ExitExecutedPrice * supply
+	}
+}
+
+func normalizeClosedPositionMetrics(item *model.TradePosition) {
+	if item == nil || item.Status != model.TradePositionStatusClosed {
+		return
+	}
+	item.UnrealizedPNL = 0
+	item.MarketValue = 0
+	if item.ExitExecutedPrice > 0 {
+		item.LastPrice = item.ExitExecutedPrice
 	}
 }
 

@@ -869,7 +869,7 @@ func (r *TradeRepository) UpdatePositionMark(ctx context.Context, positionID str
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE trade_positions
 		SET last_price = $2, market_value = $3, unrealized_pnl = $4, max_profit_rate = GREATEST(max_profit_rate, $5), max_drawdown_amount = LEAST(max_drawdown_amount, $6), updated_at = $7
-		WHERE id = $1`, positionID, lastPrice, marketValue, unrealized, maxProfitRate, maxDrawdownAmount, time.Now().UTC())
+		WHERE id = $1 AND status = 'open'`, positionID, lastPrice, marketValue, unrealized, maxProfitRate, maxDrawdownAmount, time.Now().UTC())
 	return err
 }
 

@@ -836,7 +836,7 @@
                 <template #default="{ row }">
                   <div class="position-split-cell">
                     <span>已 {{ formatSignedUsd(row.realizedPnl) }}</span>
-                    <span>未 {{ formatSignedUsd(row.unrealizedPnl) }}</span>
+                    <span>未 {{ formatSignedUsd(positionDisplayUnrealizedPnl(row)) }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -2496,12 +2496,18 @@ function formatCompactTokenAmount(value) {
 }
 
 function positionCurrentMarketCap(row) {
+  if (row?.status === "closed") {
+    return Number(row?.exitMarketCap || row?.signalExitMarketCap || 0);
+  }
   const tokenAddress = String(row?.tokenAddress || "").trim();
   if (!tokenAddress) return 0;
   return Number(candidateMonitorMap.value[tokenAddress]?.currentMarketCap || 0);
 }
 
 function positionTotalPnl(row) {
+  if (row?.status === "closed") {
+    return Number(row?.realizedPnl || 0);
+  }
   return Number(row?.realizedPnl || 0) + Number(row?.unrealizedPnl || 0);
 }
 
@@ -2547,13 +2553,18 @@ function positionRowClassName({ row }) {
 function positionUnrealizedRate(row) {
   const costAmount = Number(row?.costAmount || 0);
   if (!Number.isFinite(costAmount) || costAmount <= 0) return 0;
-  return Number(row?.unrealizedPnl || 0) / costAmount;
+  return positionDisplayUnrealizedPnl(row) / costAmount;
 }
 
 function positionRealizedRate(row) {
   const costAmount = Number(row?.costAmount || 0);
   if (!Number.isFinite(costAmount) || costAmount <= 0) return 0;
   return Number(row?.realizedPnl || 0) / costAmount;
+}
+
+function positionDisplayUnrealizedPnl(row) {
+  if (row?.status === "closed") return 0;
+  return Number(row?.unrealizedPnl || 0);
 }
 
 function formatOrderIntent(row) {

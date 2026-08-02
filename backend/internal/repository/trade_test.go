@@ -117,6 +117,25 @@ func TestSaveFilledSellUpdatesCARiskInSameTransaction(t *testing.T) {
 	}
 }
 
+func TestUpdatePositionMarkOnlyUpdatesOpenPosition(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	mock.ExpectExec(regexp.QuoteMeta("WHERE id = $1 AND status = 'open'")).
+		WithArgs("position-1", 0.12, 18.5, -1.5, -0.075, -1.5, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := NewTradeRepository(database).UpdatePositionMark(context.Background(), "position-1", 0.12, 18.5, -1.5, -0.075, -1.5); err != nil {
+		t.Fatalf("update position mark: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type anyTimeArgument struct{}
 
 func (anyTimeArgument) Match(value driver.Value) bool {

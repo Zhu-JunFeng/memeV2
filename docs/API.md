@@ -678,7 +678,7 @@ Orders 实时 SSE 流。参数同 `/api/trade/orders`。连接后先推 `snapsho
 - `lastPrice`
 - `marketValue`
 - `realizedPnl`
-- `unrealizedPnl`
+- `unrealizedPnl`：已平仓仓位固定返回 `0`；未平仓仓位返回当前未实现盈亏
 - `maxProfitRate`
 - `maxDrawdownAmount`
 
