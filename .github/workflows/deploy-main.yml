@@ -1,0 +1,121 @@
+name: Deploy Main
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: solana-scalper-v2-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test backend
+        working-directory: backend
+        run: |
+          mkdir -p .tmp/go-build-cache
+          GOCACHE=$PWD/.tmp/go-build-cache go test ./...
+
+      - name: Test and build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm test
+          npm run build
+
+      - name: Build backend linux binary
+        run: |
+          mkdir -p .tmp/release/backend
+          cd backend
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o ../.tmp/release/backend/solana-meme-backtest ./cmd/server
+          sha256sum ../.tmp/release/backend/solana-meme-backtest
+
+      - name: Install deploy tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass rsync
+
+      - name: Upload release with password
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_PASSWORD: ${{ secrets.PROD_PASSWORD }}
+        run: |
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          test -n "$PROD_PASSWORD"
+          RELEASE="release-${GITHUB_SHA::12}-$(date +%Y%m%d%H%M%S)"
+          echo "RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+          sshpass -p "$PROD_PASSWORD" ssh $SSH_OPTS "$PROD_USER@$PROD_HOST" \
+            "mkdir -p /data/solana-scalper-v2/releases/$RELEASE/backend /data/solana-scalper-v2/releases/$RELEASE/frontend"
+
+          sshpass -p "$PROD_PASSWORD" scp $SSH_OPTS .tmp/release/backend/solana-meme-backtest \
+            "$PROD_USER@$PROD_HOST:/data/solana-scalper-v2/releases/$RELEASE/backend/solana-meme-backtest"
+
+          sshpass -p "$PROD_PASSWORD" rsync -az -e "ssh $SSH_OPTS" frontend/dist/ \
+            "$PROD_USER@$PROD_HOST:/data/solana-scalper-v2/releases/$RELEASE/frontend/"
+
+      - name: Activate release
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_PASSWORD: ${{ secrets.PROD_PASSWORD }}
+          PROD_BACKEND_DIR: ${{ secrets.PROD_BACKEND_DIR }}
+          PROD_FRONTEND_DIR: ${{ secrets.PROD_FRONTEND_DIR }}
+        run: |
+          test -n "$RELEASE"
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          test -n "$PROD_PASSWORD"
+          test -n "$PROD_BACKEND_DIR"
+          test -n "$PROD_FRONTEND_DIR"
+          SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+          sshpass -p "$PROD_PASSWORD" ssh $SSH_OPTS "$PROD_USER@$PROD_HOST" "
+            set -e
+            RELEASE='$RELEASE'
+            BACKEND_DIR='$PROD_BACKEND_DIR'
+            FRONTEND_DIR='$PROD_FRONTEND_DIR'
+
+            curl --fail --silent --show-error http://127.0.0.1:8890/api/health >/dev/null
+            cp \"\$BACKEND_DIR/solana-meme-backtest\" \"\$BACKEND_DIR/solana-meme-backtest.bak-\$RELEASE\" || true
+            install -m 755 \"/data/solana-scalper-v2/releases/\$RELEASE/backend/solana-meme-backtest\" \"\$BACKEND_DIR/solana-meme-backtest\"
+
+            mkdir -p \"\$FRONTEND_DIR\"
+            rsync -a --delete \"/data/solana-scalper-v2/releases/\$RELEASE/frontend/\" \"\$FRONTEND_DIR/\"
+
+            systemctl restart solana-meme-backtest-v2.service
+            sleep 4
+            systemctl is-active solana-meme-backtest-v2.service
+            curl --fail --silent --show-error http://127.0.0.1:8890/api/health
+          "
+
+      - name: Verify public health
+        env:
+          PROD_HEALTH_URL: ${{ secrets.PROD_HEALTH_URL }}
+        run: |
+          test -n "$PROD_HEALTH_URL"
+          curl --fail --silent --show-error "$PROD_HEALTH_URL"
