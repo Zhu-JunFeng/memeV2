@@ -3,7 +3,7 @@ import { ElNotification } from "element-plus";
 
 export const http = axios.create({
   baseURL: "/api",
-  timeout: 180000,
+  timeout: 600000,
 });
 
 let lastAlertKey = "";

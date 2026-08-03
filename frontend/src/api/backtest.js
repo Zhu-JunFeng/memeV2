@@ -18,7 +18,7 @@ export function listStrategyBacktestMethods() {
 
 export function runStrategyBacktest(payload) {
   return http.post("/strategy-backtests/run", payload, {
-    timeout: 180000,
+    timeout: 600000,
   });
 }
 

@@ -15,6 +15,15 @@ import (
 
 var ErrStrategyMethodNotFound = errors.New("回测方法不存在")
 
+const FixedStopLossRate = 0.05
+
+func FixedStopLossMarketCap(entryPrice float64) float64 {
+	if entryPrice <= 0 {
+		return 0
+	}
+	return entryPrice * (1 - FixedStopLossRate)
+}
+
 type StrategyParamDefinition struct {
 	Key          string  `json:"key"`
 	Label        string  `json:"label"`
@@ -216,7 +225,7 @@ func (breakoutBandFollowMethod) Metadata() StrategyMethodMetadata {
 	return StrategyMethodMetadata{
 		Code:        "breakout_band_follow",
 		Name:        "突破压力带买入",
-		Description: "盘中首次突破压力带时买入；买入后任意后续 1 分钟 K 线收盘低于压力带下沿时止损；盈利到 7% 后把止损抬到 +4%，之后每多盈利 1% 锁盈同步上移 1%；默认盈利 8% 止盈。",
+		Description: "盘中首次突破压力带时买入；买入后固定 5% 止损；盈利到 7% 后把止损抬到 +4%，之后每多盈利 1% 锁盈同步上移 1%；默认盈利 8% 止盈。",
 		Params: []StrategyParamDefinition{
 			{Key: "takeProfitRate", Label: "止盈比例", Description: "达到该收益率后止盈卖出，例如 0.08 表示 8%。", Type: "number", Required: true, DefaultValue: 0.08, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
 			{Key: "takeProfitRateStart", Label: "止盈起点", Description: "启用区间回测时的起始止盈比例。", Type: "number", Required: false, DefaultValue: 0.08, MinValue: 0.01, MaxValue: 0.5, Step: 0.01},
@@ -393,10 +402,7 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 	if entryPrice <= 0 {
 		return model.BreakoutOutcomePending, nil, 0, 0, "", 0, 0, false
 	}
-	initialStopLoss := level.Lower
-	if initialStopLoss <= 0 {
-		initialStopLoss = level.Price
-	}
+	initialStopLoss := FixedStopLossMarketCap(entryPrice)
 	takeProfitPrice := entryPrice * (1 + config.TakeProfitRate)
 	trailingStopPrice := entryPrice * (1 + config.LockedProfitRate)
 	trailingArmed := false
@@ -404,14 +410,13 @@ func simulateBandFollowExit(klines []model.Kline, entryIndex int, level model.Pr
 	for i := entryIndex + 1; i < len(klines); i++ {
 		item := klines[i]
 		holdingBars := i - entryIndex
-		if marketClose(item) < initialStopLoss {
-			exitPrice := marketClose(item)
-			exit := anchorFromKline(item, exitPrice)
-			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, exitPrice), "买入后后续 K 线收盘市值低于压力带下沿，按收盘市值卖出", initialStopLoss, trailingStopPrice, trailingArmed
-		}
 		if trailingArmed && marketLow(item) <= trailingStopPrice {
 			exit := anchorFromKline(item, trailingStopPrice)
 			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, trailingStopPrice), "盈利达到触发阈值后回撤到锁定收益率，执行动态止损", initialStopLoss, trailingStopPrice, trailingArmed
+		}
+		if marketLow(item) <= initialStopLoss {
+			exit := anchorFromKline(item, initialStopLoss)
+			return model.BreakoutOutcomeStopLoss, &exit, holdingBars, profitRate(entryPrice, initialStopLoss), "买入后跌幅达到固定 5% 止损，按止损价卖出", initialStopLoss, trailingStopPrice, trailingArmed
 		}
 		if marketHigh(item) >= takeProfitPrice {
 			exit := anchorFromKline(item, takeProfitPrice)
@@ -449,10 +454,7 @@ func evaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level 
 	if entryPrice <= 0 {
 		return BandFollowExitDecision{}
 	}
-	initialStopLoss := level.Lower
-	if initialStopLoss <= 0 {
-		initialStopLoss = level.Price
-	}
+	initialStopLoss := FixedStopLossMarketCap(entryPrice)
 	takeProfitPrice := entryPrice * (1 + config.TakeProfitRate)
 	trailingStopPrice := entryPrice * (1 + config.LockedProfitRate)
 	trailingArmed := false
@@ -460,15 +462,13 @@ func evaluateRealtimeBandFollowExit(klines []model.Kline, entryIndex int, level 
 	for i := entryIndex + 1; i < len(klines); i++ {
 		item := klines[i]
 		holdingBars := i - entryIndex
-		barClosed := now.IsZero() || (!item.CloseTime.IsZero() && !item.CloseTime.After(now))
-		if barClosed && marketClose(item) < initialStopLoss {
-			exitPrice := marketClose(item)
-			exit := anchorFromKline(item, exitPrice)
-			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, exitPrice), Reason: "买入后后续 K 线收盘市值低于压力带下沿，按收盘市值卖出", InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
-		}
 		if trailingArmed && marketLow(item) <= trailingStopPrice {
 			exit := anchorFromKline(item, trailingStopPrice)
 			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, trailingStopPrice), Reason: "盈利达到触发阈值后回撤到锁定收益率，执行动态止损", InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
+		}
+		if marketLow(item) <= initialStopLoss {
+			exit := anchorFromKline(item, initialStopLoss)
+			return BandFollowExitDecision{Triggered: true, Outcome: model.BreakoutOutcomeStopLoss, ExitPoint: &exit, HoldingBars: holdingBars, ProfitRate: profitRate(entryPrice, initialStopLoss), Reason: "买入后跌幅达到固定 5% 止损，按止损价卖出", InitialStopLoss: initialStopLoss, TrailingStop: trailingStopPrice, TrailingArmed: trailingArmed}
 		}
 		if marketHigh(item) >= takeProfitPrice {
 			exit := anchorFromKline(item, takeProfitPrice)

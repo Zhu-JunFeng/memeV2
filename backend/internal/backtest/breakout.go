@@ -63,10 +63,7 @@ func findBreakoutSetup(level model.PriceLevel, window []model.Kline, future []mo
 	setup.BreakoutPoint = &breakoutPoint
 	setup.BuyPoint = &buyPoint
 
-	stopLoss := level.Lower
-	if stopLoss <= 0 || stopLoss >= buyPoint.Price {
-		stopLoss = level.Price
-	}
+	stopLoss := FixedStopLossMarketCap(buyPoint.Price)
 	risk := buyPoint.Price - stopLoss
 	if risk <= 0 {
 		return setup

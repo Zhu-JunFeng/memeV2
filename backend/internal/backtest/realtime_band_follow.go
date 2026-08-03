@@ -72,7 +72,7 @@ func detectLiveBreakoutSignalsByWindowsVariant(klines []model.Kline, options Lev
 }
 
 // EvaluateClosedBarBandFollowExit 只基于已收盘 K 线复用回测退出规则，
-// 保证“后续收盘低于下沿止损 / 动态止损 / 止盈”在实时监控和回测里一致。
+// 保证“固定 5% 止损 / 动态止损 / 止盈”在实时监控和回测里一致。
 func EvaluateClosedBarBandFollowExit(klines []model.Kline, now time.Time, entryTime time.Time, level model.PriceLevel, config BreakoutBandFollowConfig) (BandFollowExitDecision, model.Kline, bool) {
 	closed := ClosedKlinesAt(klines, now)
 	if len(closed) == 0 {

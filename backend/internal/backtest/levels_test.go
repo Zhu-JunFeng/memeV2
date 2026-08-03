@@ -160,6 +160,9 @@ func TestCalculateSupportResistanceByWindowsAnnotatesBreakoutSetup(t *testing.T)
 			if level.Breakout.BreakoutPoint == nil {
 				t.Fatalf("expected breakout point, got %#v", level.Breakout)
 			}
+			if level.Breakout.BuyPoint == nil || !almostEqual(level.Breakout.StopLoss, level.Breakout.BuyPoint.Price*(1-FixedStopLossRate)) {
+				t.Fatalf("expected fixed 5%% stop from buy point, got %#v", level.Breakout)
+			}
 			return
 		}
 	}

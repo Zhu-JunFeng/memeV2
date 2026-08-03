@@ -745,3 +745,787 @@ body {
 .el-notification.api-error-notification {
   max-width: min(420px, calc(100vw - 32px));
 }
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 14px 32px 0;
+  backdrop-filter: blur(10px);
+}
+
+.app-nav a {
+  color: #94b9ae;
+  text-decoration: none;
+  padding: 8px 12px;
+  border: 1px solid rgba(143, 178, 168, 0.14);
+  border-radius: 999px;
+  background: rgba(7, 16, 19, 0.74);
+  font-size: 13px;
+  font-weight: 700;
+  transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.app-nav a:hover,
+.app-nav a.router-link-active {
+  color: #eafff5;
+  border-color: rgba(20, 184, 106, 0.44);
+  background: rgba(20, 184, 106, 0.13);
+}
+
+.boll-page {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 28px 32px 42px;
+}
+
+.boll-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 22px;
+  align-items: stretch;
+  margin-bottom: 18px;
+}
+
+.boll-kicker {
+  margin: 0 0 10px;
+  color: #f6b34a;
+  font-family: "Fira Code", Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.boll-hero h1 {
+  margin: 0;
+  color: #f0fff8;
+  font-size: 36px;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.boll-hero p {
+  max-width: 74ch;
+  margin: 12px 0 0;
+  color: #9fc1b8;
+  line-height: 1.7;
+}
+
+.boll-hero strong {
+  color: #ffe0a3;
+}
+
+.formula-card,
+.boll-controls,
+.metric-ribbon,
+.boll-chart-panel,
+.insight-panel {
+  background: rgba(7, 16, 19, 0.8);
+  border: 1px solid rgba(143, 178, 168, 0.16);
+  border-radius: 18px;
+}
+
+.formula-card {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 20px;
+}
+
+.formula-card span,
+.control-field span,
+.metric-ribbon span,
+.insight-label {
+  color: #8fb2a8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.formula-card strong {
+  color: #f8d27a;
+  font-family: "Fira Code", Menlo, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.formula-card em {
+  color: #9fc1b8;
+  font-style: normal;
+  font-size: 13px;
+}
+
+.boll-controls {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.6fr) 140px 110px 112px 112px 112px 112px auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.control-field {
+  display: grid;
+  gap: 7px;
+}
+
+.control-field-token .el-input__wrapper,
+.boll-controls .el-input__wrapper,
+.boll-controls .el-select__wrapper {
+  background: rgba(3, 12, 14, 0.78);
+  box-shadow: 0 0 0 1px rgba(143, 178, 168, 0.18) inset;
+}
+
+.metric-ribbon {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.horizontal-ribbon {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.metric-ribbon div {
+  min-height: 72px;
+  padding: 14px 16px;
+  background: rgba(10, 28, 28, 0.62);
+}
+
+.metric-ribbon strong {
+  display: block;
+  margin-top: 8px;
+  color: #f0fff8;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.boll-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 14px;
+  align-items: start;
+}
+
+.boll-chart-panel {
+  padding: 14px;
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.chart-head strong {
+  display: block;
+  color: #f0fff8;
+  font-size: 15px;
+}
+
+.chart-head span {
+  color: #8fb2a8;
+  font-size: 12px;
+}
+
+.legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(143, 178, 168, 0.08);
+}
+
+.legend-item::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #9fb6b0;
+}
+
+.legend-item.upper::before { background: #f97316; }
+.legend-item.middle::before { background: #9fb6b0; }
+.legend-item.lower::before { background: #22c55e; }
+.legend-item.break::before { background: #38bdf8; }
+.legend-item.buy::before { background: #22c55e; }
+.legend-item.sell::before { background: #ef4444; }
+
+.boll-chart-box {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(249, 115, 22, 0.11), transparent 24rem),
+    linear-gradient(180deg, rgba(4, 13, 16, 0.94), rgba(6, 19, 20, 0.82));
+}
+
+.boll-chart {
+  height: 560px;
+}
+
+.boll-pressure-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pressure-area {
+  fill: rgba(249, 115, 22, 0.16);
+  stroke: rgba(249, 115, 22, 0.28);
+  stroke-width: 1;
+}
+
+.chart-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #9fc1b8;
+  background: rgba(7, 16, 19, 0.46);
+}
+
+.insight-panel {
+  padding: 16px;
+}
+
+.insight-section + .insight-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(143, 178, 168, 0.14);
+}
+
+.insight-section strong {
+  display: block;
+  margin-top: 8px;
+  color: #f8d27a;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.insight-section p,
+.insight-section li,
+.empty-note {
+  color: #a6c5bc;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.insight-section ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.event-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.event-row {
+  display: grid;
+  grid-template-columns: 10px 72px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 10px;
+  color: #d8e9e2;
+  border: 1px solid rgba(143, 178, 168, 0.12);
+  border-radius: 12px;
+  background: rgba(13, 31, 34, 0.72);
+  cursor: pointer;
+  text-align: left;
+}
+
+.event-row:hover {
+  border-color: rgba(56, 189, 248, 0.36);
+  background: rgba(13, 42, 47, 0.78);
+}
+
+.event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #facc15;
+}
+
+.event-dot.breakout {
+  background: #38bdf8;
+}
+
+.event-dot.profit {
+  background: #22c55e;
+}
+
+.event-dot.loss {
+  background: #ef4444;
+}
+
+.event-row span,
+.event-row em {
+  color: #9fc1b8;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.event-row strong {
+  margin: 0;
+  color: #f0fff8;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .boll-hero,
+  .boll-layout,
+  .boll-controls,
+  .metric-ribbon {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-head {
+    flex-direction: column;
+  }
+
+  .legend-row {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-nav,
+  .boll-page {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}
+
+.profit-text {
+  color: #22c55e !important;
+}
+
+.loss-text {
+  color: #ef4444 !important;
+}
+
+.trade-event-row {
+  grid-template-columns: 10px 42px 1fr auto;
+}
+
+.horizontal-page {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 28px 32px 42px;
+}
+
+.horizontal-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 430px;
+  gap: 22px;
+  align-items: stretch;
+  margin-bottom: 18px;
+}
+
+.horizontal-kicker {
+  margin: 0 0 10px;
+  color: #f6b34a;
+  font-family: "Fira Code", Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.horizontal-hero h1 {
+  margin: 0;
+  color: #f0fff8;
+  font-size: 36px;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.horizontal-hero p {
+  max-width: 76ch;
+  margin: 12px 0 0;
+  color: #9fc1b8;
+  line-height: 1.7;
+}
+
+.horizontal-method-card,
+.horizontal-controls,
+.horizontal-chart-panel,
+.horizontal-insight-panel {
+  background: rgba(7, 16, 19, 0.8);
+  border: 1px solid rgba(143, 178, 168, 0.16);
+  border-radius: 18px;
+}
+
+.horizontal-method-card {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 20px;
+}
+
+.horizontal-method-card span {
+  color: #8fb2a8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.horizontal-method-card strong {
+  color: #f8d27a;
+  font-family: "Fira Code", Menlo, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.horizontal-method-card em {
+  color: #9fc1b8;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.horizontal-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.horizontal-controls .control-field-token {
+  grid-column: span 3;
+}
+
+.horizontal-controls .el-input__wrapper,
+.horizontal-controls .el-select__wrapper {
+  background: rgba(3, 12, 14, 0.78);
+  box-shadow: 0 0 0 1px rgba(143, 178, 168, 0.18) inset;
+}
+
+.horizontal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 14px;
+  align-items: start;
+}
+
+.horizontal-chart-panel {
+  padding: 14px;
+}
+
+.horizontal-chart-box {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 14% 10%, rgba(245, 158, 11, 0.1), transparent 24rem),
+    linear-gradient(180deg, rgba(4, 13, 16, 0.94), rgba(6, 19, 20, 0.82));
+}
+
+.horizontal-chart {
+  height: 560px;
+}
+
+.horizontal-pressure-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.horizontal-band {
+  fill: rgba(245, 158, 11, 0.24);
+  stroke: rgba(245, 158, 11, 0.36);
+  stroke-width: 1;
+}
+
+.horizontal-band-label {
+  fill: #f8d27a;
+  font-family: "Fira Code", Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trade-badge-line {
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+
+.trade-badge-buy .trade-badge-line {
+  stroke: rgba(34, 197, 94, 0.9);
+}
+
+.trade-badge-sell .trade-badge-line {
+  stroke: rgba(56, 189, 248, 0.92);
+}
+
+.trade-badge-loss .trade-badge-line {
+  stroke: rgba(239, 68, 68, 0.92);
+}
+
+.trade-badge-box {
+  filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.3));
+  stroke-width: 1.2;
+}
+
+.trade-badge-buy .trade-badge-box {
+  fill: rgba(9, 80, 48, 0.96);
+  stroke: #22c55e;
+}
+
+.trade-badge-sell .trade-badge-box {
+  fill: rgba(11, 71, 88, 0.96);
+  stroke: #38bdf8;
+}
+
+.trade-badge-loss .trade-badge-box {
+  fill: rgba(92, 24, 24, 0.96);
+  stroke: #ef4444;
+}
+
+.trade-badge-focus .trade-badge-box {
+  stroke-width: 1.6;
+}
+
+.trade-price-dot-outer {
+  fill: rgba(3, 12, 14, 0.9);
+  stroke: #f8fff9;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.42));
+}
+
+.trade-price-dot-inner {
+  fill: #22c55e;
+}
+
+.trade-badge-sell .trade-price-dot-inner {
+  fill: #38bdf8;
+}
+
+.trade-badge-loss .trade-price-dot-inner {
+  fill: #ef4444;
+}
+
+.trade-badge-title,
+.trade-badge-price {
+  fill: #f8fff9;
+  font-family: "Fira Code", Menlo, monospace;
+  font-weight: 900;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(3, 12, 14, 0.62);
+  stroke-width: 1.5px;
+}
+
+.trade-badge-title {
+  font-size: 8px;
+}
+
+.trade-badge-price {
+  font-size: 7.5px;
+}
+
+.legend-item.pivot::before { background: #facc15; }
+.legend-item.touch::before { background: #fb923c; border-radius: 2px; }
+
+.clear-trade-button {
+  padding: 6px 10px;
+  color: #071013;
+  background: #f8d27a;
+  border: 0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.level-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.level-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 11px;
+  color: #d8e9e2;
+  border: 1px solid rgba(143, 178, 168, 0.12);
+  border-radius: 12px;
+  background: rgba(13, 31, 34, 0.72);
+  cursor: pointer;
+  text-align: left;
+}
+
+.level-row:hover {
+  border-color: rgba(245, 158, 11, 0.36);
+  background: rgba(42, 31, 13, 0.34);
+}
+
+.level-row span,
+.level-row em {
+  color: #9fc1b8;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.level-row strong {
+  margin: 0;
+  color: #f8d27a;
+  font-size: 14px;
+}
+
+.trade-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  margin-top: 10px;
+  padding-right: 4px;
+}
+
+.trade-row {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 10px 11px;
+  color: #d8e9e2;
+  border: 1px solid rgba(143, 178, 168, 0.12);
+  border-radius: 12px;
+  background: rgba(13, 31, 34, 0.72);
+  cursor: pointer;
+  text-align: left;
+}
+
+.trade-row:hover,
+.trade-row.active {
+  border-color: rgba(34, 197, 94, 0.48);
+  background: rgba(11, 48, 33, 0.8);
+}
+
+.trade-row span,
+.trade-row em,
+.trade-row small {
+  color: #9fc1b8;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.trade-row strong {
+  margin: 0;
+  font-size: 15px;
+}
+
+.trade-row em,
+.trade-row small {
+  grid-column: 2;
+}
+
+.trade-detail-section {
+  border-color: rgba(248, 210, 122, 0.22);
+}
+
+.trade-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.trade-fact-grid div {
+  padding: 10px;
+  border: 1px solid rgba(143, 178, 168, 0.12);
+  border-radius: 12px;
+  background: rgba(13, 31, 34, 0.58);
+}
+
+.trade-fact-grid span,
+.trade-fact-grid em,
+.calculation-title,
+.calculation-list small,
+.calculation-list em {
+  display: block;
+  color: #9fc1b8;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.trade-fact-grid b {
+  display: block;
+  margin: 4px 0;
+  color: #f8d27a;
+  font-size: 14px;
+}
+
+.calculation-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.calculation-title {
+  color: #f8d27a;
+  font-weight: 800;
+}
+
+.calculation-list button {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  color: #d8e9e2;
+  border: 1px solid rgba(143, 178, 168, 0.12);
+  border-radius: 10px;
+  background: rgba(13, 31, 34, 0.54);
+  cursor: pointer;
+  text-align: left;
+}
+
+.calculation-list button:hover {
+  border-color: rgba(251, 146, 60, 0.42);
+  background: rgba(50, 31, 13, 0.48);
+}
+
+.calculation-list strong {
+  margin: 0;
+  color: #f0fff8;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .horizontal-hero,
+  .horizontal-layout,
+  .horizontal-controls,
+  .horizontal-ribbon {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .horizontal-page {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}

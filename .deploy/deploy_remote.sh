@@ -25,6 +25,11 @@ server {
     root /data/solana-scalper-v2/frontend;
     index index.html;
 
+    gzip on;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types application/json application/javascript text/css text/plain text/xml application/xml;
+
     location /api/ {
         proxy_pass http://127.0.0.1:8890/api/;
         proxy_http_version 1.1;

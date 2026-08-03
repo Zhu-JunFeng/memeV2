@@ -29,7 +29,7 @@ func TestBreakoutBandFollowDefaultsToEightPercentTakeProfit(t *testing.T) {
 	}
 }
 
-func TestBreakoutBandFollowMethodStopsOnNextBarCloseBelowLowerBand(t *testing.T) {
+func TestBreakoutBandFollowMethodStopsOnFixedFivePercentLoss(t *testing.T) {
 	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	level := model.PriceLevel{
 		Type:  model.LevelTypeResistance,
@@ -62,8 +62,12 @@ func TestBreakoutBandFollowMethodStopsOnNextBarCloseBelowLowerBand(t *testing.T)
 	if trade.Outcome != model.BreakoutOutcomeStopLoss {
 		t.Fatalf("expected stop loss, got %#v", trade)
 	}
-	if trade.SellPoint.Price != 10.3 {
-		t.Fatalf("expected sell at next-bar close 10.3, got %#v", trade.SellPoint)
+	expectedStop := 10.9 * (1 - FixedStopLossRate)
+	if !almostEqual(trade.SellPoint.Price, expectedStop) {
+		t.Fatalf("expected sell at fixed stop %.4f, got %#v", expectedStop, trade.SellPoint)
+	}
+	if !strings.Contains(trade.ExitReason, "固定 5% 止损") {
+		t.Fatalf("unexpected exit reason: %q", trade.ExitReason)
 	}
 }
 
@@ -192,7 +196,7 @@ func TestBreakoutBandFollowMethodSupportsTakeProfitRangeAndFees(t *testing.T) {
 	}
 }
 
-func TestBreakoutBandFollowMethodStopsOnLaterCloseBelowBand(t *testing.T) {
+func TestBreakoutBandFollowMethodChecksLaterBarsForFixedStop(t *testing.T) {
 	base := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	level := model.PriceLevel{
 		Type:  model.LevelTypeResistance,
@@ -224,12 +228,13 @@ func TestBreakoutBandFollowMethodStopsOnLaterCloseBelowBand(t *testing.T) {
 	}
 	trade := result.Trades[0]
 	if trade.Outcome != model.BreakoutOutcomeStopLoss {
-		t.Fatalf("expected later close below band to stop, got %#v", trade)
+		t.Fatalf("expected later fixed stop, got %#v", trade)
 	}
-	if !almostEqual(trade.SellPoint.Price, 10.3) {
-		t.Fatalf("expected lower-band exit at close 10.3, got %#v", trade.SellPoint)
+	expectedStop := 10.8 * (1 - FixedStopLossRate)
+	if !almostEqual(trade.SellPoint.Price, expectedStop) {
+		t.Fatalf("expected fixed stop exit at %.4f, got %#v", expectedStop, trade.SellPoint)
 	}
-	if !strings.Contains(trade.ExitReason, "后续 K 线收盘市值低于压力带下沿") {
+	if !strings.Contains(trade.ExitReason, "固定 5% 止损") {
 		t.Fatalf("unexpected exit reason: %q", trade.ExitReason)
 	}
 }

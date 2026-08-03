@@ -1371,6 +1371,7 @@ func (m *CandidateMonitor) syncEntryMarketCap(ctx context.Context, state *candid
 	state.EntryPriceSynced = true
 	if state.Level.Breakout != nil && state.Level.Breakout.BuyPoint != nil {
 		state.Level.Breakout.BuyPoint.Price = entryMarketCap
+		state.Level.Breakout.StopLoss = backtest.FixedStopLossMarketCap(entryMarketCap)
 	}
 	return nil
 }
@@ -1447,6 +1448,7 @@ func cloneBreakoutWithBuyMarketCap(setup *model.BreakoutSetup, marketCap float64
 		point := *setup.BuyPoint
 		point.Price = marketCap
 		cloned.BuyPoint = &point
+		cloned.StopLoss = backtest.FixedStopLossMarketCap(marketCap)
 	}
 	if setup.ExitPoint != nil {
 		point := *setup.ExitPoint
